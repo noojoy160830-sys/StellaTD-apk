@@ -20,10 +20,11 @@ import java.util.Locale;
 /** Renders every screen and handles touch. Match rules live in {@link Game}, saved data in {@link Profile}. */
 public final class GameView extends View {
 
-    static final String VERSION = "v2.1";
+    static final String VERSION = "v2.2";
 
     // hub screens
-    static final int S_LOBBY = 0, S_SHOP = 1, S_PLANET = 2, S_PLAYMENU = 3, S_BANNER = 4, S_ENCHANT = 5, S_GAME = 6;
+    static final int S_LOBBY = 0, S_SHOP = 1, S_PLANET = 2, S_PLAYMENU = 3, S_BANNER = 4, S_ENCHANT = 5, S_GAME = 6,
+            S_LOGIN = 7, S_ADMIN = 8;
     // popups
     static final int P_NONE = 0, P_PLAYER = 1, P_SETTINGS = 2, P_GACHA = 3, P_INDEX = 4, P_AUTO = 5;
 
@@ -33,7 +34,12 @@ public final class GameView extends View {
         Btn(RectF r, Runnable a) { this.r = r; this.a = a; }
     }
 
-    final Profile pf;
+    final Context ctx;
+    final Accounts acc;
+    Profile pf;
+    String user;
+    String adminSel;
+    int adminPage;
     int screen = S_LOBBY, popup = P_NONE;
     boolean paused;
     Game game;
@@ -76,7 +82,9 @@ public final class GameView extends View {
 
     public GameView(Context ctx) {
         super(ctx);
-        pf = new Profile(ctx.getSharedPreferences("stella", Context.MODE_PRIVATE));
+        this.ctx = ctx;
+        acc = new Accounts(ctx);
+        L.en = acc.lang();
         // Game font: Kanit (SIL Open Font License). Falls back to the system font if the files are missing.
         try { bodyFont = Typeface.createFromAsset(ctx.getAssets(), "fonts/Kanit-SemiBold.ttf"); } catch (RuntimeException ignored) { }
         try { titleFont = Typeface.createFromAsset(ctx.getAssets(), "fonts/Kanit-BlackItalic.ttf"); } catch (RuntimeException ignored) { }
@@ -95,7 +103,9 @@ public final class GameView extends View {
             twY[i] = r.nextFloat();
             twP[i] = r.nextFloat() * 6.28f;
         }
-        if (pf.deck[0] >= 0) selType = enchSel = pf.deck[0];
+        String cur = acc.current();
+        if (cur != null) loginAs(cur);
+        else screen = S_LOGIN;
         setFocusable(true);
     }
 
@@ -121,6 +131,67 @@ public final class GameView extends View {
         moy = mapTop + (availH - 1200 * ms) / 2f;
     }
 
+    // ================================================================== accounts
+    void loginAs(String u) {
+        user = u;
+        pf = new Profile(acc.prefsOf(u));
+        selType = enchSel = pf.deck[0] >= 0 ? pf.deck[0] : Defs.EARTH;
+        game = null;
+        popup = P_NONE;
+        screen = S_LOBBY;
+        if (acc.mustChange(u)) post(this::askChangePassword);
+    }
+
+    boolean isAdmin() {
+        return user != null && acc.isAdmin(user);
+    }
+
+    void askLogin(String prefillUser) {
+        Dialogs.ask(ctx, L.t("เข้าสู่ระบบ", "Log in"), null,
+                new String[]{L.t("ชื่อไอดี", "Username"), L.t("รหัสผ่าน", "Password")},
+                new int[]{Dialogs.TEXT, Dialogs.PASSWORD}, new String[]{prefillUser, null},
+                L.t("เข้าสู่ระบบ", "Log in"), v -> {
+                    String err = acc.login(v[0], v[1]);
+                    if (err != null) { showToast(err); askLogin(v[0]); }
+                    else { loginAs(Accounts.norm(v[0])); showToast(L.t("ยินดีต้อนรับ ", "Welcome ") + user + "!"); }
+                });
+    }
+
+    void askRegister() {
+        Dialogs.ask(ctx, L.t("สร้างไอดี", "Create account"), L.t("ชื่อไอดีใช้ a-z, 0-9, _ (3–16 ตัว)", "Username: a-z, 0-9, _ (3–16 chars)"),
+                new String[]{L.t("ชื่อไอดี", "Username"), L.t("รหัสผ่าน", "Password"), L.t("ยืนยันรหัสผ่าน", "Confirm password")},
+                new int[]{Dialogs.TEXT, Dialogs.PASSWORD, Dialogs.PASSWORD}, null,
+                L.t("สร้าง", "Create"), v -> {
+                    String err = acc.register(v[0], v[1], v[2]);
+                    if (err != null) { showToast(err); return; }
+                    acc.login(v[0], v[1]);
+                    loginAs(Accounts.norm(v[0]));
+                    showToast(L.t("สร้างไอดีสำเร็จ!", "Account created!"));
+                });
+    }
+
+    void askChangePassword() {
+        String msg = acc.mustChange(user)
+                ? L.t("บัญชีแอดมินยังใช้รหัสเริ่มต้นอยู่ กรุณาตั้งรหัสใหม่", "The admin account still uses the default password. Please set a new one.")
+                : null;
+        Dialogs.ask(ctx, L.t("เปลี่ยนรหัสผ่าน", "Change password"), msg,
+                new String[]{L.t("รหัสผ่านเดิม", "Current password"), L.t("รหัสผ่านใหม่", "New password"), L.t("ยืนยันรหัสผ่านใหม่", "Confirm new password")},
+                new int[]{Dialogs.PASSWORD, Dialogs.PASSWORD, Dialogs.PASSWORD}, null,
+                L.t("บันทึก", "Save"), v -> {
+                    String err = acc.changePassword(user, v[0], v[1], v[2]);
+                    showToast(err != null ? err : L.t("เปลี่ยนรหัสผ่านแล้ว", "Password changed"));
+                });
+    }
+
+    void logout() {
+        acc.logout();
+        user = null;
+        pf = null;
+        game = null;
+        popup = P_NONE;
+        screen = S_LOGIN;
+    }
+
     void pauseGame() {
         if (screen == S_GAME && game != null && !game.won && !game.lost) paused = true;
         autoOn = false;
@@ -137,6 +208,7 @@ public final class GameView extends View {
                 else paused = !paused;
                 return true;
             case S_LOBBY:
+            case S_LOGIN:
                 return false;
             default:
                 autoOn = false;
@@ -156,6 +228,7 @@ public final class GameView extends View {
             return;
         }
         game = new Game(s, pf);
+        game.infiniteSP = isAdmin() && acc.infiniteSP();
         screen = S_GAME;
         paused = false;
         speed = 1;
@@ -255,12 +328,14 @@ public final class GameView extends View {
             case S_PLAYMENU: drawPlayMenu(c); break;
             case S_BANNER: drawBanner(c); break;
             case S_ENCHANT: drawEnchant(c); break;
+            case S_LOGIN: drawLogin(c); break;
+            case S_ADMIN: drawAdmin(c); break;
             default:
                 if (game != null) drawPlay(c);
                 else screen = S_PLAYMENU;
                 break;
         }
-        if (screen != S_GAME) drawNav(c);
+        if (screen != S_GAME && screen != S_LOGIN && screen != S_ADMIN) drawNav(c);
         switch (popup) {
             case P_PLAYER: drawPlayerInfo(c); break;
             case P_SETTINGS: drawSettings(c); break;
@@ -660,8 +735,14 @@ public final class GameView extends View {
         rf.set(W - 150 * u, 50 * u, W - 30 * u, 170 * u);
         button(c, rf, null, 0xFF6B5BD6, true, () -> popup = P_SETTINGS);
         gear(c, rf.centerX(), rf.centerY() - 4 * u, 40 * u);
-        chip(c, W / 2 - 120 * u, 110 * u, 0, pf.stars);
-        chip(c, W / 2 + 140 * u, 110 * u, 1, pf.millite);
+        if (isAdmin()) {
+            rf.set(W - 290 * u, 50 * u, W - 170 * u, 170 * u);
+            button(c, rf, null, 0xFFD0407A, true, () -> { adminSel = user; screen = S_ADMIN; });
+            shield(c, rf.centerX(), rf.centerY() - 6 * u, 42 * u);
+            plain(c, "ADMIN", rf.centerX(), rf.bottom + 34 * u, 26 * u, 0xFFFF8AB8, Paint.Align.CENTER, 0);
+        }
+        chip(c, W / 2 - 170 * u, 110 * u, 0, pf.stars);
+        chip(c, W / 2 + 70 * u, 110 * u, 1, pf.millite);
 
         float ty = 330 * u;
         logo(c, W / 2, ty, 170 * u);
@@ -1193,13 +1274,14 @@ public final class GameView extends View {
 
     // ================================================================== lobby popups
     void drawPlayerInfo(Canvas c) {
-        RectF r = new RectF(80 * u, H / 2 - 520 * u, W - 80 * u, H / 2 + 520 * u);
+        RectF r = new RectF(80 * u, H / 2 - 600 * u, W - 80 * u, H / 2 + 600 * u);
         popupFrame(c, r, L.t("ข้อมูลผู้เล่น", "Player info"));
         p.setStyle(Paint.Style.FILL);
         p.setColor(0xFF6B5BD6);
         c.drawCircle(r.centerX(), r.top + 230 * u, 90 * u, p);
         person(c, r.centerX(), r.top + 225 * u, 70 * u);
-        text(c, "Commander", r.centerX(), r.top + 380 * u, 52 * u, 0xFFFFFFFF);
+        title(c, user, r.centerX(), r.top + 380 * u, 56 * u, 0xFFFFFFFF, Paint.Align.CENTER, r.width() - 80 * u);
+        if (isAdmin()) plain(c, "ADMIN", r.centerX(), r.top + 425 * u, 30 * u, 0xFFFF8AB8, Paint.Align.CENTER, 0);
         int cleared = 0;
         for (boolean b : pf.clear) if (b) cleared++;
         String[] lines = {
@@ -1210,11 +1292,17 @@ public final class GameView extends View {
                 L.t("ด่านที่ผ่าน: ", "Stages cleared: ") + cleared + "/" + Defs.ST_NAME.length,
                 L.t("บอสที่ล้มได้: ", "Bosses defeated: ") + pf.bossKills,
                 L.t("จำนวนเกมที่เล่น: ", "Games played: ") + pf.games};
-        float y = r.top + 470 * u;
+        float y = r.top + 490 * u;
         for (String s : lines) {
-            plain(c, s, r.left + 90 * u, y, 38 * u, 0xFFE6E0FF, Paint.Align.LEFT, r.width() - 180 * u);
-            y += 62 * u;
+            plain(c, s, r.left + 90 * u, y, 36 * u, 0xFFE6E0FF, Paint.Align.LEFT, r.width() - 180 * u);
+            y += 56 * u;
         }
+        float bw = (r.width() - 120 * u) / 2f;
+        rf.set(r.left + 40 * u, r.bottom - 250 * u, r.left + 40 * u + bw, r.bottom - 160 * u);
+        button(c, rf, L.t("เปลี่ยนรหัสผ่าน", "Change password"), 0xFF4F8BFF, true, () -> { popup = P_NONE; askChangePassword(); });
+        rf.set(r.right - 40 * u - bw, r.bottom - 250 * u, r.right - 40 * u, r.bottom - 160 * u);
+        button(c, rf, L.t("ออกจากระบบ", "Log out"), 0xFFFF6B5B, true, () -> Dialogs.confirm(ctx, L.t("ออกจากระบบ", "Log out"),
+                L.t("ต้องการออกจากระบบใช่ไหม?", "Log out of this account?"), L.t("ออกจากระบบ", "Log out"), this::logout));
         rf.set(r.centerX() - 200 * u, r.bottom - 130 * u, r.centerX() + 200 * u, r.bottom - 40 * u);
         button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
     }
@@ -1225,9 +1313,9 @@ public final class GameView extends View {
         text(c, "ภาษา / Language", r.centerX(), r.top + 210 * u, 42 * u, 0xFFFFFFFF);
         float bw = (r.width() - 180 * u) / 2f;
         rf.set(r.left + 60 * u, r.top + 260 * u, r.left + 60 * u + bw, r.top + 370 * u);
-        button(c, rf, "ไทย", !L.en ? 0xFFFF8A2B : 0xFF3A3360, true, () -> { L.en = false; pf.save(); });
+        button(c, rf, "ไทย", !L.en ? 0xFFFF8A2B : 0xFF3A3360, true, () -> { L.en = false; acc.setLang(false); });
         rf.set(r.right - 60 * u - bw, r.top + 260 * u, r.right - 60 * u, r.top + 370 * u);
-        button(c, rf, "English", L.en ? 0xFFFF8A2B : 0xFF3A3360, true, () -> { L.en = true; pf.save(); });
+        button(c, rf, "English", L.en ? 0xFFFF8A2B : 0xFF3A3360, true, () -> { L.en = true; acc.setLang(true); });
         plain(c, "Stella TD " + VERSION, r.centerX(), r.top + 450 * u, 30 * u, 0x99FFFFFF, Paint.Align.CENTER, 0);
         rf.set(r.centerX() - 200 * u, r.bottom - 130 * u, r.centerX() + 200 * u, r.bottom - 40 * u);
         button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
@@ -1331,6 +1419,173 @@ public final class GameView extends View {
     }
 
 
+
+    // ================================================================== login
+    void drawLogin(Canvas c) {
+        logo(c, W / 2, H * 0.2f, 170 * u);
+        plain(c, L.t("ปกป้องฐานจากอุกกาบาตและหลุมดำ", "Defend your base from meteors and black holes"), W / 2, H * 0.2f + 80 * u, 36 * u, 0xFFE6E0FF, Paint.Align.CENTER, W - 100 * u);
+        float cy = H * 0.42f;
+        sprite(c, pBmp[Defs.SUN], W / 2, cy, 150 * u, 255);
+        for (int i = 0; i < 3; i++) {
+            int t = i == 0 ? Defs.EARTH : (i == 1 ? Defs.SATURN : Defs.NEPTUNE);
+            double a = anim * (0.6 - i * 0.12) + i * 2.1;
+            float rr = (230 + i * 70) * u;
+            sprite(c, pBmp[t], W / 2 + (float) Math.cos(a) * rr, cy + (float) Math.sin(a) * rr * 0.45f, (50 + i * 8) * u, 255);
+        }
+        float bw = 640 * u, bh = 130 * u, by = H * 0.6f;
+        rf.set(W / 2 - bw / 2, by, W / 2 + bw / 2, by + bh);
+        button(c, rf, L.t("เข้าสู่ระบบ", "Log in"), 0xFFFF8A2B, true, () -> askLogin(null));
+        rf.set(W / 2 - bw / 2, by + bh + 40 * u, W / 2 + bw / 2, by + bh * 2 + 40 * u);
+        button(c, rf, L.t("สร้างไอดีใหม่", "Create account"), 0xFF4F8BFF, true, this::askRegister);
+        float ly = by + bh * 2 + 110 * u, lw = 220 * u;
+        rf.set(W / 2 - lw - 10 * u, ly, W / 2 - 10 * u, ly + 90 * u);
+        button(c, rf, "ไทย", !L.en ? 0xFF33C6A6 : 0xFF3A3360, true, () -> { L.en = false; acc.setLang(false); });
+        rf.set(W / 2 + 10 * u, ly, W / 2 + lw + 10 * u, ly + 90 * u);
+        button(c, rf, "English", L.en ? 0xFF33C6A6 : 0xFF3A3360, true, () -> { L.en = true; acc.setLang(true); });
+        plain(c, L.t("ไอดีและความคืบหน้าถูกเก็บไว้ในเครื่องนี้", "Accounts and progress are saved on this device"),
+                W / 2, H - 80 * u, 28 * u, 0x99FFFFFF, Paint.Align.CENTER, W - 80 * u);
+    }
+
+    // ================================================================== admin panel
+    final java.util.HashMap<String, Profile> profCache = new java.util.HashMap<>();
+
+    Profile profileOf(String u) {
+        if (u.equals(user)) return pf;
+        Profile q = profCache.get(u);
+        if (q == null) {
+            q = new Profile(acc.prefsOf(u));
+            profCache.put(u, q);
+        }
+        return q;
+    }
+
+    void shield(Canvas c, float x, float y, float r) {
+        Path s = new Path();
+        s.moveTo(x, y - r);
+        s.lineTo(x + r * 0.8f, y - r * 0.65f);
+        s.cubicTo(x + r * 0.8f, y + r * 0.2f, x + r * 0.4f, y + r * 0.75f, x, y + r);
+        s.cubicTo(x - r * 0.4f, y + r * 0.75f, x - r * 0.8f, y + r * 0.2f, x - r * 0.8f, y - r * 0.65f);
+        s.close();
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0xFFFFE6F0);
+        c.drawPath(s, p);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(r * 0.12f);
+        sp.setColor(0xFF140A2A);
+        c.drawPath(s, sp);
+        star(c, x, y - r * 0.05f, r * 0.42f);
+    }
+
+    void adminDo(String msg, Runnable r) {
+        r.run();
+        showToast(msg);
+    }
+
+    void drawAdmin(Canvas c) {
+        if (!isAdmin()) { screen = S_LOBBY; return; }
+        header(c, "Admin Panel");
+        java.util.ArrayList<String> list = acc.users();
+        if (adminSel == null || !list.contains(adminSel)) adminSel = user;
+        float y = 190 * u;
+        if (acc.mustChange(user)) {
+            RectF w = new RectF(40 * u, y, W - 40 * u, y + 130 * u);
+            panel(c, w, 0xFF6A1F3A, 30 * u);
+            plain(c, L.t("แอดมินยังใช้รหัสเริ่มต้น! เปลี่ยนเลย", "Admin still uses the default password!"), w.left + 30 * u, w.centerY() + 12 * u, 32 * u, 0xFFFFD0DD, Paint.Align.LEFT, w.width() - 330 * u);
+            rf.set(w.right - 280 * u, w.top + 25 * u, w.right - 25 * u, w.bottom - 25 * u);
+            button(c, rf, L.t("เปลี่ยนรหัส", "Change"), 0xFFFF6B5B, true, this::askChangePassword);
+            y += 160 * u;
+        }
+        // ---- account list
+        int per = 4, pages = Math.max(1, (list.size() + per - 1) / per);
+        adminPage = Math.max(0, Math.min(adminPage, pages - 1));
+        text(c, L.t("บัญชีทั้งหมด ", "All accounts ") + "(" + list.size() + ")", 50 * u, y + 45 * u, 40 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        rf.set(W - 290 * u, y, W - 180 * u, y + 70 * u);
+        button(c, rf, "<", 0xFF4A3D8F, adminPage > 0, () -> adminPage--);
+        plain(c, (adminPage + 1) + "/" + pages, W - 140 * u, y + 47 * u, 30 * u, 0xFFE6E0FF, Paint.Align.CENTER, 0);
+        rf.set(W - 100 * u, y, W - 40 * u, y + 70 * u);
+        button(c, rf, ">", 0xFF4A3D8F, adminPage < pages - 1, () -> adminPage++);
+        y += 90 * u;
+        for (int i = adminPage * per; i < Math.min(list.size(), (adminPage + 1) * per); i++) {
+            final String a = list.get(i);
+            RectF r = new RectF(40 * u, y, W - 40 * u, y + 100 * u);
+            panel(c, r, a.equals(adminSel) ? 0xFF4A3D8F : 0xFF241A4E, 24 * u);
+            text(c, a + (a.equals(user) ? L.t("  (คุณ)", "  (you)") : ""), r.left + 30 * u, r.top + 62 * u, 40 * u, 0xFFFFFFFF, Paint.Align.LEFT, 420 * u);
+            float tx = r.left + 470 * u;
+            if (acc.isAdmin(a)) { plain(c, "ADMIN", tx, r.top + 60 * u, 28 * u, 0xFFFF8AB8, Paint.Align.LEFT, 0); tx += 110 * u; }
+            if (acc.isBanned(a)) { plain(c, "BANNED", tx, r.top + 60 * u, 28 * u, 0xFFFF6B5B, Paint.Align.LEFT, 0); }
+            Profile q = profileOf(a);
+            plain(c, q.stars + " Star • " + q.millite + " Mil", r.right - 30 * u, r.top + 60 * u, 28 * u, 0xFFFFD23F, Paint.Align.RIGHT, 0);
+            btns.add(new Btn(r, () -> adminSel = a));
+            y += 112 * u;
+        }
+        y = Math.max(y, 190 * u + (acc.mustChange(user) ? 160 * u : 0) + 90 * u + per * 112 * u) + 10 * u;
+        // ---- actions for the selected account
+        final String t = adminSel;
+        final Profile q = profileOf(t);
+        final boolean tAdmin = acc.isAdmin(t);
+        text(c, L.t("จัดการ: ", "Manage: ") + t, 50 * u, y + 40 * u, 42 * u, 0xFFFFFFFF, Paint.Align.LEFT, W - 100 * u);
+        y += 70 * u;
+        float bw = (W - 110 * u) / 2f, bh = 96 * u, gap = 18 * u;
+        String[] labels = {"+1000 Star", "+50 Millite", "+5 Effect Ticket", L.t("กำหนดจำนวน Star", "Set Star amount"),
+                L.t("ปลดล็อกดาวทั้งหมด", "Unlock all planets"), L.t("ปลดล็อกทุกด่าน", "Unlock all stages"),
+                L.t("ตั้งรหัสผ่านใหม่", "Set new password"), acc.isBanned(t) ? L.t("ปลดแบน", "Unban") : L.t("แบนบัญชี", "Ban account"),
+                L.t("รีเซ็ตความคืบหน้า", "Reset progress"), L.t("ลบบัญชี", "Delete account")};
+        int[] colors = {0xFF33C6A6, 0xFFB86BFF, 0xFFFF8A5C, 0xFF4F8BFF, 0xFF33C6A6, 0xFF33C6A6, 0xFF4F8BFF, 0xFFFF6B5B, 0xFFFF6B5B, 0xFFD0304A};
+        Runnable[] acts = {
+                () -> adminDo("+1000 Star → " + t, () -> { q.stars += 1000; q.save(); }),
+                () -> adminDo("+50 Millite → " + t, () -> { q.millite += 50; q.save(); }),
+                () -> adminDo("+5 Effect Ticket → " + t, () -> { q.tickets += 5; q.save(); }),
+                () -> Dialogs.ask(ctx, L.t("กำหนดจำนวน Star", "Set Star amount"), t, new String[]{"Star"}, new int[]{Dialogs.NUMBER},
+                        new String[]{String.valueOf(q.stars)}, "OK", v -> {
+                            try {
+                                q.stars = Math.max(0, Math.min(99999999, Integer.parseInt(v[0].trim())));
+                                q.save();
+                                showToast("Star = " + q.stars);
+                            } catch (NumberFormatException e) { showToast(L.t("ใส่ตัวเลขเท่านั้น", "Numbers only")); }
+                        }),
+                () -> adminDo(L.t("ปลดล็อกดาวทั้งหมดแล้ว", "All planets unlocked"), q::unlockAllPlanets),
+                () -> adminDo(L.t("ปลดล็อกทุกด่านแล้ว", "All stages unlocked"), q::unlockAllStages),
+                () -> Dialogs.ask(ctx, L.t("ตั้งรหัสผ่านใหม่", "Set new password"), t, new String[]{L.t("รหัสผ่านใหม่", "New password")},
+                        new int[]{Dialogs.PASSWORD}, null, "OK", v -> {
+                            String err = acc.setPassword(t, v[0]);
+                            showToast(err != null ? err : L.t("ตั้งรหัสผ่านใหม่ให้ ", "New password set for ") + t);
+                        }),
+                () -> {
+                    if (tAdmin) { showToast(L.t("แบนแอดมินไม่ได้", "Admins can't be banned")); return; }
+                    acc.setBanned(t, !acc.isBanned(t));
+                    showToast(t + (acc.isBanned(t) ? " banned" : " unbanned"));
+                },
+                () -> Dialogs.confirm(ctx, L.t("รีเซ็ตความคืบหน้า", "Reset progress"),
+                        L.t("ลบความคืบหน้าทั้งหมดของ ", "Erase all progress of ") + t + L.t(" ใช่ไหม? ย้อนกลับไม่ได้", "? This can't be undone."),
+                        L.t("รีเซ็ต", "Reset"), () -> adminDo(L.t("รีเซ็ตแล้ว", "Progress reset"), q::reset)),
+                () -> {
+                    if (tAdmin || t.equals(user)) { showToast(L.t("ลบบัญชีนี้ไม่ได้", "This account can't be deleted")); return; }
+                    Dialogs.confirm(ctx, L.t("ลบบัญชี", "Delete account"),
+                            L.t("ลบบัญชี ", "Delete account ") + t + L.t(" ถาวรใช่ไหม? ย้อนกลับไม่ได้", " permanently? This can't be undone."),
+                            L.t("ลบ", "Delete"), () -> {
+                                String err = acc.delete(t);
+                                profCache.remove(t);
+                                adminSel = user;
+                                showToast(err != null ? err : L.t("ลบบัญชีแล้ว", "Account deleted"));
+                            });
+                }};
+        for (int i = 0; i < labels.length; i++) {
+            float x = 40 * u + (i % 2) * (bw + 30 * u), yy = y + (i / 2) * (bh + gap);
+            rf.set(x, yy, x + bw, yy + bh);
+            boolean en = !((i == 7 || i == 9) && (tAdmin || (i == 9 && t.equals(user))));
+            button(c, rf, labels[i], colors[i], en, acts[i]);
+        }
+        y += 5 * (bh + gap) + 20 * u;
+        // ---- admin tools
+        text(c, L.t("เครื่องมือแอดมิน", "Admin tools"), 50 * u, y + 40 * u, 42 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        y += 70 * u;
+        boolean inf = acc.infiniteSP();
+        rf.set(40 * u, y, 40 * u + bw, y + bh);
+        button(c, rf, L.t("SP ไม่จำกัด: ", "Infinite SP: ") + (inf ? "ON" : "OFF"), inf ? 0xFFFF8A2B : 0xFF3A3360, true, () -> acc.setInfiniteSP(!acc.infiniteSP()));
+        rf.set(70 * u + bw, y, 70 * u + bw * 2, y + bh);
+        button(c, rf, L.t("เปลี่ยนรหัสแอดมิน", "Change admin password"), 0xFF4F8BFF, true, this::askChangePassword);
+    }
 
     // ================================================================== match
     void drawPlay(Canvas c) {

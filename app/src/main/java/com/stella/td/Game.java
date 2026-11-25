@@ -24,7 +24,7 @@ final class Game {
     final int[] deck;
     int stars = 5, baseHp = 20, maxBaseHp = 20, wave = 0, sunCount = 0;
     int earnStars, earnMillite, bossKills;
-    boolean inWave, won, lost;
+    boolean inWave, won, lost, infiniteSP;
     float prepT = 12f, spawnT, spawnGap = 0.7f, time, shake;
     String banner;
     float bannerT;
@@ -327,6 +327,7 @@ final class Game {
             waveCleared();
         }
 
+        if (infiniteSP) stars = 999;
         computeBuffs();
         updatePlanets(dt);
         updateEnemies(dt);

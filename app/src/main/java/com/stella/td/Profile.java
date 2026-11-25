@@ -52,7 +52,6 @@ final class Profile {
 
     void load() {
         boolean fresh = !sp.getBoolean("v2", false);
-        L.en = sp.getInt("lang", 0) == 1;
         stars = sp.getInt("stars", 300);
         millite = sp.getInt("millite", 5);
         tickets = sp.getInt("tickets", 0);
@@ -96,7 +95,6 @@ final class Profile {
         for (int i = 0; i < cl.length; i++) cl[i] = clear[i] ? 1 : 0;
         sp.edit()
                 .putBoolean("v2", true)
-                .putInt("lang", L.en ? 1 : 0)
                 .putInt("stars", stars)
                 .putInt("millite", millite)
                 .putInt("tickets", tickets)
@@ -113,6 +111,24 @@ final class Profile {
                 .putString("best", str(best))
                 .putString("clear", str(cl))
                 .apply();
+    }
+
+    /** wipe all progress back to a brand-new account */
+    void reset() {
+        sp.edit().clear().apply();
+        java.util.Arrays.fill(owned, false);
+        java.util.Arrays.fill(copies, 0);
+        load();
+    }
+
+    void unlockAllPlanets() {
+        for (int t = 0; t < Defs.P_COUNT; t++) owned[t] = true;
+        save();
+    }
+
+    void unlockAllStages() {
+        unlocked = Defs.ST_NAME.length;
+        save();
     }
 
     int ownedCount() {
