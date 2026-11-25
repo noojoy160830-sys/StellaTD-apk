@@ -201,6 +201,8 @@ final class Game {
         int cost = Defs.PLACE_COST[type];
         if (slots[slot] != null) return L.t("ช่องนี้มีดาวแล้ว", "Slot is taken");
         if (stars < cost) return L.t("SP ไม่พอ", "Not enough SP");
+        if (countOf(type) >= Defs.PLACE_LIMIT[type])
+            return L.t("วาง " + Defs.P_NAME[type] + " ได้สูงสุด " + Defs.PLACE_LIMIT[type] + " ดวง", "Max " + Defs.PLACE_LIMIT[type] + " " + Defs.P_NAME[type] + " on the map");
         stars -= cost;
         Planet p = new Planet();
         p.type = type;
@@ -220,8 +222,14 @@ final class Game {
         return null;
     }
 
+    int countOf(int type) {
+        int n = 0;
+        for (Planet q : slots) if (q != null && q.type == type) n++;
+        return n;
+    }
+
     String upgrade(Planet p) {
-        if (p.level >= Defs.MAX_LEVEL) return L.t("เลเวลสูงสุดแล้ว", "Max level");
+        if (p.level >= Defs.MATCH_MAX[p.type]) return L.t("เลเวลสูงสุดในด่านแล้ว (Lv " + Defs.MATCH_MAX[p.type] + ")", "Max in-match level (Lv " + Defs.MATCH_MAX[p.type] + ")");
         int c = upgradeCost(p);
         if (stars < c) return L.t("SP ไม่พอ", "Not enough SP");
         stars -= c;
@@ -318,9 +326,9 @@ final class Game {
         Enemy e = makeEnemy(code % MINI_FLAG);
         if (mini) {
             e.mini = true;
-            e.maxHp *= 5f;
+            e.maxHp *= 4f;
             e.hp = e.maxHp;
-            e.maxShield *= 5f;
+            e.maxShield *= 4f;
             e.shield = e.maxShield;
             e.radius *= 1.4f;
             e.speed *= 0.8f;

@@ -9,10 +9,13 @@ final class Profile {
     static final int PULL1 = 100, PULL10 = 900, ROLL_COST = 1, CRYSTAL_COST = 1, MAX_LV = 10;
     static final int DECK_SIZE = 4;
 
-    private final SharedPreferences sp;
+    private final Store sp;
     final Random rnd = new Random();
+    /** called after every save (the logged-in profile uses it to schedule a cloud upload) */
+    Runnable onSave;
+    long saveTime;
 
-    int stars, millite, crystals, unlocked, bossKills, games, wins, playSec;
+    int stars, millite, crystals, unlocked, bossKills, games, wins, playSec, avatar;
     final boolean[] owned = new boolean[Defs.P_COUNT];
     final int[] copies = new int[Defs.P_COUNT];
     final int[] level = new int[Defs.P_COUNT];
@@ -25,7 +28,11 @@ final class Profile {
     boolean[] lastNew = new boolean[0];
 
     Profile(SharedPreferences sp) {
-        this.sp = sp;
+        this(new Store.Prefs(sp));
+    }
+
+    Profile(Store st) {
+        this.sp = st;
         load();
     }
 
@@ -52,10 +59,12 @@ final class Profile {
 
     void load() {
         boolean fresh = !sp.getBoolean("v2", false);
+        saveTime = Long.parseLong(sp.getString("saveTime", "0"));
         stars = sp.getInt("stars", 300);
         millite = sp.getInt("millite", 5);
         crystals = sp.getInt("crystals", sp.getInt("tickets", 0));
         wins = sp.getInt("wins", 0);
+        avatar = sp.getInt("avatar", 0);
         playSec = sp.getInt("playSec", 0);
         unlocked = Math.max(1, sp.getInt("unlocked", 1));
         bossKills = sp.getInt("bossKills", 0);
@@ -96,37 +105,57 @@ final class Profile {
         }
     }
 
-    void save() {
+    java.util.LinkedHashMap<String, Object> toMap() {
         int[] own = new int[Defs.P_COUNT];
         for (int i = 0; i < own.length; i++) own[i] = owned[i] ? 1 : 0;
         int[] cl = new int[clear.length];
         for (int i = 0; i < cl.length; i++) cl[i] = clear[i] ? 1 : 0;
-        sp.edit()
-                .putBoolean("v2", true)
-                .putBoolean("v3", true)
-                .putInt("stars", stars)
-                .putInt("millite", millite)
-                .putInt("crystals", crystals)
-                .putInt("wins", wins)
-                .putInt("playSec", playSec)
-                .putInt("unlocked", unlocked)
-                .putInt("bossKills", bossKills)
-                .putInt("games", games)
-                .putString("owned", str(own))
-                .putString("copies", str(copies))
-                .putString("level", str(level))
-                .putString("enchant", str(enchant))
-                .putString("tier", str(tier))
-                .putString("material", str(material))
-                .putString("deck", str(deck))
-                .putString("best", str(best))
-                .putString("clear", str(cl))
-                .apply();
+        java.util.LinkedHashMap<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("v2", true);
+        m.put("v3", true);
+        m.put("saveTime", String.valueOf(saveTime));
+        m.put("stars", stars);
+        m.put("millite", millite);
+        m.put("crystals", crystals);
+        m.put("wins", wins);
+        m.put("avatar", avatar);
+        m.put("playSec", playSec);
+        m.put("unlocked", unlocked);
+        m.put("bossKills", bossKills);
+        m.put("games", games);
+        m.put("owned", str(own));
+        m.put("copies", str(copies));
+        m.put("level", str(level));
+        m.put("enchant", str(enchant));
+        m.put("tier", str(tier));
+        m.put("material", str(material));
+        m.put("deck", str(deck));
+        m.put("best", str(best));
+        m.put("clear", str(cl));
+        return m;
+    }
+
+    /** replace this profile with values from the cloud (numbers arrive as doubles) */
+    void fromMap(java.util.Map<String, Object> remote) {
+        java.util.LinkedHashMap<String, Object> m = new java.util.LinkedHashMap<>();
+        for (java.util.Map.Entry<String, Object> e : remote.entrySet()) {
+            Object v = e.getValue();
+            if (v instanceof Double) v = ((Double) v).intValue();
+            m.put(e.getKey(), v);
+        }
+        sp.write(m, true);
+        load();
+    }
+
+    void save() {
+        saveTime = System.currentTimeMillis();
+        sp.write(toMap(), false);
+        if (onSave != null) onSave.run();
     }
 
     /** wipe all progress back to a brand-new account */
     void reset() {
-        sp.edit().clear().apply();
+        sp.write(new java.util.HashMap<String, Object>(), true);
         java.util.Arrays.fill(owned, false);
         java.util.Arrays.fill(copies, 0);
         load();
@@ -134,6 +163,11 @@ final class Profile {
 
     void unlockAllPlanets() {
         for (int t = 0; t < Defs.P_COUNT; t++) owned[t] = true;
+        save();
+    }
+
+    void maxAllPlanets() {
+        for (int t = 0; t < Defs.P_COUNT; t++) if (owned[t]) level[t] = MAX_LV;
         save();
     }
 

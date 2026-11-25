@@ -56,7 +56,15 @@ final class Defs {
             "Heat waves from the base, stronger each time"};
     /** in-match SP cost to place each planet */
     static final int[] PLACE_COST = {1, 2, 2, 3, 3, 4, 5, 5, 5, 5, 5, 8};
-    static final int MAX_LEVEL = 5;
+    /** how many of each planet may be on the map at once */
+    static final int[] PLACE_LIMIT = {6, 3, 6, 4, 3, 2, 3, 2, 3, 2, 2, 1};
+    /** highest level a planet can be upgraded to during a match (outside the match the cap is Profile.MAX_LV = 10) */
+    static final int[] MATCH_MAX = {6, 4, 6, 5, 5, 4, 4, 4, 4, 4, 4, 3};
+    /** planet categories; everything so far belongs to the Solar System */
+    static final int CAT_SOLAR = 0;
+    static final String[] CAT_NAME = {"Solar System", "Deep Space", "Exotic"};
+    static final String[] CAT_NAME_TH = {"ระบบสุริยะ", "อวกาศลึก", "ดาวประหลาด"};
+    static final int[] P_CATEGORY = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
     // ---------- enchants (Factory, rolled with Millite) ----------
     static final int EN_STRONG = 0, EN_REACH = 1, EN_MOVING = 2, EN_LIGHTNING = 3, EN_STORM = 4, EN_TECH = 5,
@@ -129,7 +137,7 @@ final class Defs {
     static final String[] ST_NAME = {"วงโคจรแรก", "แถบดาวเคราะห์น้อย", "เนบิวลาวน", "ใจกลางหลุมดำ"};
     static final String[] ST_NAME_EN = {"First Orbit", "Asteroid Belt", "Swirl Nebula", "Black Hole Core"};
     static final int[] ST_WAVES = {15, 20, 25, 30};
-    static final float[] ST_HP = {0.55f, 1.2f, 1.45f, 1.75f};
+    static final float[] ST_HP = {0.45f, 1.2f, 1.45f, 1.75f};
     static final int[] ST_COLOR = {0xFF5B8CFF, 0xFF33C6A6, 0xFFE05BD8, 0xFF8A5BFF};
 
     // Map frame is 1000 x 1200 units. Paths are x,y pairs.

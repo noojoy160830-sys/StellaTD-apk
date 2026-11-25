@@ -268,212 +268,38 @@ final class Art {
         Bitmap b = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
         float cx = size / 2f, cy = size / 2f;
-        float r = size * 0.36f, ow = size * 0.022f;
         if (type == Defs.SATELLITE) {
             satellite(c, cx, cy, size);
             return b;
         }
-        if (type == Defs.SATURN || type == Defs.URANUS) r = size * 0.27f;
-        if (type == Defs.SUN) r = size * 0.31f;
-
-        int light, dark, atmo;
+        boolean ringed = type == Defs.SATURN || type == Defs.URANUS;
+        float rf = ringed ? 0.27f : (type == Defs.SUN ? 0.3f : 0.36f);
+        int atmo;
+        float as, glow;
         switch (type) {
-            case Defs.EARTH: light = 0xFF5AB8FF; dark = 0xFF0E3E8C; atmo = 0xFF8FD3FF; break;
-            case Defs.MOON: light = 0xFFE9EAF2; dark = 0xFF7E8098; atmo = 0xFFD8DAE8; break;
-            case Defs.SATURN: light = 0xFFF8E2AA; dark = 0xFFB98A3A; atmo = 0xFFFFE9B0; break;
-            case Defs.JUPITER: light = 0xFFF6D9B4; dark = 0xFFB0703A; atmo = 0xFFFFD9A8; break;
-            case Defs.MARS: light = 0xFFF08A5A; dark = 0xFF8E2A16; atmo = 0xFFFFA77F; break;
-            case Defs.MERCURY: light = 0xFFCDBBAA; dark = 0xFF6B5546; atmo = 0xFFBFAEA0; break;
-            case Defs.VENUS: light = 0xFFFFE7A6; dark = 0xFFD08A2A; atmo = 0xFFFFF0C0; break;
-            case Defs.URANUS: light = 0xFFC8FBFF; dark = 0xFF3AA6BC; atmo = 0xFFB8F6FF; break;
-            case Defs.NEPTUNE: light = 0xFF6F94FF; dark = 0xFF16228A; atmo = 0xFF7FA6FF; break;
-            case Defs.PLUTO: light = 0xFFF2DCC2; dark = 0xFF94694A; atmo = 0xFFE8D4BE; break;
-            case Defs.SUN: light = 0xFFFFF7B0; dark = 0xFFFF9A14; atmo = 0xFFFFC23C; break;
-            default: light = 0xFFFFFFFF; dark = 0xFF888888; atmo = 0xFFFFFFFF;
+            case Defs.EARTH: atmo = 0xFF6FB8FF; as = 0.95f; glow = 0.2f; break;
+            case Defs.MOON: atmo = 0xFFCCCCDD; as = 0.12f; glow = 0.05f; break;
+            case Defs.MERCURY: atmo = 0xFFBFAEA0; as = 0.1f; glow = 0.04f; break;
+            case Defs.MARS: atmo = 0xFFFFA77F; as = 0.5f; glow = 0.1f; break;
+            case Defs.JUPITER: atmo = 0xFFFFD9A8; as = 0.45f; glow = 0.1f; break;
+            case Defs.SATURN: atmo = 0xFFFFE9B0; as = 0.45f; glow = 0.12f; break;
+            case Defs.VENUS: atmo = 0xFFFFF0C0; as = 0.85f; glow = 0.17f; break;
+            case Defs.URANUS: atmo = 0xFFB8F6FF; as = 0.8f; glow = 0.16f; break;
+            case Defs.NEPTUNE: atmo = 0xFF7FA6FF; as = 0.85f; glow = 0.16f; break;
+            case Defs.PLUTO: atmo = 0xFFE8D4BE; as = 0.25f; glow = 0.06f; break;
+            default: atmo = 0xFFFFB030; as = 1f; glow = 0.58f; break;
         }
-
-        // ---- behind the planet
-        if (type == Defs.SUN) {
-            c.drawCircle(cx, cy, size * 0.5f, grad(new RadialGradient(cx, cy, size * 0.5f,
-                    new int[]{0xFFFFD45A, 0xAAFF9A1C, 0x33FF6A00, 0x00FF5A00}, new float[]{0.5f, 0.66f, 0.85f, 1f}, Shader.TileMode.CLAMP)));
-            Path rp = new Path();
-            Random rd = new Random(12);
-            for (int i = 0; i < 16; i++) {
-                double a = i * Math.PI / 8 + rd.nextFloat() * 0.1;
-                float len = r * (1.32f + (i % 2) * 0.16f + rd.nextFloat() * 0.06f);
-                double a1 = a - 0.11, a2 = a + 0.11;
-                rp.moveTo(cx + (float) Math.cos(a1) * r * 0.95f, cy + (float) Math.sin(a1) * r * 0.95f);
-                rp.lineTo(cx + (float) Math.cos(a) * len, cy + (float) Math.sin(a) * len);
-                rp.lineTo(cx + (float) Math.cos(a2) * r * 0.95f, cy + (float) Math.sin(a2) * r * 0.95f);
-                rp.close();
-            }
-            c.drawPath(rp, grad(new RadialGradient(cx, cy, r * 1.5f, 0xFFFFE07A, 0xFFFF7A0A, Shader.TileMode.CLAMP)));
-            c.drawPath(rp, stroke(ow * 0.8f, 0xFFB34A00));
-        } else {
-            atmosphere(c, cx, cy, r, atmo);
-        }
-        if (type == Defs.SATURN)
-            rings(c, cx, cy, r, -14, false, new int[]{0xFF8A6A35, 0xFFE9D29A, 0xFFC7A866, 0xFFF4E4BC},
-                    new float[]{1.32f, 1.48f, 1.66f, 1.82f}, 0.13f);
-        if (type == Defs.URANUS)
-            rings(c, cx, cy, r, -72, false, new int[]{0xAADDFBFF, 0x88BDF6FF, 0xAAE8FFFF},
-                    new float[]{1.45f, 1.6f, 1.75f}, 0.035f);
-
-        // ---- planet body
-        c.drawCircle(cx, cy, r, grad(new RadialGradient(cx - r * 0.3f, cy - r * 0.35f, r * 1.45f, light, dark, Shader.TileMode.CLAMP)));
-        c.save();
-        c.clipPath(circlePath(cx, cy, r));
-        Paint p = fill();
-        switch (type) {
-            case Defs.EARTH: {
-                c.drawCircle(cx, cy, r, grad(new RadialGradient(cx + r * 0.2f, cy + r * 0.2f, r, 0x33002050, 0x00002050, Shader.TileMode.CLAMP)));
-                int land = 0xFF3FAE5A, land2 = 0xFF8C9A4A, land3 = 0xFFD8C27A;
-                blob(c, cx - r * 0.45f, cy - r * 0.15f, r * 0.42f, 3, 0.35f, land);
-                blob(c, cx - r * 0.3f, cy + r * 0.45f, r * 0.24f, 4, 0.4f, land);
-                blob(c, cx + r * 0.5f, cy + r * 0.05f, r * 0.36f, 5, 0.4f, land);
-                blob(c, cx + r * 0.42f, cy - r * 0.05f, r * 0.17f, 6, 0.4f, land3);
-                blob(c, cx - r * 0.52f, cy - r * 0.25f, r * 0.18f, 7, 0.4f, land2);
-                blob(c, cx + r * 0.6f, cy + r * 0.25f, r * 0.12f, 8, 0.4f, land2);
-                p.setColor(0xFFF4FAFF);
-                c.drawOval(new RectF(cx - r * 0.6f, cy - r * 1.08f, cx + r * 0.6f, cy - r * 0.8f), p);
-                c.drawOval(new RectF(cx - r * 0.5f, cy + r * 0.84f, cx + r * 0.5f, cy + r * 1.08f), p);
-                Paint cl = stroke(r * 0.05f, 0xAAFFFFFF);
-                Random rd = new Random(9);
-                for (int i = 0; i < 4; i++) {
-                    float y = cy - r * 0.55f + i * r * 0.36f, x = cx - r + rd.nextFloat() * r;
-                    c.drawArc(new RectF(x - r * 0.35f, y - r * 0.08f, x + r * 0.45f, y + r * 0.1f), 190, 150, false, cl);
-                }
-                break;
-            }
-            case Defs.MOON: {
-                blob(c, cx - r * 0.25f, cy - r * 0.25f, r * 0.33f, 21, 0.3f, 0x558A8CA8);
-                blob(c, cx + r * 0.2f, cy - r * 0.05f, r * 0.22f, 22, 0.3f, 0x558A8CA8);
-                blob(c, cx - r * 0.05f, cy + r * 0.35f, r * 0.2f, 23, 0.3f, 0x448A8CA8);
-                speckle(c, cx, cy, r, 31, 220, 0x22FFFFFF, 0x22303048);
-                craterField(c, cx, cy, r, 3, 16, 0x557A7C96, 0x88FFFFFF);
-                break;
-            }
-            case Defs.MERCURY: {
-                speckle(c, cx, cy, r, 41, 260, 0x22FFFFFF, 0x2A2A1A10);
-                blob(c, cx + r * 0.25f, cy - r * 0.3f, r * 0.3f, 42, 0.3f, 0x33503A2C);
-                craterField(c, cx, cy, r, 11, 22, 0x66574536, 0x77F2E4D6);
-                break;
-            }
-            case Defs.MARS: {
-                blob(c, cx - r * 0.3f, cy + r * 0.1f, r * 0.45f, 51, 0.35f, 0x55701A0C);
-                blob(c, cx + r * 0.45f, cy - r * 0.35f, r * 0.25f, 52, 0.35f, 0x44701A0C);
-                blob(c, cx + r * 0.2f, cy + r * 0.45f, r * 0.3f, 53, 0.35f, 0x33FFC09A);
-                Paint can = stroke(r * 0.05f, 0x77601408);
-                Path v = new Path();
-                v.moveTo(cx - r * 0.7f, cy - r * 0.05f);
-                v.cubicTo(cx - r * 0.3f, cy - r * 0.15f, cx + r * 0.1f, cy + r * 0.05f, cx + r * 0.55f, cy - r * 0.02f);
-                c.drawPath(v, can);
-                speckle(c, cx, cy, r, 54, 200, 0x22FFE0C8, 0x22400A00);
-                craterField(c, cx, cy, r, 5, 8, 0x44701A0C, 0x55FFC8A8);
-                p.setColor(0xF0FFFFFF);
-                c.drawPath(blobPath(cx, cy - r * 0.95f, r * 0.42f, 55, 0.2f), p);
-                break;
-            }
-            case Defs.SATURN: {
-                int[] bc = {0x33A0702A, 0x22FFFFFF, 0x44A0702A, 0x22FFF4D0, 0x33885820, 0x22FFFFFF, 0x44A0702A};
-                for (int i = 0; i < bc.length; i++)
-                    wavyBand(c, cx, cy, r, cy - r + (i + 0.5f) * 2 * r / bc.length, r * 0.22f, r * 0.02f, 0.6f, i, bc[i]);
-                // ring shadow on the planet
-                c.save();
-                c.rotate(-14, cx, cy);
-                Paint rs = stroke(r * 0.12f, 0x55301A00);
-                c.drawArc(new RectF(cx - r * 1.6f, cy - r * 0.2f, cx + r * 1.6f, cy + r * 0.62f), 200, 140, false, rs);
-                c.restore();
-                break;
-            }
-            case Defs.JUPITER: {
-                int[] bc = {0x66B86A34, 0x44FFF2E0, 0x88C0703A, 0x55FFF6E8, 0x77A0522A, 0x33FFE8D0, 0x88B46030, 0x55FFF0DC, 0x66A0582E};
-                for (int i = 0; i < bc.length; i++)
-                    wavyBand(c, cx, cy, r, cy - r + (i + 0.5f) * 2 * r / bc.length, r * 0.2f, r * 0.03f, 0.9f, i * 1.7f, bc[i]);
-                float sx = cx + r * 0.3f, sy = cy + r * 0.38f;
-                c.drawOval(new RectF(sx - r * 0.3f, sy - r * 0.16f, sx + r * 0.3f, sy + r * 0.16f), grad(new RadialGradient(sx, sy, r * 0.3f, 0xFFE0502E, 0xFFA02818, Shader.TileMode.CLAMP)));
-                c.drawOval(new RectF(sx - r * 0.3f, sy - r * 0.16f, sx + r * 0.3f, sy + r * 0.16f), stroke(r * 0.04f, 0xAAFFD8B8));
-                c.drawArc(new RectF(sx - r * 0.18f, sy - r * 0.08f, sx + r * 0.18f, sy + r * 0.08f), 0, 270, false, stroke(r * 0.03f, 0x88FFB090));
-                p.setColor(0xCCFFF6EA);
-                c.drawOval(new RectF(cx - r * 0.5f, cy - r * 0.42f, cx - r * 0.3f, cy - r * 0.33f), p);
-                c.drawOval(new RectF(cx - r * 0.2f, cy - r * 0.44f, cx - r * 0.05f, cy - r * 0.36f), p);
-                break;
-            }
-            case Defs.VENUS: {
-                for (int i = 0; i < 7; i++)
-                    wavyBand(c, cx, cy, r, cy - r + (i + 0.5f) * 2 * r / 7, r * 0.18f, r * 0.08f, 0.5f, i * 2.1f, (i % 2 == 0) ? 0x33FFFFFF : 0x33C06A10);
-                Paint sw = stroke(r * 0.06f, 0x44FFFFFF);
-                for (int i = 0; i < 4; i++) {
-                    float rr = r * (0.25f + i * 0.17f);
-                    c.drawArc(new RectF(cx - rr, cy - rr * 0.6f, cx + rr, cy + rr * 0.6f), 160 + i * 25, 200, false, sw);
-                }
-                c.drawCircle(cx, cy, r, grad(new RadialGradient(cx, cy, r, 0x00FFF4D0, 0x55FFF4D0, Shader.TileMode.CLAMP)));
-                break;
-            }
-            case Defs.URANUS: {
-                for (int i = 0; i < 5; i++)
-                    wavyBand(c, cx, cy, r, cy - r + (i + 0.5f) * 2 * r / 5, r * 0.3f, r * 0.01f, 0.4f, i, (i % 2 == 0) ? 0x18FFFFFF : 0x1A1A7080);
-                c.drawCircle(cx - r * 0.1f, cy - r * 0.6f, r * 0.45f, grad(new RadialGradient(cx - r * 0.1f, cy - r * 0.6f, r * 0.45f, 0x55FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP)));
-                break;
-            }
-            case Defs.NEPTUNE: {
-                int[] bc = {0x2266C8FF, 0x33102080, 0x2280D8FF, 0x44102080, 0x2266C8FF, 0x33102080};
-                for (int i = 0; i < bc.length; i++)
-                    wavyBand(c, cx, cy, r, cy - r + (i + 0.5f) * 2 * r / bc.length, r * 0.3f, r * 0.03f, 0.7f, i * 1.3f, bc[i]);
-                float sx = cx - r * 0.3f, sy = cy + r * 0.3f;
-                c.drawOval(new RectF(sx - r * 0.26f, sy - r * 0.14f, sx + r * 0.26f, sy + r * 0.14f), grad(new RadialGradient(sx, sy, r * 0.26f, 0xFF0A0F50, 0xFF18268A, Shader.TileMode.CLAMP)));
-                Paint wc = stroke(r * 0.05f, 0xDDFFFFFF);
-                c.drawLine(sx - r * 0.15f, sy - r * 0.22f, sx + r * 0.25f, sy - r * 0.25f, wc);
-                c.drawLine(cx + r * 0.1f, cy - r * 0.35f, cx + r * 0.55f, cy - r * 0.38f, wc);
-                c.drawLine(cx + r * 0.25f, cy + r * 0.55f, cx + r * 0.5f, cy + r * 0.53f, wc);
-                break;
-            }
-            case Defs.PLUTO: {
-                blob(c, cx - r * 0.45f, cy + r * 0.1f, r * 0.4f, 61, 0.35f, 0x66704830);
-                blob(c, cx + r * 0.1f, cy - r * 0.55f, r * 0.3f, 62, 0.35f, 0x44704830);
-                p.setColor(0xFFFFF4E6);
-                Path h = new Path();
-                float hx = cx + r * 0.22f, hy = cy + r * 0.18f, hs = r * 0.5f;
-                h.moveTo(hx, hy + hs * 0.9f);
-                h.cubicTo(hx - hs * 1.4f, hy, hx - hs * 0.6f, hy - hs * 1.0f, hx, hy - hs * 0.35f);
-                h.cubicTo(hx + hs * 0.6f, hy - hs * 1.0f, hx + hs * 1.4f, hy, hx, hy + hs * 0.9f);
-                c.drawPath(h, p);
-                speckle(c, cx, cy, r, 63, 200, 0x22FFFFFF, 0x22402010);
-                craterField(c, cx, cy, r, 64, 6, 0x33603820, 0x44FFFFFF);
-                break;
-            }
-            case Defs.SUN: {
-                speckle(c, cx, cy, r, 71, 420, 0x33FFFFC0, 0x33FF6A00);
-                Random rd = new Random(72);
-                for (int i = 0; i < 18; i++) {
-                    float a = rd.nextFloat() * 6.283f, d = (float) Math.sqrt(rd.nextFloat()) * r * 0.85f;
-                    float x = cx + (float) Math.cos(a) * d, y = cy + (float) Math.sin(a) * d, s = r * (0.06f + rd.nextFloat() * 0.08f);
-                    c.drawCircle(x, y, s, grad(new RadialGradient(x, y, s, 0x66FFFFE0, 0x00FFFFE0, Shader.TileMode.CLAMP)));
-                }
-                p.setColor(0xAA8A2A00);
-                c.drawOval(new RectF(cx - r * 0.42f, cy + r * 0.3f, cx - r * 0.26f, cy + r * 0.42f), p);
-                c.drawOval(new RectF(cx + r * 0.35f, cy - r * 0.15f, cx + r * 0.45f, cy - r * 0.07f), p);
-                c.drawCircle(cx, cy, r, grad(new RadialGradient(cx, cy, r, new int[]{0x00FFFFFF, 0x00FFFFFF, 0x55FF7A00},
-                        new float[]{0f, 0.75f, 1f}, Shader.TileMode.CLAMP)));
-                break;
-            }
-            default: break;
-        }
-        if (type != Defs.SUN) lighting(c, cx, cy, r);
-        else c.drawCircle(cx - r * 0.3f, cy - r * 0.35f, r * 0.5f, grad(new RadialGradient(cx - r * 0.3f, cy - r * 0.35f, r * 0.5f, 0x66FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP)));
-        c.restore();
-        outline(c, cx, cy, r, ow);
-        if (type == Defs.SATURN) {
-            rings(c, cx, cy, r, -14, true, new int[]{0xFF8A6A35, 0xFFE9D29A, 0xFFC7A866, 0xFFF4E4BC},
-                    new float[]{1.32f, 1.48f, 1.66f, 1.82f}, 0.13f);
-            c.save();
-            c.rotate(-14, cx, cy);
-            c.drawArc(new RectF(cx - r * 1.92f, cy - r * 0.54f, cx + r * 1.92f, cy + r * 0.54f), 0, 180, false, stroke(ow, OUTLINE));
-            c.restore();
-        }
-        if (type == Defs.URANUS)
-            rings(c, cx, cy, r, -72, true, new int[]{0xAADDFBFF, 0x88BDF6FF, 0xAAE8FFFF},
-                    new float[]{1.45f, 1.6f, 1.75f}, 0.035f);
+        float r = size * rf;
+        int[] sat = {0x55806A48, 0xCCD8C090, 0xEEEAD8B0, 0x11000000, 0xDDC8AE80, 0xAAB09870, 0x66A08860};
+        float[] satR = {1.25f, 1.36f, 1.5f, 1.6f, 1.68f, 1.78f, 1.86f};
+        int[] ura = {0x88C8F4FF, 0x55A8E8F8, 0xAAE0FCFF};
+        float[] uraR = {1.45f, 1.58f, 1.72f};
+        if (type == Defs.SATURN) rings(c, cx, cy, r, -14, false, sat, satR, 0.09f);
+        if (type == Defs.URANUS) rings(c, cx, cy, r, -72, false, ura, uraR, 0.03f);
+        Bitmap s = Real.sphere(size, rf, Real.surface(type), atmo, as, glow, type == Defs.SUN, 0f, type * 17 + 3);
+        c.drawBitmap(s, 0, 0, null);
+        if (type == Defs.SATURN) rings(c, cx, cy, r, -14, true, sat, satR, 0.09f);
+        if (type == Defs.URANUS) rings(c, cx, cy, r, -72, true, ura, uraR, 0.03f);
         return b;
     }
 
@@ -613,141 +439,49 @@ final class Art {
         Bitmap b = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
         float cx = size / 2f, cy = size / 2f, r = size * 0.38f;
-        switch (type) {
-            case Defs.E_METEOR:
-                rockBody(c, cx, cy, r, 21, 0xFFB99A80, 0xFF6E5444, 0xFF2A1E18, 0);
-                break;
-            case Defs.E_MEGA:
-                c.drawCircle(cx, cy, size * 0.5f, grad(new RadialGradient(cx, cy, size * 0.5f, 0x66FF5A1F, 0x00FF5A1F, Shader.TileMode.CLAMP)));
-                rockBody(c, cx, cy, r, 33, 0xFF9C6E5A, 0xFF4E2C24, 0xFF1A0C0A, 0xFFFFA23A);
-                break;
-            case Defs.E_SHOOT: {
-                c.drawCircle(cx, cy, size * 0.5f, grad(new RadialGradient(cx, cy, size * 0.5f,
-                        new int[]{0xFFFFFFFF, 0xCCFFF2A8, 0x55FFC23C, 0x00FF9A1C}, new float[]{0f, 0.2f, 0.5f, 1f}, Shader.TileMode.CLAMP)));
-                Paint ray = fill();
-                ray.setColor(0xAAFFFFFF);
-                c.drawPath(starPath(cx, cy, size * 0.48f, size * 0.05f, 4), ray);
-                ray.setColor(0x66FFF2A8);
-                c.save();
-                c.rotate(45, cx, cy);
-                c.drawPath(starPath(cx, cy, size * 0.3f, size * 0.04f, 4), ray);
-                c.restore();
-                Paint core = fill();
-                core.setColor(0xFFFFFFFF);
-                c.drawCircle(cx, cy, size * 0.09f, core);
-                break;
-            }
-            case Defs.E_EXOMOON: {
-                c.drawCircle(cx, cy, size * 0.5f, grad(new RadialGradient(cx, cy, size * 0.5f,
-                        new int[]{0x00000000, 0x00000000, 0x777CFF8A, 0x007CFF8A}, new float[]{0f, 0.68f, 0.78f, 1f}, Shader.TileMode.CLAMP)));
-                moonBody(c, cx, cy, r * 0.92f, 0xFFB8B2CC, 0xFF3E3654, 81, 0x6630FF6A, 0x557CFF8A);
-                c.save();
-                c.clipPath(circlePath(cx, cy, r * 0.92f));
-                Random rd = new Random(82);
-                for (int i = 0; i < 7; i++) {
-                    float x = cx + (rd.nextFloat() - 0.5f) * r * 1.3f, y = cy + (rd.nextFloat() - 0.5f) * r * 1.3f, s = r * (0.05f + rd.nextFloat() * 0.08f);
-                    c.drawCircle(x, y, s * 2.2f, grad(new RadialGradient(x, y, s * 2.2f, 0x997CFF8A, 0x007CFF8A, Shader.TileMode.CLAMP)));
-                }
-                c.restore();
-                outline(c, cx, cy, r * 0.92f, size * 0.015f);
-                break;
-            }
-            case Defs.E_ALTMOON: {
-                float rr = r * 0.92f;
-                // chromatic ghost copies (dimension shift)
-                Paint gp = fill();
-                gp.setColor(0x55FF3FD0);
-                c.drawCircle(cx - size * 0.03f, cy, rr, gp);
-                gp.setColor(0x5533E0FF);
-                c.drawCircle(cx + size * 0.03f, cy, rr, gp);
-                moonBody(c, cx, cy, rr, 0xFF3E7C86, 0xFF0A1C26, 91, 0x66000000, 0x66FF6AE0);
-                c.save();
-                c.clipPath(circlePath(cx, cy, rr));
-                Paint gl = fill();
-                Random rd = new Random(92);
-                for (int i = 0; i < 6; i++) {
-                    float y = cy - rr + rd.nextFloat() * rr * 2, h = rr * (0.03f + rd.nextFloat() * 0.06f);
-                    gl.setColor(rd.nextBoolean() ? 0x88FF3FD0 : 0x8833E0FF);
-                    c.drawRect(cx - rr + rd.nextFloat() * rr * 0.4f, y, cx + rr * (0.2f + rd.nextFloat() * 0.8f), y + h, gl);
-                }
-                c.restore();
-                c.drawCircle(cx, cy, rr, stroke(size * 0.018f, 0xFFFF4FD8));
-                break;
-            }
-            case Defs.E_EXOPLANET: {
-                float pr = r * 0.8f;
-                rings(c, cx, cy, pr, -20, false, new int[]{0x887CFF8A, 0xAA3FD08A, 0x667CFFD0}, new float[]{1.3f, 1.45f, 1.6f}, 0.08f);
-                atmosphere(c, cx, cy, pr, 0xFF7CFFC0);
-                c.drawCircle(cx, cy, pr, grad(new RadialGradient(cx - pr * 0.3f, cy - pr * 0.35f, pr * 1.45f, 0xFF8AF5D0, 0xFF0A4A40, Shader.TileMode.CLAMP)));
-                c.save();
-                c.clipPath(circlePath(cx, cy, pr));
-                int[] bc = {0x3300302A, 0x33B0FFE0, 0x4400302A, 0x2240FFB0, 0x3300302A, 0x33B0FFE0};
-                for (int i = 0; i < bc.length; i++)
-                    wavyBand(c, cx, cy, pr, cy - pr + (i + 0.5f) * 2 * pr / bc.length, pr * 0.3f, pr * 0.05f, 0.8f, i * 1.9f, bc[i]);
-                c.drawOval(new RectF(cx + pr * 0.05f, cy + pr * 0.15f, cx + pr * 0.5f, cy + pr * 0.38f), grad(new RadialGradient(cx + pr * 0.27f, cy + pr * 0.26f, pr * 0.25f, 0xFFB8FF3A, 0x0040A020, Shader.TileMode.CLAMP)));
-                lighting(c, cx, cy, pr);
-                c.restore();
-                outline(c, cx, cy, pr, size * 0.015f);
-                rings(c, cx, cy, pr, -20, true, new int[]{0x887CFF8A, 0xAA3FD08A, 0x667CFFD0}, new float[]{1.3f, 1.45f, 1.6f}, 0.08f);
-                break;
-            }
-            case Defs.E_ALTPLANET: {
-                atmosphere(c, cx, cy, r, 0xFFFF6AE0);
-                c.drawCircle(cx, cy, r, grad(new LinearGradient(cx - r, cy - r, cx + r, cy + r,
-                        new int[]{0xFFFF5BD8, 0xFF7A2FD0, 0xFF2FB8FF}, new float[]{0f, 0.5f, 1f}, Shader.TileMode.CLAMP)));
-                c.save();
-                c.clipPath(circlePath(cx, cy, r));
-                for (int i = 0; i < 7; i++)
-                    wavyBand(c, cx, cy, r, cy - r + (i + 0.5f) * 2 * r / 7, r * 0.16f, r * 0.06f, 0.9f, i * 2.3f, (i % 2 == 0) ? 0x33FFFFFF : 0x33000020);
-                Paint rift = stroke(r * 0.06f, 0xFFFFFFFF);
-                Paint riftGlow = stroke(r * 0.2f, 0x66FFC8FF);
-                Path rp = new Path();
-                rp.moveTo(cx - r * 0.2f, cy - r);
-                rp.lineTo(cx + r * 0.1f, cy - r * 0.35f);
-                rp.lineTo(cx - r * 0.12f, cy + r * 0.05f);
-                rp.lineTo(cx + r * 0.18f, cy + r * 0.5f);
-                rp.lineTo(cx, cy + r);
-                c.drawPath(rp, riftGlow);
-                c.drawPath(rp, rift);
-                lighting(c, cx, cy, r);
-                c.restore();
-                outline(c, cx, cy, r, size * 0.015f);
-                break;
-            }
-            case Defs.E_HELL: {
-                c.drawCircle(cx, cy, size * 0.5f, grad(new RadialGradient(cx, cy, size * 0.5f,
-                        new int[]{0x00000000, 0x00000000, 0xAAFF3B1F, 0x00FF3B1F}, new float[]{0f, 0.7f, 0.78f, 1f}, Shader.TileMode.CLAMP)));
-                c.drawCircle(cx, cy, r, grad(new RadialGradient(cx - r * 0.3f, cy - r * 0.35f, r * 1.45f, 0xFF5A2A2A, 0xFF120406, Shader.TileMode.CLAMP)));
-                c.save();
-                c.clipPath(circlePath(cx, cy, r));
-                speckle(c, cx, cy, r, 101, 220, 0x22FF8A5A, 0x33000000);
-                Random rd = new Random(4);
-                Paint glow = stroke(r * 0.16f, 0x66FF5A1F);
-                Paint lava = stroke(r * 0.06f, 0xFFFFA23A);
-                Paint hot = stroke(r * 0.022f, 0xFFFFF0A0);
-                for (int i = 0; i < 7; i++) {
-                    Path l = new Path();
-                    float x = cx - r + rd.nextFloat() * r * 2, y = cy - r + rd.nextFloat() * r * 2;
-                    l.moveTo(x, y);
-                    for (int k = 0; k < 4; k++) {
-                        x += (rd.nextFloat() - 0.5f) * r * 0.7f;
-                        y += (rd.nextFloat() - 0.3f) * r * 0.5f;
-                        l.lineTo(x, y);
-                    }
-                    c.drawPath(l, glow);
-                    c.drawPath(l, lava);
-                    c.drawPath(l, hot);
-                }
-                for (int i = 0; i < 4; i++) {
-                    float x = cx + (rd.nextFloat() - 0.5f) * r * 1.2f, y = cy + (rd.nextFloat() - 0.5f) * r * 1.2f, s = r * 0.12f;
-                    c.drawCircle(x, y, s, grad(new RadialGradient(x, y, s, 0xFFFFD06A, 0x00FF5A1F, Shader.TileMode.CLAMP)));
-                }
-                lighting(c, cx, cy, r);
-                c.restore();
-                outline(c, cx, cy, r, size * 0.015f);
-                break;
-            }
-            default: break;
+        if (type == Defs.E_SHOOT) {
+            c.drawCircle(cx, cy, size * 0.5f, grad(new RadialGradient(cx, cy, size * 0.5f,
+                    new int[]{0xFFFFFFFF, 0xCCFFF2A8, 0x55FFC23C, 0x00FF9A1C}, new float[]{0f, 0.2f, 0.5f, 1f}, Shader.TileMode.CLAMP)));
+            Paint ray = fill();
+            ray.setColor(0xAAFFFFFF);
+            c.drawPath(starPath(cx, cy, size * 0.48f, size * 0.05f, 4), ray);
+            ray.setColor(0x66FFF2A8);
+            c.save();
+            c.rotate(45, cx, cy);
+            c.drawPath(starPath(cx, cy, size * 0.3f, size * 0.04f, 4), ray);
+            c.restore();
+            Paint core = fill();
+            core.setColor(0xFFFFFFFF);
+            c.drawCircle(cx, cy, size * 0.09f, core);
+            return b;
+        }
+        if (type == Defs.E_EXOPLANET)
+            rings(c, cx, cy, size * 0.32f, -20, false, new int[]{0x887CFF8A, 0xAA3FD08A, 0x667CFFD0}, new float[]{1.3f, 1.45f, 1.6f}, 0.08f);
+        if (type == Defs.E_ALTMOON) {
+            Paint gp = fill();
+            gp.setColor(0x44FF3FD0);
+            c.drawCircle(cx - size * 0.035f, cy, size * 0.36f, gp);
+            gp.setColor(0x4433E0FF);
+            c.drawCircle(cx + size * 0.035f, cy, size * 0.36f, gp);
+        }
+        Bitmap s = Real.enemy(type, size);
+        if (s != null) c.drawBitmap(s, 0, 0, null);
+        if (type == Defs.E_EXOPLANET)
+            rings(c, cx, cy, size * 0.32f, -20, true, new int[]{0x887CFF8A, 0xAA3FD08A, 0x667CFFD0}, new float[]{1.3f, 1.45f, 1.6f}, 0.08f);
+        if (type == Defs.E_ALTPLANET) {
+            c.save();
+            c.clipPath(circlePath(cx, cy, r));
+            Paint riftGlow = stroke(r * 0.2f, 0x66FFC8FF);
+            Paint rift = stroke(r * 0.05f, 0xFFFFFFFF);
+            Path rp = new Path();
+            rp.moveTo(cx - r * 0.2f, cy - r);
+            rp.lineTo(cx + r * 0.1f, cy - r * 0.35f);
+            rp.lineTo(cx - r * 0.12f, cy + r * 0.05f);
+            rp.lineTo(cx + r * 0.18f, cy + r * 0.5f);
+            rp.lineTo(cx, cy + r);
+            c.drawPath(rp, riftGlow);
+            c.drawPath(rp, rift);
+            c.restore();
         }
         return b;
     }

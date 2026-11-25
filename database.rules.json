@@ -1,0 +1,23 @@
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || auth.token.email === 'chain@stellatd.game')",
+        ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'chain@stellatd.game')"
+      }
+    },
+    "public": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'chain@stellatd.game')"
+      }
+    },
+    "bans": {
+      ".read": "auth != null && auth.token.email === 'chain@stellatd.game'",
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.token.email === 'chain@stellatd.game'"
+      }
+    }
+  }
+}
