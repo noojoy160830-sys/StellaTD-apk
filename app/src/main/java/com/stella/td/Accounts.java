@@ -15,7 +15,8 @@ import java.util.Locale;
  * NOTE: accounts live on this phone only; there is no server yet.
  */
 final class Accounts {
-    static final String ADMIN_USER = "admin";
+    static final String ADMIN_USER = "chain";
+    static final String ADMIN_DISPLAY = "Chain";
     /** first-time admin password; the game asks the admin to change it after the first login */
     static final String ADMIN_DEFAULT_PASS = "stella1234";
 
@@ -25,8 +26,9 @@ final class Accounts {
     Accounts(Context ctx) {
         this.ctx = ctx;
         this.sp = ctx.getSharedPreferences("stella_accounts", Context.MODE_PRIVATE);
+        migrateOldAdmin();
         if (!exists(ADMIN_USER)) {
-            create(ADMIN_USER, ADMIN_DEFAULT_PASS, true);
+            create(ADMIN_DISPLAY, ADMIN_DEFAULT_PASS, true);
             sp.edit().putBoolean("must_" + ADMIN_USER, true).apply();
         }
     }
@@ -68,7 +70,31 @@ final class Accounts {
         return hex(b);
     }
 
+    /** v2.2 used "admin"; rename it to "chain" keeping its password and progress */
+    private void migrateOldAdmin() {
+        ArrayList<String> list = users();
+        if (!list.contains("admin") || list.contains(ADMIN_USER) || !sp.getBoolean("admin_admin", false)) return;
+        list.set(list.indexOf("admin"), ADMIN_USER);
+        SharedPreferences.Editor ed = sp.edit()
+                .putString("users", join(list))
+                .putString("salt_" + ADMIN_USER, sp.getString("salt_admin", ""))
+                .putString("hash_" + ADMIN_USER, sp.getString("hash_admin", ""))
+                .putBoolean("admin_" + ADMIN_USER, true)
+                .putBoolean("must_" + ADMIN_USER, sp.getBoolean("must_admin", true))
+                .putString("prefs_" + ADMIN_USER, sp.getString("prefs_admin", "stella_u_admin"))
+                .putString("disp_" + ADMIN_USER, ADMIN_DISPLAY)
+                .remove("salt_admin").remove("hash_admin").remove("admin_admin").remove("must_admin").remove("prefs_admin");
+        if ("admin".equals(sp.getString("current", null))) ed.putString("current", ADMIN_USER);
+        ed.apply();
+    }
+
     // ------------------------------------------------------------------ queries
+    /** name as the player typed it (keeps upper case) */
+    String display(String u) {
+        u = norm(u);
+        return sp.getString("disp_" + u, u);
+    }
+
     ArrayList<String> users() {
         ArrayList<String> out = new ArrayList<>();
         String s = sp.getString("users", "");
@@ -105,6 +131,7 @@ final class Accounts {
     // ------------------------------------------------------------------ actions (return error text or null)
     static String checkName(String u) {
         if (u.length() < 3 || u.length() > 16) return L.t("ชื่อไอดีต้องยาว 3–16 ตัว", "Username must be 3–16 characters");
+        // (letters are checked in lower case; the typed upper/lower case is kept for display)
         for (int i = 0; i < u.length(); i++) {
             char ch = u.charAt(i);
             if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_'))
@@ -119,8 +146,8 @@ final class Accounts {
         return null;
     }
 
-    private void create(String u, String pass, boolean admin) {
-        u = norm(u);
+    private void create(String typed, String pass, boolean admin) {
+        String u = norm(typed);
         String salt = newSalt();
         ArrayList<String> list = users();
         list.add(u);
@@ -136,18 +163,19 @@ final class Accounts {
                 .putString("hash_" + u, hash(salt, pass))
                 .putBoolean("admin_" + u, admin)
                 .putString("prefs_" + u, prefs)
+                .putString("disp_" + u, typed.trim())
                 .apply();
     }
 
-    String register(String u, String pass, String confirm) {
-        u = norm(u);
+    String register(String typed, String pass, String confirm) {
+        String u = norm(typed);
         String e = checkName(u);
         if (e != null) return e;
         if (exists(u)) return L.t("มีไอดีนี้แล้ว", "That username is taken");
         e = checkPass(pass);
         if (e != null) return e;
         if (!pass.equals(confirm)) return L.t("รหัสผ่านทั้งสองช่องไม่ตรงกัน", "Passwords do not match");
-        create(u, pass, false);
+        create(typed, pass, false);
         return null;
     }
 
@@ -199,7 +227,7 @@ final class Accounts {
         list.remove(u);
         sp.edit().putString("users", join(list))
                 .remove("salt_" + u).remove("hash_" + u).remove("admin_" + u)
-                .remove("ban_" + u).remove("must_" + u).remove("prefs_" + u).apply();
+                .remove("ban_" + u).remove("must_" + u).remove("prefs_" + u).remove("disp_" + u).apply();
         return null;
     }
 }

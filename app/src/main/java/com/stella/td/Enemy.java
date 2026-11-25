@@ -5,7 +5,7 @@ final class Enemy {
     int type;
     float hp, maxHp, shield, maxShield, d, speed, radius;
     float x, y, angle;
-    float slow, slowT, stunT, burnDps, burnT, hitFlash;
+    float slow, slowT, stunT, burnDps, burnT, radDps, radT, hitFlash;
     float abilT, noDmgT;
     int baseDmg;
     boolean dead, phased, boss, mini;

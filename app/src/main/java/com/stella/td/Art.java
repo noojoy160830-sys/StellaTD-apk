@@ -38,61 +38,73 @@ final class Art {
         Bitmap b = Bitmap.createBitmap(Math.max(1, w), Math.max(1, h), Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
         Paint p = fill();
-        p.setShader(new LinearGradient(0, 0, 0, h,
-                new int[]{0xFF0A0620, 0xFF1C0F45, 0xFF0B1A3D}, new float[]{0f, 0.55f, 1f}, Shader.TileMode.CLAMP));
+        p.setShader(new LinearGradient(0, 0, w * 0.3f, h,
+                new int[]{0xFF06021A, 0xFF150A3C, 0xFF0C1240, 0xFF050318}, new float[]{0f, 0.4f, 0.7f, 1f}, Shader.TileMode.CLAMP));
         c.drawRect(0, 0, w, h, p);
         Random r = new Random(7);
-        int[] neb = {0x55A43CFF, 0x4433C6E0, 0x44FF4F9B, 0x334F6BFF};
-        for (int i = 0; i < 7; i++) {
-            float x = r.nextFloat() * w, y = r.nextFloat() * h, rad = (0.25f + r.nextFloat() * 0.35f) * w;
-            p.setShader(new RadialGradient(x, y, rad, neb[i % neb.length], 0x00000000, Shader.TileMode.CLAMP));
+        // milky-way band (diagonal)
+        float bx0 = -w * 0.2f, by0 = h * 0.15f, bx1 = w * 1.2f, by1 = h * 0.75f;
+        for (int i = 0; i < 14; i++) {
+            float t = i / 13f, x = bx0 + (bx1 - bx0) * t, y = by0 + (by1 - by0) * t, rad = w * (0.22f + r.nextFloat() * 0.15f);
+            int col = i % 3 == 0 ? 0x2A8A6BFF : (i % 3 == 1 ? 0x22FF7AC8 : 0x2240C8FF);
+            p.setShader(new RadialGradient(x, y, rad, col, col & 0x00FFFFFF, Shader.TileMode.CLAMP));
             c.drawCircle(x, y, rad, p);
         }
         p.setShader(null);
-        for (int i = 0; i < 260; i++) {
-            float x = r.nextFloat() * w, y = r.nextFloat() * h, s = r.nextFloat();
-            p.setColor(s > 0.9f ? 0xFFFFF2C4 : (s > 0.7f ? 0xCCBFD9FF : 0x88FFFFFF));
-            c.drawCircle(x, y, 0.6f + s * s * 2.6f, p);
+        for (int i = 0; i < 1600; i++) {
+            float t = r.nextFloat();
+            float off = (float) r.nextGaussian() * w * 0.09f;
+            float x = bx0 + (bx1 - bx0) * t - off * 0.5f, y = by0 + (by1 - by0) * t + off;
+            p.setColor((r.nextInt(3) == 0 ? 0x55FFE6F4 : 0x44C8D8FF));
+            c.drawCircle(x, y, 0.5f + r.nextFloat() * 1.2f, p);
         }
-        // a few distant cartoon planets
-        drawDecoPlanet(c, w * 0.12f, h * 0.08f, w * 0.05f, 0xFFFF8A5C);
-        drawDecoPlanet(c, w * 0.9f, h * 0.93f, w * 0.08f, 0xFF5BC8FF);
+        // nebula clouds
+        int[] neb = {0x44A43CFF, 0x3333C6E0, 0x38FF4F9B, 0x2A4F6BFF, 0x30FF8A5C, 0x2836E0B0};
+        for (int i = 0; i < 12; i++) {
+            float x = r.nextFloat() * w, y = r.nextFloat() * h, rad = (0.18f + r.nextFloat() * 0.3f) * w;
+            int col = neb[i % neb.length];
+            p.setShader(new RadialGradient(x, y, rad, new int[]{col, (col & 0x00FFFFFF) | 0x14000000, col & 0x00FFFFFF},
+                    new float[]{0f, 0.5f, 1f}, Shader.TileMode.CLAMP));
+            c.drawCircle(x, y, rad, p);
+        }
+        // dark dust lanes
+        for (int i = 0; i < 5; i++) {
+            float x = r.nextFloat() * w, y = r.nextFloat() * h, rad = (0.1f + r.nextFloat() * 0.15f) * w;
+            p.setShader(new RadialGradient(x, y, rad, 0x55020008, 0x00020008, Shader.TileMode.CLAMP));
+            c.drawCircle(x, y, rad, p);
+        }
+        p.setShader(null);
+        // stars
+        int[] sc = {0xFFFFFFFF, 0xFFFFF2C4, 0xFFC4DCFF, 0xFFFFD0E8};
+        for (int i = 0; i < 420; i++) {
+            float x = r.nextFloat() * w, y = r.nextFloat() * h, s = r.nextFloat();
+            p.setColor(sc[r.nextInt(sc.length)]);
+            p.setAlpha((int) (90 + s * 165));
+            c.drawCircle(x, y, 0.5f + s * s * 2.2f, p);
+        }
+        // bright stars with glow and cross flare
+        for (int i = 0; i < 9; i++) {
+            float x = r.nextFloat() * w, y = r.nextFloat() * h, s = w * (0.003f + r.nextFloat() * 0.003f);
+            int col = sc[r.nextInt(sc.length)];
+            p.setShader(new RadialGradient(x, y, s * 6, (col & 0x00FFFFFF) | 0x66000000, col & 0x00FFFFFF, Shader.TileMode.CLAMP));
+            c.drawCircle(x, y, s * 6, p);
+            p.setShader(null);
+            p.setColor(0xCCFFFFFF);
+            c.drawPath(starPath(x, y, s * 3.5f, s * 0.3f, 4), p);
+            c.drawCircle(x, y, s, p);
+        }
+        // a distant planet peeking in
+        float px = w * 0.95f, py = h * 0.9f, pr = w * 0.16f;
+        p.setShader(new RadialGradient(px, py, pr * 1.25f, new int[]{0x00000000, 0x00000000, 0x553FA9FF, 0x003FA9FF},
+                new float[]{0f, 0.78f, 0.82f, 1f}, Shader.TileMode.CLAMP));
+        c.drawCircle(px, py, pr * 1.25f, p);
+        p.setShader(new RadialGradient(px - pr * 0.6f, py - pr * 0.6f, pr * 2f, new int[]{0xFF4F7BD8, 0xFF1A2A6A, 0xFF05081A},
+                new float[]{0f, 0.45f, 1f}, Shader.TileMode.CLAMP));
+        c.drawCircle(px, py, pr, p);
         return b;
     }
 
-    private static void drawDecoPlanet(Canvas c, float x, float y, float r, int color) {
-        Paint p = fill();
-        p.setShader(new RadialGradient(x - r * 0.4f, y - r * 0.4f, r * 1.6f, color, 0xFF140A30, Shader.TileMode.CLAMP));
-        p.setAlpha(150);
-        c.drawCircle(x, y, r, p);
-    }
-
     // ------------------------------------------------------------------ helpers
-    static void face(Canvas c, float cx, float cy, float r, boolean angry) {
-        Paint p = fill();
-        float ex = r * 0.32f, ey = cy - r * 0.06f;
-        for (int s = -1; s <= 1; s += 2) {
-            float x = cx + s * ex;
-            p.setColor(0xFFFFFFFF);
-            c.drawOval(new RectF(x - r * 0.16f, ey - r * 0.2f, x + r * 0.16f, ey + r * 0.2f), p);
-            p.setColor(0xFF140A2A);
-            c.drawCircle(x + r * 0.03f, ey + r * 0.04f, r * 0.095f, p);
-            p.setColor(0xFFFFFFFF);
-            c.drawCircle(x - r * 0.01f, ey - r * 0.03f, r * 0.035f, p);
-            if (angry) {
-                Paint br = stroke(r * 0.07f, 0xFF140A2A);
-                c.drawLine(x - s * r * 0.2f, ey - r * 0.3f, x + s * r * 0.12f, ey - r * 0.2f, br);
-            }
-        }
-        Paint m = stroke(r * 0.06f, 0xFF140A2A);
-        RectF mouth = new RectF(cx - r * 0.16f, cy + r * 0.1f, cx + r * 0.16f, cy + r * 0.34f);
-        if (angry) c.drawArc(new RectF(cx - r * 0.14f, cy + r * 0.24f, cx + r * 0.14f, cy + r * 0.44f), 200, 140, false, m);
-        else c.drawArc(mouth, 20, 140, false, m);
-        // blush
-        p.setColor(0x55FF6B8B);
-        c.drawCircle(cx - r * 0.5f, cy + r * 0.16f, r * 0.1f, p);
-        c.drawCircle(cx + r * 0.5f, cy + r * 0.16f, r * 0.1f, p);
-    }
 
     static void ball(Canvas c, float cx, float cy, float r, int light, int dark) {
         Paint p = fill();
@@ -528,99 +540,211 @@ final class Art {
         c.drawRoundRect(body, s * 0.04f, s * 0.04f, o);
     }
 
-    // ------------------------------------------------------------------ enemies
+    // ------------------------------------------------------------------ enemies (realistic, no faces)
+    /** irregular rocky silhouette */
+    static Path rockPath(float cx, float cy, float r, int seed, float rough) {
+        Random rd = new Random(seed);
+        int n = 22;
+        float[] rr = new float[n];
+        for (int i = 0; i < n; i++) rr[i] = r * (1f - rough + rd.nextFloat() * rough);
+        Path path = new Path();
+        for (int i = 0; i <= n; i++) {
+            int k = i % n;
+            float r0 = (rr[k] * 2 + rr[(k + 1) % n] + rr[(k + n - 1) % n]) / 4f;
+            double a = k * Math.PI * 2 / n;
+            float x = cx + (float) Math.cos(a) * r0, y = cy + (float) Math.sin(a) * r0;
+            if (i == 0) path.moveTo(x, y);
+            else path.lineTo(x, y);
+        }
+        path.close();
+        return path;
+    }
+
+    static void rockBody(Canvas c, float cx, float cy, float r, int seed, int light, int mid, int dark, int crackColor) {
+        Path body = rockPath(cx, cy, r, seed, 0.28f);
+        c.drawPath(body, grad(new RadialGradient(cx - r * 0.35f, cy - r * 0.4f, r * 1.5f,
+                new int[]{light, mid, dark}, new float[]{0f, 0.45f, 1f}, Shader.TileMode.CLAMP)));
+        c.save();
+        c.clipPath(body);
+        // strata and bumps
+        Random rd = new Random(seed * 7 + 1);
+        for (int i = 0; i < 6; i++) {
+            float x = cx + (rd.nextFloat() - 0.5f) * r * 1.4f, y = cy + (rd.nextFloat() - 0.5f) * r * 1.4f;
+            blob(c, x, y, r * (0.18f + rd.nextFloat() * 0.25f), seed + i, 0.4f, (rd.nextBoolean() ? 0x22FFFFFF : 0x33000000));
+        }
+        speckle(c, cx, cy, r, seed + 3, 240, 0x26FFFFFF, 0x30000000);
+        craterField(c, cx, cy, r, seed + 5, 7, 0x55000000, 0x44FFFFFF);
+        if (crackColor != 0) {
+            Paint glow = stroke(r * 0.13f, (crackColor & 0x00FFFFFF) | 0x55000000);
+            Paint core = stroke(r * 0.045f, crackColor);
+            for (int i = 0; i < 5; i++) {
+                Path l = new Path();
+                float x = cx + (rd.nextFloat() - 0.5f) * r * 1.2f, y = cy + (rd.nextFloat() - 0.5f) * r * 1.2f;
+                l.moveTo(x, y);
+                for (int k = 0; k < 3; k++) {
+                    x += (rd.nextFloat() - 0.5f) * r * 0.6f;
+                    y += (rd.nextFloat() - 0.5f) * r * 0.6f;
+                    l.lineTo(x, y);
+                }
+                c.drawPath(l, glow);
+                c.drawPath(l, core);
+            }
+        }
+        // light from the top-left, dark bottom-right
+        c.drawCircle(cx, cy, r * 1.1f, grad(new RadialGradient(cx - r * 0.5f, cy - r * 0.55f, r * 2.1f,
+                new int[]{0x00000000, 0x00000000, 0x88000008}, new float[]{0f, 0.45f, 1f}, Shader.TileMode.CLAMP)));
+        c.restore();
+        c.drawPath(body, stroke(r * 0.04f, 0xAA0E0818));
+    }
+
+    static void moonBody(Canvas c, float cx, float cy, float r, int light, int dark, int seed, int craterDark, int craterLight) {
+        c.drawCircle(cx, cy, r, grad(new RadialGradient(cx - r * 0.3f, cy - r * 0.35f, r * 1.45f, light, dark, Shader.TileMode.CLAMP)));
+        c.save();
+        c.clipPath(circlePath(cx, cy, r));
+        blob(c, cx - r * 0.2f, cy - r * 0.2f, r * 0.35f, seed, 0.3f, 0x33000000);
+        blob(c, cx + r * 0.3f, cy + r * 0.25f, r * 0.25f, seed + 1, 0.3f, 0x28000000);
+        speckle(c, cx, cy, r, seed + 2, 220, 0x22FFFFFF, 0x26000000);
+        craterField(c, cx, cy, r, seed + 3, 14, craterDark, craterLight);
+        lighting(c, cx, cy, r);
+        c.restore();
+    }
+
     static Bitmap enemy(int type, int size) {
         Bitmap b = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
-        float cx = size / 2f, cy = size / 2f, r = size * 0.38f, ow = size * 0.035f;
+        float cx = size / 2f, cy = size / 2f, r = size * 0.38f;
         switch (type) {
-            case Defs.E_METEOR: rock(c, cx, cy, r, 0xFFC99A6B, 0xFF5E3A22, 21); break;
-            case Defs.E_MEGA: rock(c, cx, cy, r, 0xFFE0705A, 0xFF5A1A1A, 33); break;
+            case Defs.E_METEOR:
+                rockBody(c, cx, cy, r, 21, 0xFFB99A80, 0xFF6E5444, 0xFF2A1E18, 0);
+                break;
+            case Defs.E_MEGA:
+                c.drawCircle(cx, cy, size * 0.5f, grad(new RadialGradient(cx, cy, size * 0.5f, 0x66FF5A1F, 0x00FF5A1F, Shader.TileMode.CLAMP)));
+                rockBody(c, cx, cy, r, 33, 0xFF9C6E5A, 0xFF4E2C24, 0xFF1A0C0A, 0xFFFFA23A);
+                break;
             case Defs.E_SHOOT: {
-                Path sp = starPath(cx, cy, r * 1.05f, r * 0.5f, 5);
-                Paint p = fill();
-                p.setShader(new RadialGradient(cx - r * 0.3f, cy - r * 0.3f, r * 1.4f, 0xFFFFF7B0, 0xFFFFB000, Shader.TileMode.CLAMP));
-                c.drawPath(sp, p);
-                c.drawPath(sp, stroke(ow, OUTLINE));
-                face(c, cx, cy + r * 0.05f, r * 0.75f, true);
+                c.drawCircle(cx, cy, size * 0.5f, grad(new RadialGradient(cx, cy, size * 0.5f,
+                        new int[]{0xFFFFFFFF, 0xCCFFF2A8, 0x55FFC23C, 0x00FF9A1C}, new float[]{0f, 0.2f, 0.5f, 1f}, Shader.TileMode.CLAMP)));
+                Paint ray = fill();
+                ray.setColor(0xAAFFFFFF);
+                c.drawPath(starPath(cx, cy, size * 0.48f, size * 0.05f, 4), ray);
+                ray.setColor(0x66FFF2A8);
+                c.save();
+                c.rotate(45, cx, cy);
+                c.drawPath(starPath(cx, cy, size * 0.3f, size * 0.04f, 4), ray);
+                c.restore();
+                Paint core = fill();
+                core.setColor(0xFFFFFFFF);
+                c.drawCircle(cx, cy, size * 0.09f, core);
                 break;
             }
             case Defs.E_EXOMOON: {
-                glow(c, cx, cy, size * 0.5f, 0x887CFF8A);
-                ball(c, cx, cy, r * 0.9f, 0xFFE6D9FF, 0xFF7A63B8);
+                c.drawCircle(cx, cy, size * 0.5f, grad(new RadialGradient(cx, cy, size * 0.5f,
+                        new int[]{0x00000000, 0x00000000, 0x777CFF8A, 0x007CFF8A}, new float[]{0f, 0.68f, 0.78f, 1f}, Shader.TileMode.CLAMP)));
+                moonBody(c, cx, cy, r * 0.92f, 0xFFB8B2CC, 0xFF3E3654, 81, 0x6630FF6A, 0x557CFF8A);
                 c.save();
-                c.clipPath(circlePath(cx, cy, r * 0.9f));
-                craters(c, cx, cy, r * 0.9f, 0x5547308A, 8, 6);
-                shade(c, cx, cy, r * 0.9f);
+                c.clipPath(circlePath(cx, cy, r * 0.92f));
+                Random rd = new Random(82);
+                for (int i = 0; i < 7; i++) {
+                    float x = cx + (rd.nextFloat() - 0.5f) * r * 1.3f, y = cy + (rd.nextFloat() - 0.5f) * r * 1.3f, s = r * (0.05f + rd.nextFloat() * 0.08f);
+                    c.drawCircle(x, y, s * 2.2f, grad(new RadialGradient(x, y, s * 2.2f, 0x997CFF8A, 0x007CFF8A, Shader.TileMode.CLAMP)));
+                }
                 c.restore();
-                outline(c, cx, cy, r * 0.9f, ow);
-                face(c, cx, cy, r * 0.9f, true);
+                outline(c, cx, cy, r * 0.92f, size * 0.015f);
                 break;
             }
             case Defs.E_ALTMOON: {
-                ball(c, cx, cy, r * 0.9f, 0xFF4FE0D0, 0xFF0F3A4A);
+                float rr = r * 0.92f;
+                // chromatic ghost copies (dimension shift)
+                Paint gp = fill();
+                gp.setColor(0x55FF3FD0);
+                c.drawCircle(cx - size * 0.03f, cy, rr, gp);
+                gp.setColor(0x5533E0FF);
+                c.drawCircle(cx + size * 0.03f, cy, rr, gp);
+                moonBody(c, cx, cy, rr, 0xFF3E7C86, 0xFF0A1C26, 91, 0x66000000, 0x66FF6AE0);
                 c.save();
-                c.clipPath(circlePath(cx, cy, r * 0.9f));
-                craters(c, cx, cy, r * 0.9f, 0x66FF4FD8, 9, 6);
-                shade(c, cx, cy, r * 0.9f);
+                c.clipPath(circlePath(cx, cy, rr));
+                Paint gl = fill();
+                Random rd = new Random(92);
+                for (int i = 0; i < 6; i++) {
+                    float y = cy - rr + rd.nextFloat() * rr * 2, h = rr * (0.03f + rd.nextFloat() * 0.06f);
+                    gl.setColor(rd.nextBoolean() ? 0x88FF3FD0 : 0x8833E0FF);
+                    c.drawRect(cx - rr + rd.nextFloat() * rr * 0.4f, y, cx + rr * (0.2f + rd.nextFloat() * 0.8f), y + h, gl);
+                }
                 c.restore();
-                c.drawCircle(cx, cy, r * 0.9f, stroke(ow * 1.2f, 0xFFFF4FD8));
-                face(c, cx, cy, r * 0.9f, true);
+                c.drawCircle(cx, cy, rr, stroke(size * 0.018f, 0xFFFF4FD8));
                 break;
             }
             case Defs.E_EXOPLANET: {
-                RectF ring = new RectF(cx - r * 1.25f, cy - r * 0.32f, cx + r * 1.25f, cy + r * 0.32f);
-                c.drawOval(ring, stroke(size * 0.06f, OUTLINE));
-                c.drawOval(ring, stroke(size * 0.035f, 0xFF7CFF8A));
-                ball(c, cx, cy, r * 0.85f, 0xFF7CF5D0, 0xFF117060);
+                float pr = r * 0.8f;
+                rings(c, cx, cy, pr, -20, false, new int[]{0x887CFF8A, 0xAA3FD08A, 0x667CFFD0}, new float[]{1.3f, 1.45f, 1.6f}, 0.08f);
+                atmosphere(c, cx, cy, pr, 0xFF7CFFC0);
+                c.drawCircle(cx, cy, pr, grad(new RadialGradient(cx - pr * 0.3f, cy - pr * 0.35f, pr * 1.45f, 0xFF8AF5D0, 0xFF0A4A40, Shader.TileMode.CLAMP)));
                 c.save();
-                c.clipPath(circlePath(cx, cy, r * 0.85f));
-                bands(c, cx, cy, r * 0.85f, new int[]{0x00000000, 0x55004030, 0x00000000, 0x44004030});
-                shade(c, cx, cy, r * 0.85f);
+                c.clipPath(circlePath(cx, cy, pr));
+                int[] bc = {0x3300302A, 0x33B0FFE0, 0x4400302A, 0x2240FFB0, 0x3300302A, 0x33B0FFE0};
+                for (int i = 0; i < bc.length; i++)
+                    wavyBand(c, cx, cy, pr, cy - pr + (i + 0.5f) * 2 * pr / bc.length, pr * 0.3f, pr * 0.05f, 0.8f, i * 1.9f, bc[i]);
+                c.drawOval(new RectF(cx + pr * 0.05f, cy + pr * 0.15f, cx + pr * 0.5f, cy + pr * 0.38f), grad(new RadialGradient(cx + pr * 0.27f, cy + pr * 0.26f, pr * 0.25f, 0xFFB8FF3A, 0x0040A020, Shader.TileMode.CLAMP)));
+                lighting(c, cx, cy, pr);
                 c.restore();
-                outline(c, cx, cy, r * 0.85f, ow);
-                c.drawArc(ring, 0, 180, false, stroke(size * 0.06f, OUTLINE));
-                c.drawArc(ring, 0, 180, false, stroke(size * 0.035f, 0xFF7CFF8A));
-                face(c, cx, cy, r * 0.85f, true);
+                outline(c, cx, cy, pr, size * 0.015f);
+                rings(c, cx, cy, pr, -20, true, new int[]{0x887CFF8A, 0xAA3FD08A, 0x667CFFD0}, new float[]{1.3f, 1.45f, 1.6f}, 0.08f);
                 break;
             }
             case Defs.E_ALTPLANET: {
+                atmosphere(c, cx, cy, r, 0xFFFF6AE0);
+                c.drawCircle(cx, cy, r, grad(new LinearGradient(cx - r, cy - r, cx + r, cy + r,
+                        new int[]{0xFFFF5BD8, 0xFF7A2FD0, 0xFF2FB8FF}, new float[]{0f, 0.5f, 1f}, Shader.TileMode.CLAMP)));
                 c.save();
                 c.clipPath(circlePath(cx, cy, r));
-                Paint p = fill();
-                p.setColor(0xFFFF5BD8);
-                c.drawRect(cx - r, cy - r, cx, cy + r, p);
-                p.setColor(0xFF3FD6FF);
-                c.drawRect(cx, cy - r, cx + r, cy + r, p);
-                p.setColor(0x55FFFFFF);
-                for (int i = 0; i < 5; i++) c.drawRect(cx - r, cy - r + i * r * 0.45f, cx + r, cy - r + i * r * 0.45f + r * 0.06f, p);
-                shade(c, cx, cy, r);
+                for (int i = 0; i < 7; i++)
+                    wavyBand(c, cx, cy, r, cy - r + (i + 0.5f) * 2 * r / 7, r * 0.16f, r * 0.06f, 0.9f, i * 2.3f, (i % 2 == 0) ? 0x33FFFFFF : 0x33000020);
+                Paint rift = stroke(r * 0.06f, 0xFFFFFFFF);
+                Paint riftGlow = stroke(r * 0.2f, 0x66FFC8FF);
+                Path rp = new Path();
+                rp.moveTo(cx - r * 0.2f, cy - r);
+                rp.lineTo(cx + r * 0.1f, cy - r * 0.35f);
+                rp.lineTo(cx - r * 0.12f, cy + r * 0.05f);
+                rp.lineTo(cx + r * 0.18f, cy + r * 0.5f);
+                rp.lineTo(cx, cy + r);
+                c.drawPath(rp, riftGlow);
+                c.drawPath(rp, rift);
+                lighting(c, cx, cy, r);
                 c.restore();
-                outline(c, cx, cy, r, ow);
-                face(c, cx, cy, r, true);
+                outline(c, cx, cy, r, size * 0.015f);
                 break;
             }
             case Defs.E_HELL: {
-                glow(c, cx, cy, size * 0.5f, 0x88FF3B1F);
-                ball(c, cx, cy, r, 0xFF6B1F2A, 0xFF1E0610);
+                c.drawCircle(cx, cy, size * 0.5f, grad(new RadialGradient(cx, cy, size * 0.5f,
+                        new int[]{0x00000000, 0x00000000, 0xAAFF3B1F, 0x00FF3B1F}, new float[]{0f, 0.7f, 0.78f, 1f}, Shader.TileMode.CLAMP)));
+                c.drawCircle(cx, cy, r, grad(new RadialGradient(cx - r * 0.3f, cy - r * 0.35f, r * 1.45f, 0xFF5A2A2A, 0xFF120406, Shader.TileMode.CLAMP)));
                 c.save();
                 c.clipPath(circlePath(cx, cy, r));
-                Paint lava = stroke(r * 0.08f, 0xFFFF7A1F);
+                speckle(c, cx, cy, r, 101, 220, 0x22FF8A5A, 0x33000000);
                 Random rd = new Random(4);
-                for (int i = 0; i < 6; i++) {
+                Paint glow = stroke(r * 0.16f, 0x66FF5A1F);
+                Paint lava = stroke(r * 0.06f, 0xFFFFA23A);
+                Paint hot = stroke(r * 0.022f, 0xFFFFF0A0);
+                for (int i = 0; i < 7; i++) {
                     Path l = new Path();
                     float x = cx - r + rd.nextFloat() * r * 2, y = cy - r + rd.nextFloat() * r * 2;
                     l.moveTo(x, y);
-                    for (int k = 0; k < 3; k++) {
-                        x += (rd.nextFloat() - 0.5f) * r * 0.8f;
-                        y += (rd.nextFloat() - 0.3f) * r * 0.6f;
+                    for (int k = 0; k < 4; k++) {
+                        x += (rd.nextFloat() - 0.5f) * r * 0.7f;
+                        y += (rd.nextFloat() - 0.3f) * r * 0.5f;
                         l.lineTo(x, y);
                     }
+                    c.drawPath(l, glow);
                     c.drawPath(l, lava);
+                    c.drawPath(l, hot);
                 }
+                for (int i = 0; i < 4; i++) {
+                    float x = cx + (rd.nextFloat() - 0.5f) * r * 1.2f, y = cy + (rd.nextFloat() - 0.5f) * r * 1.2f, s = r * 0.12f;
+                    c.drawCircle(x, y, s, grad(new RadialGradient(x, y, s, 0xFFFFD06A, 0x00FF5A1F, Shader.TileMode.CLAMP)));
+                }
+                lighting(c, cx, cy, r);
                 c.restore();
-                outline(c, cx, cy, r, ow);
-                face(c, cx, cy, r, true);
+                outline(c, cx, cy, r, size * 0.015f);
                 break;
             }
             default: break;
@@ -632,29 +756,6 @@ final class Art {
         Paint g = fill();
         g.setShader(new RadialGradient(cx, cy, r, color, color & 0x00FFFFFF, Shader.TileMode.CLAMP));
         c.drawCircle(cx, cy, r, g);
-    }
-
-    static void rock(Canvas c, float cx, float cy, float r, int light, int dark, int seed) {
-        Random rd = new Random(seed);
-        Path path = new Path();
-        int n = 11;
-        for (int i = 0; i < n; i++) {
-            double a = i * Math.PI * 2 / n;
-            float rr = r * (0.82f + rd.nextFloat() * 0.2f);
-            float x = cx + (float) Math.cos(a) * rr, y = cy + (float) Math.sin(a) * rr;
-            if (i == 0) path.moveTo(x, y);
-            else path.lineTo(x, y);
-        }
-        path.close();
-        Paint p = fill();
-        p.setShader(new RadialGradient(cx - r * 0.35f, cy - r * 0.4f, r * 1.5f, light, dark, Shader.TileMode.CLAMP));
-        c.drawPath(path, p);
-        c.save();
-        c.clipPath(path);
-        craters(c, cx, cy, r, 0x44000000, seed + 1, 5);
-        c.restore();
-        c.drawPath(path, stroke(r * 0.09f, OUTLINE));
-        face(c, cx, cy + r * 0.05f, r * 0.85f, true);
     }
 
     static Path starPath(float cx, float cy, float ro, float ri, int pts) {

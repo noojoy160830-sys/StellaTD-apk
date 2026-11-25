@@ -6,19 +6,19 @@ import java.util.Random;
 
 /** Everything the player owns between matches. Saved in SharedPreferences. */
 final class Profile {
-    static final int PULL1 = 100, PULL10 = 900, TICKET_PRICE = 500, ROLL_COST = 1, MAX_LV = 10;
+    static final int PULL1 = 100, PULL10 = 900, ROLL_COST = 1, CRYSTAL_COST = 1, MAX_LV = 10;
     static final int DECK_SIZE = 4;
 
     private final SharedPreferences sp;
     final Random rnd = new Random();
 
-    int stars, millite, tickets, unlocked, bossKills, games;
+    int stars, millite, crystals, unlocked, bossKills, games, wins, playSec;
     final boolean[] owned = new boolean[Defs.P_COUNT];
     final int[] copies = new int[Defs.P_COUNT];
     final int[] level = new int[Defs.P_COUNT];
     final int[] enchant = new int[Defs.P_COUNT];
     final int[] tier = new int[Defs.P_COUNT];
-    final int[] effect = new int[Defs.P_COUNT];
+    final int[] material = new int[Defs.P_COUNT];
     final int[] deck = new int[DECK_SIZE];
     final int[] best = new int[Defs.ST_NAME.length];
     final boolean[] clear = new boolean[Defs.ST_NAME.length];
@@ -54,7 +54,9 @@ final class Profile {
         boolean fresh = !sp.getBoolean("v2", false);
         stars = sp.getInt("stars", 300);
         millite = sp.getInt("millite", 5);
-        tickets = sp.getInt("tickets", 0);
+        crystals = sp.getInt("crystals", sp.getInt("tickets", 0));
+        wins = sp.getInt("wins", 0);
+        playSec = sp.getInt("playSec", 0);
         unlocked = Math.max(1, sp.getInt("unlocked", 1));
         bossKills = sp.getInt("bossKills", 0);
         games = sp.getInt("games", 0);
@@ -63,7 +65,7 @@ final class Profile {
         int[] lv = ints(sp.getString("level", null), Defs.P_COUNT, 1);
         int[] en = ints(sp.getString("enchant", null), Defs.P_COUNT, -1);
         int[] ti = ints(sp.getString("tier", null), Defs.P_COUNT, 0);
-        int[] ef = ints(sp.getString("effect", null), Defs.P_COUNT, -1);
+        int[] ef = ints(sp.getString("material", null), Defs.P_COUNT, -1);
         int[] dk = ints(sp.getString("deck", null), DECK_SIZE, -1);
         int[] bs = ints(sp.getString("best", null), best.length, 0);
         int[] cl = ints(sp.getString("clear", null), clear.length, 0);
@@ -73,11 +75,17 @@ final class Profile {
             level[i] = Math.max(1, Math.min(MAX_LV, lv[i]));
             enchant[i] = en[i];
             tier[i] = ti[i];
-            effect[i] = ef[i];
+            material[i] = ef[i];
         }
         System.arraycopy(dk, 0, deck, 0, DECK_SIZE);
         System.arraycopy(bs, 0, best, 0, best.length);
         for (int i = 0; i < clear.length; i++) clear[i] = cl[i] == 1;
+        if (!sp.getBoolean("v3", false)) {
+            // v3 replaced the old enchant list and effects with new enchants and materials
+            java.util.Arrays.fill(enchant, -1);
+            java.util.Arrays.fill(tier, 0);
+            java.util.Arrays.fill(material, -1);
+        }
         if (fresh) {
             owned[Defs.EARTH] = owned[Defs.MOON] = owned[Defs.SATELLITE] = true;
             deck[0] = Defs.EARTH;
@@ -95,9 +103,12 @@ final class Profile {
         for (int i = 0; i < cl.length; i++) cl[i] = clear[i] ? 1 : 0;
         sp.edit()
                 .putBoolean("v2", true)
+                .putBoolean("v3", true)
                 .putInt("stars", stars)
                 .putInt("millite", millite)
-                .putInt("tickets", tickets)
+                .putInt("crystals", crystals)
+                .putInt("wins", wins)
+                .putInt("playSec", playSec)
                 .putInt("unlocked", unlocked)
                 .putInt("bossKills", bossKills)
                 .putInt("games", games)
@@ -106,7 +117,7 @@ final class Profile {
                 .putString("level", str(level))
                 .putString("enchant", str(enchant))
                 .putString("tier", str(tier))
-                .putString("effect", str(effect))
+                .putString("material", str(material))
                 .putString("deck", str(deck))
                 .putString("best", str(best))
                 .putString("clear", str(cl))
@@ -187,51 +198,47 @@ final class Profile {
         }
     }
 
-    // ------------------------------------------------------------------ enchant
-    static final float[] EN_CHANCE = {23.33f, 23.33f, 23.34f, 5.5f, 5.5f, 5.5f, 5.5f, 3.5f, 3.5f, 1f};
+    // ------------------------------------------------------------------ factory (enchant) & lab (material)
+    static int pick(float[] chances, Random rnd) {
+        float r = rnd.nextFloat() * 100f;
+        for (int i = 0; i < chances.length; i++) {
+            r -= chances[i];
+            if (r <= 0) return i;
+        }
+        return 0;
+    }
 
     boolean rollEnchant(int t) {
         if (!owned[t] || millite < ROLL_COST) return false;
         millite -= ROLL_COST;
-        float r = rnd.nextFloat() * 100f;
-        int e = 0;
-        for (int i = 0; i < EN_CHANCE.length; i++) {
-            r -= EN_CHANCE[i];
-            e = i;
-            if (r <= 0) break;
-        }
+        int e = pick(Defs.EN_CHANCE, rnd);
         enchant[t] = e;
-        if (e <= Defs.EN_CD) {
+        int n = Defs.EN_TIERS[e];
+        if (n == 3) {
             float x = rnd.nextFloat();
             tier[t] = x < 0.6f ? 1 : (x < 0.9f ? 2 : 3);
-        } else tier[t] = 0;
+        } else if (n == 2) tier[t] = rnd.nextFloat() < 0.7f ? 1 : 2;
+        else tier[t] = 0;
         save();
         return true;
     }
 
-    static final float[] EF_CHANCE = {50f, 7.5f, 17.5f, 25f}; // Gold, Diamond, Elite, Bigger
+    boolean rollMaterial(int t) {
+        if (!owned[t] || crystals < CRYSTAL_COST) return false;
+        crystals -= CRYSTAL_COST;
+        material[t] = pick(Defs.MAT_CHANCE, rnd);
+        save();
+        return true;
+    }
 
-    boolean useTicket(int t) {
-        if (!owned[t] || tickets <= 0) return false;
-        tickets--;
-        float r = rnd.nextFloat() * 100f;
-        int e = 0;
-        for (int i = 0; i < EF_CHANCE.length; i++) {
-            r -= EF_CHANCE[i];
-            e = i;
-            if (r <= 0) break;
+    /** admin: give one planet (a new planet or one extra copy) */
+    void givePlanet(int t) {
+        if (owned[t]) copies[t]++;
+        else {
+            owned[t] = true;
+            autoEquip(t);
         }
-        effect[t] = e;
         save();
-        return true;
-    }
-
-    boolean buyTicket() {
-        if (stars < TICKET_PRICE) return false;
-        stars -= TICKET_PRICE;
-        tickets++;
-        save();
-        return true;
     }
 
     // ------------------------------------------------------------------ upgrade & deck
@@ -278,6 +285,8 @@ final class Profile {
     void addRewards(Game g) {
         stars += g.earnStars;
         millite += g.earnMillite;
+        crystals += g.earnCrystal;
+        if (g.won) wins++;
         bossKills += g.bossKills;
         games++;
         int reached = g.won ? g.wave : Math.max(0, g.wave - 1);

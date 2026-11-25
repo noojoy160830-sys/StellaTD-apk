@@ -23,7 +23,7 @@ final class Game {
     final Profile pf;
     final int[] deck;
     int stars = 5, baseHp = 20, maxBaseHp = 20, wave = 0, sunCount = 0;
-    int earnStars, earnMillite, bossKills;
+    int earnStars, earnMillite, earnCrystal, bossKills;
     boolean inWave, won, lost, infiniteSP;
     float prepT = 12f, spawnT, spawnGap = 0.7f, time, shake;
     String banner;
@@ -87,64 +87,109 @@ final class Game {
     }
 
     // ------------------------------------------------------------------ stats
+    // ------------------------------------------------------------------ stat bonuses from enchant + material
     static float enchDmg(Planet p) {
         switch (p.enchant) {
-            case Defs.EN_DMG: return 1f + 0.10f * p.tier;
-            case Defs.EN_GIGA: return 1.4f;
-            case Defs.EN_MEGE: return 1.8f;
-            default: return 1f;
+            case Defs.EN_STRONG: return Defs.STRONG_T[Math.max(0, p.tier - 1)];
+            case Defs.EN_TECH: return 0.15f;
+            case Defs.EN_CRYSTALRAIN: return 0.20f;
+            case Defs.EN_GALACIA: case Defs.EN_LAVA: return 0.10f;
+            case Defs.EN_MEGALONIA: return 0.17f;
+            case Defs.EN_GIANTTIC: return 0.30f;
+            case Defs.EN_GALAXIA: return 0.50f;
+            default: return 0f;
         }
     }
 
     static float enchRng(Planet p) {
         switch (p.enchant) {
-            case Defs.EN_RNG: return 1f + 0.08f * p.tier;
-            case Defs.EN_GIGA: return 1.2f;
-            case Defs.EN_MEGE: return 1.35f;
-            default: return 1f;
+            case Defs.EN_REACH: return Defs.REACH_T[Math.max(0, Math.min(1, p.tier - 1))];
+            case Defs.EN_STORM: return 0.15f;
+            case Defs.EN_ELECTRO: return 0.07f;
+            case Defs.EN_MEGALONIA: return 0.17f;
+            default: return 0f;
         }
     }
 
-    static float enchCd(Planet p) {
+    static float enchSpa(Planet p) {
         switch (p.enchant) {
-            case Defs.EN_CD: return 1f - 0.08f * p.tier;
-            case Defs.EN_BLITZ: return 0.65f;
-            case Defs.EN_GIGA: return 0.8f;
-            case Defs.EN_MEGE: return 0.65f;
-            default: return 1f;
+            case Defs.EN_MOVING: return Defs.MOVING_T[Math.max(0, p.tier - 1)];
+            case Defs.EN_LIGHTNING: return 0.15f;
+            case Defs.EN_ELECTRO: return 0.12f;
+            case Defs.EN_MEGALONIA: return 0.17f;
+            case Defs.EN_GIANTTIC: return -0.15f;
+            case Defs.EN_GALAXIA: return 0.20f;
+            default: return 0f;
         }
     }
+
+    static float matDmg(Planet p) { return p.material >= 0 ? Defs.MAT_DMG[p.material] : 0f; }
+
+    static float matRng(Planet p) { return p.material >= 0 ? Defs.MAT_RNG[p.material] : 0f; }
+
+    static float matSpa(Planet p) { return p.material >= 0 ? Defs.MAT_SPA[p.material] : 0f; }
 
     static boolean isProducer(Planet p) {
         return Defs.P_KIND[p.type] == Defs.K_PRODUCE;
     }
 
+    static boolean isFire(Planet p) {
+        int k = Defs.P_KIND[p.type];
+        return k == Defs.K_SMOKE || k == Defs.K_FIREROCK || k == Defs.K_TORNADO || k == Defs.K_SUNWAVE;
+    }
+
+    static boolean isIce(Planet p) {
+        int k = Defs.P_KIND[p.type];
+        return k == Defs.K_ICE || k == Defs.K_AURA;
+    }
+
     static float dmgOf(Planet p) {
-        float d = Defs.P_DMG[p.type] * (1f + 0.3f * (p.level - 1)) * (1f + 0.12f * (p.plv - 1)) * enchDmg(p) * (1f + p.buff);
-        if (p.effect >= 0) d *= Defs.EF_DMG[p.effect];
-        return d;
+        return Defs.P_DMG[p.type] * (1f + 0.3f * (p.level - 1)) * (1f + 0.12f * (p.plv - 1))
+                * (1f + enchDmg(p)) * (1f + matDmg(p)) * (1f + p.bonusDmg) * (1f + p.buff);
     }
 
     static float rangeOf(Planet p) {
-        float r = Defs.P_RANGE[p.type] * enchRng(p);
-        if (p.effect >= 0) r *= Defs.EF_RNG[p.effect];
-        return r;
+        return Defs.P_RANGE[p.type] * (1f + enchRng(p)) * (1f + matRng(p));
     }
 
     static float cdOf(Planet p) {
         float c = Defs.P_CD[p.type];
-        if (isProducer(p)) {
-            c /= (1f + 0.2f * (p.level - 1)) * (1f + 0.05f * (p.plv - 1));
-            if (p.enchant == Defs.EN_GOLD) c *= 0.7f;
-            return c;
-        }
-        c *= enchCd(p);
-        if (p.effect >= 0) c *= Defs.EF_CD[p.effect];
-        return c;
+        if (isProducer(p)) return c / ((1f + 0.2f * (p.level - 1)) * (1f + 0.05f * (p.plv - 1)));
+        return c / ((1f + enchSpa(p)) * (1f + matSpa(p)));
+    }
+
+    /** SP per production cycle (fractional, accumulated) */
+    static float produceRate(Planet p) {
+        float a = Defs.P_DMG[p.type] + (p.level >= 4 ? 1 : 0);
+        if (p.enchant == Defs.EN_MIDAS) a *= 1.5f;
+        if (p.material == Defs.MAT_GOLD) a *= 1.6f;
+        return a;
     }
 
     static int produceAmount(Planet p) {
-        return (int) Defs.P_DMG[p.type] + (p.level >= 4 ? 1 : 0);
+        return Math.round(produceRate(p));
+    }
+
+    /** strength / duration multiplier for burn effects */
+    static float fireMul(Planet p) {
+        float m = 1f;
+        if (p.enchant == Defs.EN_LAVA) m *= 1.5f;
+        if (p.enchant == Defs.EN_MEGALONIA && isFire(p)) m *= 1.15f;
+        return m;
+    }
+
+    static float fireDurMul(Planet p) {
+        float m = 1f;
+        if (p.enchant == Defs.EN_LAVA) m *= 1.5f;
+        if (p.enchant == Defs.EN_MEGALONIA && isFire(p)) m *= 1.3f;
+        return m;
+    }
+
+    static float iceMul(Planet p) {
+        float m = 1f;
+        if (p.enchant == Defs.EN_GALACIA) m *= 1.6f;
+        if (p.enchant == Defs.EN_MEGALONIA && isIce(p)) m *= 1.3f;
+        return m;
     }
 
     // ------------------------------------------------------------------ building
@@ -167,7 +212,8 @@ final class Game {
         p.plv = pf.level[type];
         p.enchant = pf.enchant[type];
         p.tier = pf.tier[type];
-        p.effect = pf.effect[type];
+        p.material = pf.material[type];
+        p.moons = p.enchant == Defs.EN_MOON ? 1 : 0;
         slots[slot] = p;
         ring(p.x, p.y, Defs.RARITY_COLOR[Defs.P_RARITY[type]], 80);
         for (int i = 0; i < 14; i++) particle(p.x, p.y, Defs.RARITY_COLOR[Defs.P_RARITY[type]], 220);
@@ -380,9 +426,13 @@ final class Game {
                 p.prodT += dt;
                 if (p.prodT >= cd) {
                     p.prodT = 0;
-                    int a = produceAmount(p);
-                    stars += a;
-                    starText(p.x, p.y - 50, a);
+                    p.prodAcc += produceRate(p);
+                    int a = (int) p.prodAcc;
+                    p.prodAcc -= a;
+                    if (a > 0) {
+                        stars += a;
+                        starText(p.x, p.y - 50, a);
+                    }
                     p.flash = 0.3f;
                 }
                 continue;
@@ -396,9 +446,11 @@ final class Game {
                 for (Enemy e : enemies) {
                     if (e.dead || dist(p.x, p.y, e.x, e.y) > r + e.radius) continue;
                     any = true;
-                    applySlow(e, 0.35f, 0.7f);
+                    float im = iceMul(p);
+                    applySlow(e, Math.min(0.7f, 0.4f * (im > 1f ? 1.3f : 1f)), 0.7f * im);
+                    if (p.enchant == Defs.EN_GALACIA && rnd.nextFloat() < 0.04f && !e.boss) e.stunT = Math.max(e.stunT, 0.6f);
                     damage(e, dmg, p);
-                    applyEnchantOnHit(e, dmg, p);
+                    applyMaterialOnHit(e, dmg, p);
                 }
                 if (any) p.flash = 0.2f;
             } else if (kind == Defs.K_SUNWAVE) {
@@ -406,7 +458,7 @@ final class Game {
                 p.cdT = cd;
                 HeatWave h = new HeatWave();
                 h.d = total;
-                h.maxHp = dmgOf(p) * 20f * (1f + 0.2f * sunCount);
+                h.maxHp = dmgOf(p) * 20f * (1f + 0.2f * sunCount) * fireMul(p);
                 h.hp = h.maxHp;
                 h.src = p;
                 sunCount++;
@@ -418,10 +470,11 @@ final class Game {
                 if (t == null) { p.cdT = 0; continue; }
                 p.cdT = cd;
                 fire(p, t, p.x, p.y, 1f, false);
-                if (p.enchant == Defs.EN_MOON) {
-                    float mx = p.x + (float) Math.cos(p.orbitA) * 62f;
-                    float my = p.y + (float) Math.sin(p.orbitA) * 62f;
-                    fire(p, t, mx, my, 0.15f, true);
+                for (int m = 0; m < p.moons; m++) {
+                    double a = p.orbitA + m * Math.PI * 2 / p.moons;
+                    float mx = p.x + (float) Math.cos(a) * 62f;
+                    float my = p.y + (float) Math.sin(a) * 62f;
+                    fire(p, t, mx, my, 0.10f, true);
                 }
                 p.flash = 0.12f;
             }
@@ -448,13 +501,19 @@ final class Game {
                 s.speed = 720; s.size = 0.6f;
                 s.x += rnd.nextFloat() * 30 - 15; s.y += rnd.nextFloat() * 30 - 15;
                 break;
-            case Defs.K_SMOKE: s.speed = 380; s.burnDps = s.dmg * 5f; s.burnDur = 3f; break;
-            case Defs.K_FIREROCK: s.speed = 720; s.size = 0.7f; s.burnDps = s.dmg * 1.2f; s.burnDur = 2f; break;
-            case Defs.K_ICE: s.speed = 560; s.slowAmt = 0.5f; s.slowDur = 2f; s.stunCh = 0.25f; s.stunDur = 0.8f; break;
+            case Defs.K_SMOKE: s.speed = 380; s.burnDps = s.dmg * 5f * fireMul(p); s.burnDur = 3f * fireDurMul(p); break;
+            case Defs.K_FIREROCK: s.speed = 720; s.size = 0.7f; s.burnDps = s.dmg * 1.2f * fireMul(p); s.burnDur = 2f * fireDurMul(p); break;
+            case Defs.K_ICE: {
+                float im = iceMul(p);
+                s.speed = 560; s.slowAmt = 0.5f; s.slowDur = 2f * im;
+                s.stunCh = p.enchant == Defs.EN_GALACIA ? 0.45f : 0.25f * (im > 1f ? 1.15f : 1f);
+                s.stunDur = 0.8f * im;
+                break;
+            }
             case Defs.K_TORNADO: {
                 s.speed = 360;
-                s.burnDps = s.dmg * 3f;
-                s.burnDur = 3f;
+                s.burnDps = s.dmg * 3f * fireMul(p);
+                s.burnDur = 3f * fireDurMul(p);
                 s.hit = new HashSet<>();
                 float dx = t.x - x, dy = t.y - y, l = Math.max(1f, dist(0, 0, dx, dy));
                 s.vx = dx / l * s.speed;
@@ -508,14 +567,19 @@ final class Game {
     }
 
     void hitEnemy(Shot s, Enemy e) {
-        damage(e, s.dmg, s.src);
+        float dmg = s.dmg;
+        if (s.src != null && s.src.material == Defs.MAT_DIAMOND && rnd.nextFloat() < 0.15f) {
+            dmg *= 2f;
+            text(e.x, e.y - 50, "CRIT!", 0xFF9EF6FF);
+        }
+        damage(e, dmg, s.src);
         if (s.burnDps > 0) applyBurn(e, s.burnDps, s.burnDur);
         if (s.slowAmt > 0) applySlow(e, s.slowAmt, s.slowDur);
         if (s.stunCh > 0 && rnd.nextFloat() < s.stunCh && !e.boss && !e.mini) {
             e.stunT = Math.max(e.stunT, s.stunDur);
             text(e.x, e.y - 40, "STUN", 0xFF7DF3FF);
         }
-        if (s.src != null && !s.mini) applyEnchantOnHit(e, s.dmg, s.src);
+        if (s.src != null && !s.mini) applyMaterialOnHit(e, dmg, s.src);
         int c;
         switch (s.kind) {
             case Defs.K_SMOKE: c = 0xFFFF4D3D; puff(e.x, e.y, 0x99FF3B2F); break;
@@ -527,12 +591,10 @@ final class Game {
         for (int k = 0; k < 3; k++) particle(e.x, e.y, c, 140);
     }
 
-    void applyEnchantOnHit(Enemy e, float dmg, Planet p) {
-        if (p.enchant == Defs.EN_FROZE) {
-            applySlow(e, 0.3f, 1.5f);
-            damage(e, dmg * 0.2f, p);
-        } else if (p.enchant == Defs.EN_BURN) {
-            applyBurn(e, dmg * 0.3f, 3f);
+    void applyMaterialOnHit(Enemy e, float dmg, Planet p) {
+        if (p.material == Defs.MAT_URANIUM && !e.dead) {
+            e.radDps = Math.max(e.radDps, dmg * 0.4f);
+            e.radT = 3f;
         }
     }
 
@@ -566,19 +628,44 @@ final class Game {
         int c = e.boss ? 0xFFB86BFF : 0xFFFFB35C;
         ring(e.x, e.y, c, e.radius * 2f);
         for (int i = 0; i < (big ? 40 : 8); i++) particle(e.x, e.y, c, big ? 400 : 200);
-        if (src != null) src.kills++;
-        if (src != null && src.enchant == Defs.EN_GOLD && rnd.nextFloat() < 0.35f) {
-            stars++;
-            starText(e.x, e.y - 30, 1);
+        if (src != null) {
+            src.kills++;
+            float spChance = (src.enchant == Defs.EN_MIDAS ? 0.2f : 0f) + (src.material == Defs.MAT_GOLD ? 0.25f : 0f);
+            if (spChance > 0 && rnd.nextFloat() < spChance) {
+                stars++;
+                starText(e.x, e.y - 30, 1);
+            }
+            if (src.enchant == Defs.EN_MOON && (e.type == Defs.E_EXOMOON || e.type == Defs.E_ALTMOON)
+                    && src.moons < 6 && rnd.nextFloat() < 0.10f) {
+                src.moons++;
+                text(src.x, src.y - 80, "+1 Moon", 0xFFE6E8F5);
+            }
         }
         if (e.boss || e.mini) {
-            int sp = e.boss ? 8 : 4, mil = e.boss ? 3 : 2;
+            int sp = e.boss ? 8 : 4, mil = e.boss ? 3 : 2, cry = e.boss ? 2 : 1;
             stars += sp;
             starText(e.x, e.y - 50, sp);
             earnMillite += mil;
+            earnCrystal += cry;
             bossKills++;
-            text(e.x, e.y - 100, "+" + mil + " Millite", 0xFFC58CFF);
+            text(e.x, e.y - 100, "+" + mil + " Millite  +" + cry + " Crystal", 0xFFC58CFF);
             shake = 0.6f;
+            if (src != null && src.enchant == Defs.EN_GIANTTIC) {
+                src.bonusDmg += 0.05f;
+                text(src.x, src.y - 80, "+5% DMG", 0xFFFF4F8B);
+            }
+            if (src != null && src.enchant == Defs.EN_GALAXIA) {
+                HeatWave h = new HeatWave();
+                h.d = total;
+                h.maxHp = e.maxHp * 0.5f;
+                h.hp = h.maxHp;
+                h.summon = e.type;
+                h.summonBoss = e.boss;
+                h.speed = 90f;
+                h.src = src;
+                heat.add(h);
+                showBanner(L.t("Galaxia เรียก ", "Galaxia summoned ") + Defs.E_NAME[e.type] + "!", 0xFF5EF2FF);
+            }
         }
         if (e.type == Defs.E_MEGA) {
             for (int k = 0; k < 2; k++) {
@@ -605,6 +692,12 @@ final class Game {
                 damage(e, e.burnDps * dt, null);
                 if (e.dead) { enemies.remove(i); continue; }
                 if (rnd.nextFloat() < dt * 8) particle(e.x, e.y - e.radius * 0.5f, 0xFFFF7A2B, 60);
+            }
+            if (e.radT > 0) {
+                e.radT -= dt;
+                damage(e, e.radDps * dt, null);
+                if (e.dead) { enemies.remove(i); continue; }
+                if (rnd.nextFloat() < dt * 6) particle(e.x, e.y, 0xFF7CFF4A, 50);
             }
             if (e.slowT > 0) { e.slowT -= dt; if (e.slowT <= 0) e.slow = 0; }
             if (e.stunT > 0) e.stunT -= dt;
@@ -673,21 +766,29 @@ final class Game {
 
     void updateHeat(float dt) {
         for (int i = heat.size() - 1; i >= 0; i--) {
+            if (i >= heat.size()) continue;
             HeatWave h = heat.get(i);
-            h.d -= 260 * dt;
+            h.d -= h.speed * dt;
+            h.angle += dt * 60f;
+            boolean ally = h.summon >= 0;
             for (Enemy e : enemies) {
-                if (e.dead || h.hit.contains(e) || Math.abs(e.d - h.d) > 40 + e.radius) continue;
+                if (e.dead || h.hit.contains(e) || Math.abs(e.d - h.d) > (ally ? 60 : 40) + e.radius) continue;
                 h.hit.add(e);
                 float need = e.hp + e.shield;
                 float dmg = Math.min(h.hp, need);
-                damage(e, dmg, h.src);
-                applyBurn(e, dmgOf(h.src) * 0.5f, 3f);
-                h.hp -= dmg * 0.5f;
+                damage(e, dmg, ally ? null : h.src);
+                if (!ally) {
+                    applyBurn(e, dmgOf(h.src) * 0.5f * fireMul(h.src), 3f * fireDurMul(h.src));
+                    h.hp -= dmg * 0.5f;
+                } else {
+                    h.hp -= dmg;
+                    ring(e.x, e.y, 0xFF5EF2FF, 80);
+                }
                 if (h.hp <= 0) break;
             }
             if (h.hp <= 0 || h.d <= 0) {
                 pointAt(Math.max(0, h.d), tmp);
-                ring(tmp[0], tmp[1], 0xFFFFB627, 90);
+                ring(tmp[0], tmp[1], ally ? 0xFF5EF2FF : 0xFFFFB627, ally ? 140 : 90);
                 heat.remove(i);
             }
         }

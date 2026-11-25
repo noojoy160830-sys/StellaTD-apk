@@ -5,9 +5,9 @@ final class Defs {
     private Defs() {}
 
     // ---------- rarity ----------
-    static final int COMMON = 0, RARE = 1, EPIC = 2, LEGEND = 3, MYTHIC = 4;
-    static final String[] RARITY_NAME = {"Common", "Rare", "Epic", "Legend", "Mythical"};
-    static final int[] RARITY_COLOR = {0xFFC9D3E3, 0xFF4FA3FF, 0xFFB86BFF, 0xFFFFB627, 0xFFFF4F8B};
+    static final int COMMON = 0, RARE = 1, EPIC = 2, LEGEND = 3, MYTHIC = 4, GALAXY = 5;
+    static final String[] RARITY_NAME = {"Common", "Rare", "Epic", "Legend", "Mythical", "Galaxy"};
+    static final int[] RARITY_COLOR = {0xFFC9D3E3, 0xFF4FA3FF, 0xFFB86BFF, 0xFFFFB627, 0xFFFF4F8B, 0xFF5EF2FF};
 
     // ---------- planets ----------
     static final int EARTH = 0, SATELLITE = 1, MOON = 2, SATURN = 3, JUPITER = 4, MARS = 5,
@@ -26,7 +26,7 @@ final class Defs {
             "พายุหมุนทะลุศัตรู ติดไฟแรง",
             "ก้อนน้ำแข็ง ทำให้ช้าและอาจ stun",
             "โซนความเย็น สโลว์ศัตรูทุกตัวในระยะ",
-            "บัฟดวงดาวรอบ ๆ +10% ดาเมจ",
+            "บัฟดวงดาวรอบ ๆ +15% ดาเมจ",
             "ปล่อยคลื่นความร้อนจากฐาน แรงขึ้นทุกคลื่น"};
     static final int[] P_RARITY = {COMMON, COMMON, COMMON, RARE, RARE, EPIC,
             LEGEND, LEGEND, LEGEND, LEGEND, LEGEND, MYTHIC};
@@ -36,9 +36,9 @@ final class Defs {
     static final int[] P_KIND = {K_MISSILE, K_PRODUCE, K_ROCK, K_SWARM, K_SMOKE, K_PRODUCE,
             K_FIREROCK, K_TORNADO, K_ICE, K_AURA, K_BUFF, K_SUNWAVE};
     /** damage per hit (producers: stars per cycle) */
-    static final float[] P_DMG = {14, 1, 22, 5, 4, 2, 6, 9, 11, 4, 8, 50};
+    static final float[] P_DMG = {14, 1, 22, 5, 4, 2, 7, 12, 18, 6, 12, 50};
     /** seconds between attacks (producers: seconds per cycle) */
-    static final float[] P_CD = {0.9f, 10f, 1.0f, 0.2f, 0.9f, 11f, 0.16f, 1.5f, 1.0f, 0.5f, 1.2f, 6f};
+    static final float[] P_CD = {0.9f, 10f, 1.0f, 0.2f, 0.9f, 10f, 0.16f, 1.4f, 0.9f, 0.5f, 1.1f, 7f};
     static final float[] P_RANGE = {270, 0, 270, 260, 240, 0, 290, 320, 280, 250, 260, 0};
 
     static final String[] P_DESC_EN = {
@@ -52,34 +52,64 @@ final class Defs {
             "Piercing tornado with strong burn",
             "Ice chunks that slow and may stun",
             "Cold zone slows every enemy in range",
-            "Buffs nearby planets +10% damage",
+            "Buffs nearby planets +15% damage",
             "Heat waves from the base, stronger each time"};
     /** in-match SP cost to place each planet */
     static final int[] PLACE_COST = {1, 2, 2, 3, 3, 4, 5, 5, 5, 5, 5, 8};
     static final int MAX_LEVEL = 5;
 
-    // ---------- enchants ----------
-    static final int EN_DMG = 0, EN_RNG = 1, EN_CD = 2, EN_GOLD = 3, EN_BLITZ = 4, EN_FROZE = 5,
-            EN_BURN = 6, EN_MOON = 7, EN_GIGA = 8, EN_MEGE = 9;
-    static final String[] EN_NAME = {"Damage", "Range", "Cooldown", "Gold", "Blitz", "Froze",
-            "Burn", "Moon", "Gigantic", "Megelinia"};
-    static final String[] EN_DESC = {"+10% ดาเมจ ต่อระดับ", "+8% ระยะ ต่อระดับ", "-8% คูลดาวน์ ต่อระดับ",
-            "ฆ่าศัตรูมีโอกาสได้ดาว / ผลิตเร็วขึ้น", "+ความเร็วโจมตี 35%", "ทำให้ช้า + ดาเมจน้ำแข็ง",
-            "ทำให้ติดไฟ", "มีดวงจันทร์จิ๋วช่วยยิง 15%", "+ดาเมจ +ระยะ +ความเร็ว", "+ดาเมจ +ระยะ +ความเร็ว (สุดยอด)"};
-    static final String[] EN_DESC_EN = {"+10% damage per tier", "+8% range per tier", "-8% cooldown per tier",
-            "Kills may drop SP / faster production", "+35% attack speed", "Slows + bonus ice damage",
-            "Sets enemies on fire", "A little moon fires at 15% power", "+damage +range +speed", "+damage +range +speed (ultimate)"};
-    static final int[] EN_RARITY = {COMMON, COMMON, COMMON, RARE, RARE, RARE, RARE, LEGEND, LEGEND, MYTHIC};
+    // ---------- enchants (Factory, rolled with Millite) ----------
+    static final int EN_STRONG = 0, EN_REACH = 1, EN_MOVING = 2, EN_LIGHTNING = 3, EN_STORM = 4, EN_TECH = 5,
+            EN_MIDAS = 6, EN_ELECTRO = 7, EN_CRYSTALRAIN = 8, EN_MOON = 9, EN_GALACIA = 10, EN_LAVA = 11,
+            EN_MEGALONIA = 12, EN_GIANTTIC = 13, EN_GALAXIA = 14;
+    static final int EN_COUNT = 15;
+    static final String[] EN_NAME = {"Strong", "Reach", "Moving", "Lightning", "Storm", "Technology", "Midas", "Electro",
+            "Crystal Rain", "Moon", "Galacia", "Lava", "Megalonia", "Gianttic", "Galaxia"};
+    static final int[] EN_RARITY = {COMMON, COMMON, COMMON, RARE, RARE, RARE, EPIC, EPIC, EPIC, LEGEND, LEGEND, LEGEND,
+            MYTHIC, MYTHIC, GALAXY};
+    /** number of tiers (0 = no tiers) */
+    static final int[] EN_TIERS = {3, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    static final float[] EN_CHANCE = {20f, 20f, 20f, 8.33f, 8.33f, 8.34f, 3.33f, 3.33f, 3.34f, 1.33f, 1.33f, 1.34f, 0.45f, 0.45f, 0.1f};
+    static final float[] STRONG_T = {0.05f, 0.07f, 0.10f}, REACH_T = {0.06f, 0.12f}, MOVING_T = {0.04f, 0.08f, 0.12f};
+    static final String[] EN_DESC = {
+            "+5 / 7 / 10% ดาเมจ", "+6 / 12% ระยะ", "+4 / 8 / 12% ความเร็วโจมตี",
+            "+15% ความเร็วโจมตี", "+15% ระยะ", "+15% ดาเมจ",
+            "ผลิต SP มากขึ้น 50% / ฆ่าศัตรูมีโอกาสได้ SP", "+12% ความเร็วโจมตี +7% ระยะ", "+20% ดาเมจ",
+            "ดวงจันทร์จิ๋วช่วยยิง 10% ฆ่าศัตรูสายดวงจันทร์ 10% ได้ดวงจันทร์เพิ่ม",
+            "+10% ดาเมจ น้ำแข็ง stun นานและบ่อยขึ้น", "+10% ดาเมจ ไฟแรงขึ้นและติดนานขึ้น",
+            "+17% ดาเมจ ระยะ ความเร็ว ถ้าเป็นไฟ/น้ำแข็ง สถานะแรงขึ้น 15% และนานขึ้น",
+            "+30% ดาเมจ -15% ความเร็ว ฆ่าบอสแต่ละตัว +5% ดาเมจ",
+            "+50% ดาเมจ +20% ความเร็ว ฆ่าบอสจะเรียกบอสตัวนั้นมาสู้ให้ (เลือด 50%)"};
+    static final String[] EN_DESC_EN = {
+            "+5 / 7 / 10% damage", "+6 / 12% range", "+4 / 8 / 12% attack speed",
+            "+15% attack speed", "+15% range", "+15% damage",
+            "+50% SP production / kills may give SP", "+12% attack speed +7% range", "+20% damage",
+            "Little moons fire at 10% power; moon-type kills have 10% to add a moon",
+            "+10% damage; ice stuns longer and more often", "+10% damage; fire burns harder and longer",
+            "+17% damage, range, speed; fire/ice status +15% and longer",
+            "+30% damage -15% speed; each boss kill +5% damage",
+            "+50% damage +20% speed; boss kills summon that boss as an ally (50% HP)"};
 
-    // ---------- effects ----------
-    static final int EF_GOLD = 0, EF_DIAMOND = 1, EF_ELITE = 2, EF_BIGGER = 3;
-    static final String[] EF_NAME = {"Gold", "Diamond", "Elite", "Bigger"};
-    static final String[] EF_DESC = {"+15% ดาเมจ", "+30% ดาเมจ ระยะ ความเร็ว", "+20% ดาเมจ ระยะ ความเร็ว", "+10% ดาเมจ ระยะ ความเร็ว"};
-    static final String[] EF_DESC_EN = {"+15% damage", "+30% damage, range, speed", "+20% damage, range, speed", "+10% damage, range, speed"};
-    static final int[] EF_COLOR = {0xFFFFD23F, 0xFF7DF3FF, 0xFFFF4D5E, 0xFF9CFF7A};
-    static final float[] EF_DMG = {1.15f, 1.30f, 1.20f, 1.10f};
-    static final float[] EF_RNG = {1.0f, 1.30f, 1.20f, 1.10f};
-    static final float[] EF_CD = {1.0f, 0.77f, 0.83f, 0.91f};
+    // ---------- materials (Lab, rolled with Crystal) ----------
+    static final int MAT_IRON = 0, MAT_COPPER = 1, MAT_QUARTZ = 2, MAT_TITANIUM = 3, MAT_COBALT = 4, MAT_GOLD = 5,
+            MAT_PLATINUM = 6, MAT_URANIUM = 7, MAT_GRAPHENE = 8, MAT_DIAMOND = 9;
+    static final int MAT_COUNT = 10;
+    static final String[] MAT_NAME = {"Iron", "Copper", "Quartz", "Titanium", "Cobalt", "Gold", "Platinum", "Uranium", "Graphene", "Diamond"};
+    static final String[] MAT_NAME_TH = {"เหล็ก", "ทองแดง", "ควอตซ์", "ไทเทเนียม", "โคบอลต์", "ทองคำ", "แพลทินัม", "ยูเรเนียม", "กราฟีน", "เพชร"};
+    static final String[] MAT_SYM = {"Fe", "Cu", "Si", "Ti", "Co", "Au", "Pt", "U", "C", ""};
+    static final int[] MAT_RARITY = {COMMON, COMMON, COMMON, RARE, RARE, EPIC, EPIC, LEGEND, LEGEND, MYTHIC};
+    static final int[] MAT_COLOR = {0xFF9AA3B5, 0xFFE07A3C, 0xFFF6C8EA, 0xFFB8C8E0, 0xFF3F66E0, 0xFFFFC83A, 0xFFE8EEF8,
+            0xFF7CFF4A, 0xFF4A505E, 0xFF9EF6FF};
+    static final float[] MAT_DMG = {0.15f, 0f, 0f, 0.25f, 0f, 0.10f, 0.20f, 0.40f, 0f, 0.35f};
+    static final float[] MAT_RNG = {0f, 0f, 0.15f, 0.10f, 0f, 0f, 0.20f, 0f, 0.20f, 0.35f};
+    static final float[] MAT_SPA = {0f, 0.15f, 0f, 0f, 0.30f, 0f, 0.20f, 0f, 0.40f, 0.35f};
+    static final float[] MAT_CHANCE = {17.33f, 17.33f, 17.34f, 14f, 14f, 6.5f, 6.5f, 3f, 3f, 1f};
+    static final String[] MAT_DESC = {"+15% ดาเมจ", "+15% ความเร็วโจมตี", "+15% ระยะ", "+25% ดาเมจ +10% ระยะ", "+30% ความเร็วโจมตี",
+            "+10% ดาเมจ ผลิต SP +60% ฆ่าศัตรู 25% ได้ SP", "+20% ดาเมจ ระยะ ความเร็ว", "+40% ดาเมจ ยิงโดนติดกัมมันตรังสี (ติดได้แม้ Hell Planet)",
+            "+40% ความเร็วโจมตี +20% ระยะ", "+35% ทุกค่า และ 15% คริติคอล x2"};
+    static final String[] MAT_DESC_EN = {"+15% damage", "+15% attack speed", "+15% range", "+25% damage +10% range", "+30% attack speed",
+            "+10% damage, +60% SP production, kills 25% give SP", "+20% damage, range, speed", "+40% damage, hits irradiate (even Hell Planet)",
+            "+40% attack speed +20% range", "+35% everything and 15% critical x2"};
 
     // ---------- enemies ----------
     static final int E_METEOR = 0, E_SHOOT = 1, E_MEGA = 2, E_EXOMOON = 3, E_ALTMOON = 4,
