@@ -14,8 +14,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Find project folder
+        id: proj
+        run: |
+          g=$(find . -name gradlew -type f | head -n 1)
+          if [ -z "$g" ]; then echo "gradlew not found"; ls -R | head -50; exit 1; fi
+          d=$(dirname "$g")
+          echo "dir=$d" >> "$GITHUB_OUTPUT"
+          echo "Project folder: $d"
       - name: Download game font (Kanit, OFL)
-        working-directory: StellaTD
+        working-directory: ${{ steps.proj.outputs.dir }}
         run: |
           mkdir -p app/src/main/assets/fonts
           base=https://raw.githubusercontent.com/google/fonts/main/ofl/kanit
@@ -24,11 +32,15 @@ jobs:
           done
           ls -la app/src/main/assets/fonts
       - name: Build APK
-        working-directory: StellaTD
+        working-directory: ${{ steps.proj.outputs.dir }}
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk ../StellaTD.apk
+          ./gradlew --no-daemon --stacktrace assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/StellaTD.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StellaTD-apk
+          path: StellaTD.apk
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v2.1.${{ github.run_number }}
