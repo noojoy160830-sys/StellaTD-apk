@@ -1,0 +1,37 @@
+name: Build APK
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download game font (Kanit, OFL)
+        working-directory: StellaTD
+        run: |
+          mkdir -p app/src/main/assets/fonts
+          base=https://raw.githubusercontent.com/google/fonts/main/ofl/kanit
+          for f in Kanit-SemiBold.ttf Kanit-BlackItalic.ttf OFL.txt; do
+            curl -fsSL "$base/$f" -o "app/src/main/assets/fonts/$f" || echo "Could not download $f"
+          done
+          ls -la app/src/main/assets/fonts
+      - name: Build APK
+        working-directory: StellaTD
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk ../StellaTD.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.1.${{ github.run_number }}
+          name: Stella TD v2.1.${{ github.run_number }}
+          make_latest: true
+          files: StellaTD.apk
