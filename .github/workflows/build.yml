@@ -19,16 +19,43 @@ jobs:
           P=$(dirname "$(find . -name gradlew -not -path '*/node_modules/*' | head -n 1)")
           echo "Project folder: $P"
           echo "PROJ=$P" >> $GITHUB_ENV
-      - name: Apply update.txt (code pasted as text)
+      - name: Apply update (code pasted as text)
         run: |
-          U=$(find . -name update.txt -not -path '*/node_modules/*' | head -n 1)
-          if [ -n "$U" ]; then
-            tr -d ' \r\n' < "$U" | base64 -d > /tmp/update.tar.xz
-            tar -xJf /tmp/update.tar.xz -C "$PROJ"
-            echo "Applied $U"
-          else
-            echo "No update.txt"
+          # The code comes as update_1.txt ... update_6.txt (small parts are easier to paste on a phone).
+          EXPECT="1:21000 2:21000 3:21000 4:21000 5:21000 6:19332"
+          SHA="ffef8b8caaac107316dcb249f4949a410319017f9fd20e0544f5502b36c3f312"
+          F=$(find . -name update_1.txt -not -path '*/node_modules/*' | head -n 1)
+          if [ -z "$F" ]; then
+            echo "No update_1.txt found - building the code as it is in the repo"
+            exit 0
           fi
+          D=$(dirname "$F")
+          BAD=0
+          : > /tmp/update.b64
+          for e in $EXPECT; do
+            i=${e%:*}; want=${e#*:}
+            f="$D/update_$i.txt"
+            if [ ! -f "$f" ]; then
+              echo "::error::update_$i.txt is missing - create it and paste part $i"
+              BAD=1; continue
+            fi
+            have=$(tr -d ' \r\n\t' < "$f" | wc -c)
+            if [ "$have" != "$want" ]; then
+              echo "::error::update_$i.txt has $have characters but should have $want - delete it and paste part $i again"
+              BAD=1
+            else
+              echo "update_$i.txt OK ($have characters)"
+            fi
+            tr -d ' \r\n\t' < "$f" >> /tmp/update.b64
+          done
+          if [ "$BAD" = 1 ]; then exit 1; fi
+          if [ "$(sha256sum /tmp/update.b64 | cut -c1-64)" != "$SHA" ]; then
+            echo "::error::The parts are complete but their content doesn't match - one part was pasted into the wrong file or edited. Paste all parts again."
+            exit 1
+          fi
+          base64 -d /tmp/update.b64 > /tmp/update.tar.xz
+          tar -xJf /tmp/update.tar.xz -C "$PROJ"
+          echo "Update applied"
       - name: Download game font (Kanit, OFL)
         working-directory: ${{ env.PROJ }}
         run: |
