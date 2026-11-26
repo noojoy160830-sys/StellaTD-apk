@@ -6,7 +6,7 @@ import java.util.HashSet;
 final class Shot {
     int kind;
     float x, y, vx, vy, speed, dmg, life, size, spin;
-    float burnDps, burnDur, slowAmt, slowDur, stunCh, stunDur;
+    float burnDps, burnDur, slowAmt, slowDur, stunCh, stunDur, splash, splashMul;
     Enemy target;
     Planet src;
     boolean dead, mini;

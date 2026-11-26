@@ -21,9 +21,9 @@ jobs:
           echo "PROJ=$P" >> $GITHUB_ENV
       - name: Apply update (code pasted as text)
         run: |
-          # The code comes as update_1.txt ... update_6.txt (small parts are easier to paste on a phone).
-          EXPECT="1:21000 2:21000 3:21000 4:21000 5:21000 6:19332"
-          SHA="ffef8b8caaac107316dcb249f4949a410319017f9fd20e0544f5502b36c3f312"
+          # The code comes as update_1.txt ... update_8.txt (small parts are easier to paste on a phone).
+          EXPECT="1:21000 2:21000 3:21000 4:21000 5:21000 6:21000 7:21000 8:14560"
+          SHA="b26fecef2a947b6bd531f9d1b48977c5842e26d444bacfbbe99cf3275da0b588"
           F=$(find . -name update_1.txt -not -path '*/node_modules/*' | head -n 1)
           if [ -z "$F" ]; then
             echo "No update_1.txt found - building the code as it is in the repo"
@@ -79,8 +79,8 @@ jobs:
             StellaConsole.apk
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.9.${{ github.run_number }}
-          name: Stella TD v2.9.${{ github.run_number }}
+          tag_name: v3.1.${{ github.run_number }}
+          name: Stella TD v3.1.${{ github.run_number }}
           make_latest: true
           files: |
             StellaTD.apk

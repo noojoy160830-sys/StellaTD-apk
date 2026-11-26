@@ -165,6 +165,165 @@ final class Real {
         return b;
     }
 
+    /** colourful nebula clouds with dust lanes and stars, for the cover (drawn scaled up, so it is small) */
+    static Bitmap nebula(int w, int h, int seed) {
+        int[] px = new int[w * h];
+        for (int j = 0; j < h; j++) {
+            for (int i = 0; i < w; i++) {
+                float x = i / (float) w * 3.2f, y = j / (float) h * 6.9f;
+                // domain-warped clouds
+                float wx = fbm(x + 1.7f, y + 9.2f, 0.5f, 3, seed + 1), wy = fbm(x + 8.3f, y + 2.8f, 0.5f, 3, seed + 2);
+                float d1 = fbm(x + wx * 1.6f, y + wy * 1.6f, 1.3f, 5, seed + 3);
+                float d2 = fbm(x * 1.9f + 4, y * 1.9f + 1, 2.1f, 4, seed + 4);
+                float dust = fbm(x * 2.6f + 7, y * 2.6f + 3, 3.3f, 4, seed + 5);
+                float k1 = sstep(0.45f, 0.85f, d1), k2 = sstep(0.5f, 0.9f, d2);
+                // vertical colour drift: blue at the top, magenta in the middle, warm near the bottom
+                float v = j / (float) h;
+                int c1 = v < 0.5f ? mix(0xFF2B4BFF, 0xFFB43BFF, v * 2) : mix(0xFFB43BFF, 0xFFFF5B8A, (v - 0.5f) * 2);
+                int c2 = mix(0xFF3BE0FF, 0xFFFFB45B, v);
+                int col = 0xFF070314;
+                col = mix(col, c1, k1 * 0.75f);
+                col = mix(col, c2, k2 * 0.45f);
+                col = mix(col, lighten(c1, 0.6f), Math.max(0, k1 * k2 - 0.25f) * 0.9f);
+                col = mix(col, 0xFF05020C, sstep(0.55f, 0.8f, dust) * 0.7f);
+                px[j * w + i] = col;
+            }
+        }
+        java.util.Random r = new java.util.Random(seed);
+        for (int k = 0; k < w * h / 60; k++) {
+            int i = r.nextInt(w), j = r.nextInt(h);
+            float b = r.nextFloat();
+            int sc = b > 0.97f ? 0xFFFFE6A8 : 0xFFFFFFFF;
+            px[j * w + i] = mix(px[j * w + i], sc, 0.35f + 0.65f * b * b);
+        }
+        Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        b.setPixels(px, 0, w, 0, 0, w, h);
+        return b;
+    }
+
+    static int lighten(int c, float k) { return mix(c, 0xFFFFFFFF, k); }
+
+    // ------------------------------------------------------------------ cartoon (cel-shaded) sphere
+    static int saturate(int c, float k, int levels) {
+        float r = ((c >> 16) & 255) / 255f, g = ((c >> 8) & 255) / 255f, b = (c & 255) / 255f;
+        float l = 0.3f * r + 0.59f * g + 0.11f * b;
+        r = clamp(l + (r - l) * k); g = clamp(l + (g - l) * k); b = clamp(l + (b - l) * k);
+        if (levels > 0) {
+            float q = levels - 1;
+            r = Math.round(r * q) / q; g = Math.round(g * q) / q; b = Math.round(b * q) / q;
+        }
+        return 0xFF000000 | ((int) (r * 255) << 16) | ((int) (g * 255) << 8) | (int) (b * 255);
+    }
+
+    static int tint(int c, int t, float k) {
+        int r = (int) (((c >> 16) & 255) * (((t >> 16) & 255) / 255f) * k + ((c >> 16) & 255) * (1 - k));
+        int g = (int) (((c >> 8) & 255) * (((t >> 8) & 255) / 255f) * k + ((c >> 8) & 255) * (1 - k));
+        int b = (int) ((c & 255) * ((t & 255) / 255f) * k + (c & 255) * (1 - k));
+        return 0xFF000000 | (Math.min(255, r) << 16) | (Math.min(255, g) << 8) | Math.min(255, b);
+    }
+
+    /**
+     * Cartoon planet: the same detailed noise surfaces, but flattened into bold colour steps,
+     * a hard two-step cel shadow tinted purple, a bright rim light, a thick outline and a soft halo.
+     */
+    static Bitmap toon(int size, float rFrac, Surface s, int halo, float haloSize, boolean selfLit, int seed) {
+        return toon(size, rFrac, s, halo, haloSize, selfLit, seed, 0f);
+    }
+
+    static Bitmap toon(int size, float rFrac, Surface s, int halo, float haloSize, boolean selfLit, int seed, float rough) {
+        int[] px = new int[size * size];
+        float c = size / 2f, R = size * rFrac;
+        float lx = -0.6f, ly = -0.55f, lz = 0.58f;
+        float ll = (float) Math.sqrt(lx * lx + ly * ly + lz * lz);
+        lx /= ll; ly /= ll; lz /= ll;
+        float[] tmp = new float[2];
+        float tilt = 0.25f, ct = (float) Math.cos(tilt), st = (float) Math.sin(tilt);
+        float ow = Math.max(2f, R * 0.075f); // outline width in pixels
+        // average colour -> outline colour
+        long sr = 0, sg = 0, sb = 0; int n = 0;
+        for (int k = 0; k < 400; k++) {
+            float a = k * 2.399f, rr = (float) Math.sqrt((k + 0.5f) / 400f);
+            float nx = (float) Math.cos(a) * rr, ny = (float) Math.sin(a) * rr, nz = (float) Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+            int col = s.color(nx * ct - ny * st, nx * st + ny * ct, nz, tmp);
+            sr += (col >> 16) & 255; sg += (col >> 8) & 255; sb += col & 255; n++;
+        }
+        int avg = 0xFF000000 | ((int) (sr / n) << 16) | ((int) (sg / n) << 8) | (int) (sb / n);
+        int line = selfLit ? scale(saturate(avg, 1.5f, 0), 0.8f) : mix(scale(saturate(avg, 1.3f, 0), 0.28f), 0xFF1A0E3A, 0.45f);
+        int hr = (halo >> 16) & 255, hg = (halo >> 8) & 255, hb = halo & 255;
+        for (int j = 0; j < size; j++) {
+            for (int i = 0; i < size; i++) {
+                float dx = (i + 0.5f - c) / R, dy = (j + 0.5f - c) / R;
+                float d = (float) Math.sqrt(dx * dx + dy * dy);
+                if (rough > 0) {
+                    float ang = (float) Math.atan2(dy, dx);
+                    float edge = 1f - rough * fbm((float) Math.cos(ang) * 1.8f + 5, (float) Math.sin(ang) * 1.8f + 5, seed * 0.37f, 3, seed);
+                    d = d / edge;
+                    dx /= edge;
+                    dy /= edge;
+                }
+                float pd = (d - 1f) * R; // pixel distance from the surface
+                int out = 0;
+                if (pd < -ow) {
+                    float nz = (float) Math.sqrt(Math.max(0, 1 - dx * dx - dy * dy));
+                    float bx = dx * ct - dy * st, by = dx * st + dy * ct;
+                    int col = s.color(bx, by, nz, tmp);
+                    float em = ((col >>> 24) & 255) / 255f;
+                    col = saturate(col | 0xFF000000, 1.35f, 0);
+                    int lit;
+                    if (selfLit) {
+                        float k = nz > 0.55f ? 1.08f : nz > 0.25f ? 0.95f : 0.82f;
+                        lit = scale(col, k);
+                    } else {
+                        float diff = dx * lx + dy * ly + nz * lz;
+                        if (diff > 0.12f) lit = col;
+                        else if (diff > -0.3f) lit = tint(scale(col, 0.82f), 0xFF8A78FF, 0.35f);
+                        else lit = tint(scale(col, 0.58f), 0xFF5A48C8, 0.55f);
+                        if (em > 0) lit = mix(lit, col, em);
+                        // rim light on the lit edge
+                        if (d > 0.86f && diff > 0.05f) lit = mix(lit, 0xFFFFFFFF, 0.35f);
+                        // glossy highlight blob
+                        float hx = dx + 0.42f, hy = dy + 0.42f;
+                        float hl = hx * hx * 1.3f + hy * hy * 2.2f + hx * hy * 1.2f;
+                        if (hl < 0.028f) lit = mix(lit, 0xFFFFFFFF, 0.75f);
+                        else if (hl < 0.06f) lit = mix(lit, 0xFFFFFFFF, 0.22f);
+                    }
+                    out = lit;
+                } else if (pd < 0) {
+                    float a = clamp(-pd + 0.5f);
+                    // anti-aliased step from outline into the body
+                    out = mix(line, line, a);
+                    if (pd > -1) {
+                        // outer edge AA against the halo
+                        float aa = clamp(-pd);
+                        int alpha = (int) (255 * Math.max(aa, 0.5f * haloAlpha(0, haloSize, R, selfLit)));
+                        out = (alpha << 24) | (line & 0xFFFFFF);
+                    }
+                } else if (haloSize > 0) {
+                    float ha = haloAlpha(pd, haloSize, R, selfLit);
+                    if (selfLit) {
+                        float ang = (float) Math.atan2(dy, dx);
+                        ha *= 0.6f + 0.8f * fbm((float) Math.cos(ang) * 3 + d * 2, (float) Math.sin(ang) * 3, 1.7f, 3, seed + 5);
+                        ha = Math.min(1f, ha);
+                        // cartoon flame tongues: step the glow
+                        ha = ha > 0.55f ? 0.85f : ha > 0.25f ? 0.45f : ha * 0.8f;
+                    }
+                    int alpha = (int) (255 * clamp(ha));
+                    out = (alpha << 24) | (hr << 16) | (hg << 8) | hb;
+                }
+                px[j * size + i] = out;
+            }
+        }
+        Bitmap b = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        b.setPixels(px, 0, size, 0, 0, size, size);
+        return b;
+    }
+
+    private static float haloAlpha(float pd, float haloSize, float R, boolean selfLit) {
+        float t = 1f - pd / (haloSize * R);
+        if (t <= 0) return 0;
+        return t * t * (selfLit ? 1f : 0.55f);
+    }
+
     // ------------------------------------------------------------------ planet surfaces
     static Surface surface(int type) {
         switch (type) {
@@ -280,6 +439,56 @@ final class Real {
                     col = craters(col, x, y, z, t, 7f, 103, 0xFF6A4A36, 0xFFE0C8A8);
                     return col & 0x00FFFFFF;
                 };
+            case Defs.CYBER:
+                return (x, y, z, t) -> {
+                    // dark steel with glowing cyan circuit lines
+                    float b = fbm(x * 3, y * 3, z * 3, 3, 301);
+                    int col = ramp(b, 0xFF141C2E, 0xFF22304A, 0xFF34486A);
+                    float gx = Math.abs((float) Math.sin(x * 14 + Math.floor(y * 6) * 1.7f)), gy = Math.abs((float) Math.sin(y * 14));
+                    worley(x * 5, y * 5, z * 5, 302, t);
+                    float edge = 1f - sstep(0f, 0.05f, t[1] - t[0]);
+                    float line = Math.max(edge, (gx < 0.06f && gy > 0.5f) ? 1f : 0f);
+                    if (line > 0.1f) return ((int) (line * 255) << 24) | (mix(col, 0xFF5EF2FF, line) & 0xFFFFFF);
+                    if (t[0] < 0.08f) return 0xC0000000 | (0xFFB8FFFF & 0xFFFFFF);
+                    return col & 0xFFFFFF;
+                };
+            case Defs.NIGHTMARE:
+                return (x, y, z, t) -> {
+                    float b = fbm(x * 2.4f + 3, y * 2.4f, z * 2.4f, 5, 311);
+                    int col = ramp(b, 0xFF07040E, 0xFF1C0A2A, 0xFF3A1250, 0xFF22061A);
+                    worley(x * 3.6f, y * 3.6f, z * 3.6f, 312, t);
+                    float crack = 1f - sstep(0f, 0.07f, t[1] - t[0]);
+                    if (crack > 0.05f) return ((int) (crack * 255) << 24) | (mix(col, ramp(crack, 0xFF7A0010, 0xFFFF1A3A, 0xFFFF9AB0), crack) & 0xFFFFFF);
+                    return col & 0xFFFFFF;
+                };
+            case Defs.GALACIA_P:
+                return (x, y, z, t) -> {
+                    float w = fbm(x * 2 + 9, y * 2, z * 2, 4, 321);
+                    float swirl = (float) Math.sin((y * 6 + (w - 0.5f) * 5 + Math.atan2(z, x) * 2));
+                    int col = ramp(0.5f + 0.5f * swirl, 0xFF0A2A7A, 0xFF1A6AD8, 0xFF4FC8FF, 0xFFDFF8FF);
+                    if (swirl > 0.86f) return mix(col, 0xFFFFFFFF, 0.6f) & 0xFFFFFF;
+                    return col & 0xFFFFFF;
+                };
+            case Defs.KING:
+                return (x, y, z, t) -> {
+                    float w = fbm(x * 2, y * 5, z * 2, 4, 331);
+                    float band = 0.5f + 0.5f * (float) Math.sin((y * 7 + (w - 0.5f) * 3) * 2f);
+                    int col = ramp(band, 0xFF2A0A4A, 0xFF5A1A8A, 0xFF8A3AC8, 0xFFFFD23F);
+                    if (Math.abs(y) < 0.08f) return 0x50000000 | (0xFFFFE27A & 0xFFFFFF);
+                    return col & 0xFFFFFF;
+                };
+            case Defs.HERO:
+                return (x, y, z, t) -> {
+                    float h = fbm(x * 2.2f + 4, y * 2.2f, z * 2.2f, 5, 71);
+                    int col = ramp(h, 0xFF2A0830, 0xFF6A1238, 0xFFB0243A, 0xFFE0563A);
+                    worley(x * 3.2f, y * 3.2f, z * 3.2f, 73, t);
+                    float vein = 1f - sstep(0.0f, 0.09f, t[1] - t[0]);
+                    if (vein > 0.05f) return (((int) (vein * 255)) << 24) | (mix(col, ramp(vein, 0xFFFF8A2B, 0xFFFFD23F, 0xFFFFF6C0), vein) & 0xFFFFFF);
+                    // golden crown band near the equator
+                    float band = Math.abs(y + 0.08f * (float) Math.sin(x * 9));
+                    if (band < 0.07f) return mix(col, 0xFFFFC83A, 0.85f) & 0x00FFFFFF | 0x40000000;
+                    return col & 0x00FFFFFF;
+                };
             case Defs.SUN:
                 return (x, y, z, t) -> {
                     worley(x * 34, y * 34, z * 34, 111, t);
@@ -384,6 +593,29 @@ final class Real {
                     }
                     return col & 0x00FFFFFF;
                 };
+            case Defs.E_VOIDLING:
+                return (x, y, z, t) -> {
+                    float b = fbm(x * 3 + 2, y * 3, z * 3, 4, 271);
+                    int col = ramp(b, 0xFF12061E, 0xFF3A0E5A, 0xFF7A2AC8);
+                    worley(x * 4, y * 4, z * 4, 272, t);
+                    if (t[0] < 0.1f) return 0xA0000000 | (0xFFE07AFF & 0xFFFFFF);
+                    return col & 0xFFFFFF;
+                };
+            case Defs.E_WRAITH:
+                return (x, y, z, t) -> {
+                    float w = fbm(x * 2, y * 4, z * 2, 4, 281);
+                    int col = ramp(0.5f + 0.5f * (float) Math.sin((y * 8 + w * 4)), 0xFF0E3A3A, 0xFF2AB8A8, 0xFFB8FFF0);
+                    return ((int) (90 + 120 * w) << 24) | (col & 0xFFFFFF);
+                };
+            case Defs.E_TITAN:
+                return (x, y, z, t) -> {
+                    float b = fbm(x * 2.2f, y * 2.2f, z * 2.2f, 5, 291);
+                    int col = ramp(b, 0xFF0A0610, 0xFF2A0E1E, 0xFF4A1028);
+                    worley(x * 3, y * 3, z * 3, 292, t);
+                    float crack = 1f - sstep(0f, 0.06f, t[1] - t[0]);
+                    if (crack > 0.05f) return ((int) (crack * 255) << 24) | (mix(col, 0xFFFF2B5B, crack) & 0xFFFFFF);
+                    return col & 0xFFFFFF;
+                };
             default:
                 return (x, y, z, t) -> 0x888888;
         }
@@ -391,13 +623,16 @@ final class Real {
 
     static Bitmap enemy(int type, int size) {
         switch (type) {
-            case Defs.E_METEOR: return sphere(size, 0.4f, enemySurface(type), 0xFF6E5A4C, 0f, 0f, false, 0.3f, 7);
-            case Defs.E_MEGA: return sphere(size, 0.4f, enemySurface(type), 0xFFFF6A1A, 0.6f, 0.2f, false, 0.28f, 9);
-            case Defs.E_EXOMOON: return sphere(size, 0.36f, enemySurface(type), 0xFF7CFF8A, 0.8f, 0.3f, false, 0f, 3);
-            case Defs.E_ALTMOON: return sphere(size, 0.36f, enemySurface(type), 0xFFFF4FD8, 0.8f, 0.3f, false, 0f, 4);
-            case Defs.E_EXOPLANET: return sphere(size, 0.32f, enemySurface(type), 0xFF7CFFC0, 0.9f, 0.3f, false, 0f, 5);
-            case Defs.E_ALTPLANET: return sphere(size, 0.38f, enemySurface(type), 0xFFFF6AE0, 0.9f, 0.25f, false, 0f, 6);
-            case Defs.E_HELL: return sphere(size, 0.38f, enemySurface(type), 0xFFFF3B1F, 1f, 0.3f, false, 0f, 8);
+            case Defs.E_METEOR: return toon(size, 0.4f, enemySurface(type), 0xFF6E5A4C, 0f, false, 7, 0.3f);
+            case Defs.E_MEGA: return toon(size, 0.4f, enemySurface(type), 0xFFFF6A1A, 0.22f, false, 9, 0.28f);
+            case Defs.E_EXOMOON: return toon(size, 0.36f, enemySurface(type), 0xFF7CFF8A, 0.32f, false, 3);
+            case Defs.E_ALTMOON: return toon(size, 0.36f, enemySurface(type), 0xFFFF4FD8, 0.32f, false, 4);
+            case Defs.E_EXOPLANET: return toon(size, 0.32f, enemySurface(type), 0xFF7CFFC0, 0.32f, false, 5);
+            case Defs.E_ALTPLANET: return toon(size, 0.38f, enemySurface(type), 0xFFFF6AE0, 0.27f, false, 6);
+            case Defs.E_HELL: return toon(size, 0.38f, enemySurface(type), 0xFFFF3B1F, 0.32f, false, 8);
+            case Defs.E_VOIDLING: return toon(size, 0.36f, enemySurface(type), 0xFFB43BFF, 0.3f, false, 13, 0.18f);
+            case Defs.E_WRAITH: return toon(size, 0.34f, enemySurface(type), 0xFF7CFFE0, 0.4f, false, 14);
+            case Defs.E_TITAN: return toon(size, 0.4f, enemySurface(type), 0xFFFF2B5B, 0.25f, false, 15, 0.08f);
             default: return null;
         }
     }

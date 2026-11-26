@@ -10,7 +10,7 @@ final class Game {
     final int stage, maxWave;
     final float[] px, py, cum;
     final float total;
-    final float[] slotX, slotY;
+    float[] slotX, slotY;
     final Planet[] slots;
 
     final ArrayList<Enemy> enemies = new ArrayList<>();
@@ -19,6 +19,11 @@ final class Game {
     final ArrayList<HeatWave> heat = new ArrayList<>();
     final ArrayList<Fx> fx = new ArrayList<>();
     final ArrayList<Integer> queue = new ArrayList<>();
+    final ArrayList<Wall> walls = new ArrayList<>();
+    /** the last slots sit on the path itself (Commander only) */
+    final boolean[] pathSlot;
+    boolean kingSkillUsed;
+    int earnOil;
 
     final Profile pf;
     final int[] deck;
@@ -50,14 +55,49 @@ final class Game {
         }
         total = t;
         float[] s = Defs.ST_SLOTS[stage];
-        slotX = new float[s.length / 2];
-        slotY = new float[s.length / 2];
+        float[] slotX = new float[s.length / 2];
+        float[] slotY = new float[s.length / 2];
         for (int i = 0; i < slotX.length; i++) {
             slotX[i] = s[i * 2];
             slotY[i] = s[i * 2 + 1];
         }
-        slots = new Planet[slotX.length];
+        this.slotX = slotX;
+        this.slotY = slotY;
+        // three extra slots right on the path for the Commander satellite
+        int np = 3;
+        float[] sx = new float[slotX.length + np], sy = new float[slotX.length + np];
+        System.arraycopy(slotX, 0, sx, 0, slotX.length);
+        System.arraycopy(slotY, 0, sy, 0, slotY.length);
+        pathSlot = new boolean[sx.length];
+        float[] fr = {0.32f, 0.55f, 0.78f};
+        for (int k = 0; k < np; k++) {
+            pointAt(total * fr[k], tmp);
+            sx[slotX.length + k] = tmp[0];
+            sy[slotX.length + k] = tmp[1];
+            pathSlot[slotX.length + k] = true;
+        }
+        this.slotX = sx;
+        this.slotY = sy;
+        slots = new Planet[sx.length];
         showBanner(L.t("วางดวงดาวเพื่อป้องกันฐาน!", "Place planets to defend the base!"), 0xFFFFD23F);
+    }
+
+    /** distance from a point to the path */
+    float pathDist(float x, float y) {
+        float best = 1e9f;
+        for (int i = 1; i < px.length; i++) best = Math.min(best, Defs.segDist(x, y, px[i - 1], py[i - 1], px[i], py[i]));
+        return best;
+    }
+
+    /** path distance (from the black hole) of the path point nearest to (x, y) */
+    float nearestD(float x, float y) {
+        float bestD = 0, best = 1e9f;
+        for (float d = 0; d <= total; d += 8) {
+            pointAt(d, tmp);
+            float q = dist(x, y, tmp[0], tmp[1]);
+            if (q < best) { best = q; bestD = d; }
+        }
+        return bestD;
     }
 
     static float dist(float x1, float y1, float x2, float y2) {
@@ -133,14 +173,21 @@ final class Game {
         return Defs.P_KIND[p.type] == Defs.K_PRODUCE;
     }
 
+    /** planets that shoot at enemies (spirits join these) */
+    static boolean attacks(Planet p) {
+        int k = Defs.P_KIND[p.type];
+        return k != Defs.K_PRODUCE && k != Defs.K_WALL && k != Defs.K_NUKE && k != Defs.K_KING && k != Defs.K_HAUNT
+                && k != Defs.K_STORM && k != Defs.K_BUFF && k != Defs.K_SUNWAVE;
+    }
+
     static boolean isFire(Planet p) {
         int k = Defs.P_KIND[p.type];
-        return k == Defs.K_SMOKE || k == Defs.K_FIREROCK || k == Defs.K_TORNADO || k == Defs.K_SUNWAVE;
+        return k == Defs.K_SMOKE || k == Defs.K_FIREROCK || k == Defs.K_TORNADO || k == Defs.K_SUNWAVE || k == Defs.K_LANCE || p.hellMoon;
     }
 
     static boolean isIce(Planet p) {
         int k = Defs.P_KIND[p.type];
-        return k == Defs.K_ICE || k == Defs.K_AURA;
+        return k == Defs.K_ICE || k == Defs.K_AURA || k == Defs.K_STORM;
     }
 
     static float dmgOf(Planet p) {
@@ -149,18 +196,20 @@ final class Game {
     }
 
     static float rangeOf(Planet p) {
-        return Defs.P_RANGE[p.type] * (1f + enchRng(p)) * (1f + matRng(p));
+        return Defs.P_RANGE[p.type] * (1f + enchRng(p)) * (1f + matRng(p)) * (p.king ? 1.1f : 1f);
     }
 
+    /** the persistent upgrade level (Lv 1-10) speeds up attacks 4% and production 5% per level */
     static float cdOf(Planet p) {
         float c = Defs.P_CD[p.type];
-        if (isProducer(p)) return c / ((1f + 0.2f * (p.level - 1)) * (1f + 0.05f * (p.plv - 1)));
-        return c / ((1f + enchSpa(p)) * (1f + matSpa(p)));
+        float k = p.king ? 1.1f : 1f;
+        if (isProducer(p)) return c / ((1f + 0.2f * (p.level - 1)) * (1f + 0.05f * (p.plv - 1)) * k);
+        return c / ((1f + enchSpa(p)) * (1f + matSpa(p)) * (1f + 0.04f * (p.plv - 1)) * k);
     }
 
-    /** SP per production cycle (fractional, accumulated) */
+    /** SP per production cycle (fractional, accumulated); persistent level adds 8% per level */
     static float produceRate(Planet p) {
-        float a = Defs.P_DMG[p.type] + (p.level >= 4 ? 1 : 0);
+        float a = (Defs.P_DMG[p.type] + (p.level >= 4 ? 1 : 0)) * (1f + 0.08f * (p.plv - 1)) * (p.king ? 1.1f : 1f);
         if (p.enchant == Defs.EN_MIDAS) a *= 1.5f;
         if (p.material == Defs.MAT_GOLD) a *= 1.6f;
         return a;
@@ -172,7 +221,7 @@ final class Game {
 
     /** strength / duration multiplier for burn effects */
     static float fireMul(Planet p) {
-        float m = 1f;
+        float m = p.hellMoon ? 1.1f : 1f;
         if (p.enchant == Defs.EN_LAVA) m *= 1.5f;
         if (p.enchant == Defs.EN_MEGALONIA && isFire(p)) m *= 1.15f;
         return m;
@@ -201,9 +250,16 @@ final class Game {
         int cost = Defs.PLACE_COST[type];
         if (slots[slot] != null) return L.t("ช่องนี้มีดาวแล้ว", "Slot is taken");
         if (stars < cost) return L.t("SP ไม่พอ", "Not enough SP");
+        if (pathSlot[slot] && !Defs.onPathOnly(type))
+            return L.t("ช่องบนทางเดินใช้ได้เฉพาะ Commander", "Path slots are for the Commander only");
+        if (!pathSlot[slot] && Defs.onPathOnly(type))
+            return L.t("Commander ต้องวางบนช่องที่อยู่บนทางเดิน", "The Commander goes on a slot on the path");
+        if (Defs.nearPathOnly(type) && pathDist(slotX[slot], slotY[slot]) > 175)
+            return L.t("Cyber วางได้เฉพาะช่องที่ติดทางเดิน", "Cyber must go on a slot next to the path");
         if (countOf(type) >= Defs.PLACE_LIMIT[type])
             return L.t("วาง " + Defs.P_NAME[type] + " ได้สูงสุด " + Defs.PLACE_LIMIT[type] + " ดวง", "Max " + Defs.PLACE_LIMIT[type] + " " + Defs.P_NAME[type] + " on the map");
         stars -= cost;
+        Sfx.play(Sfx.PLACE);
         Planet p = new Planet();
         p.type = type;
         p.slot = slot;
@@ -213,6 +269,11 @@ final class Game {
         p.cdT = 0.3f;
         p.plv = pf.level[type];
         p.enchant = pf.enchant[type];
+        p.hellMoon = pf.moonOn[type] == Defs.MOON_HELL;
+        p.skin = pf.skinOn[type];
+        p.ax = p.x;
+        p.ay = p.y;
+        if (Defs.P_KIND[type] == Defs.K_WALL) p.wallD = nearestD(p.x, p.y);
         p.tier = pf.tier[type];
         p.material = pf.material[type];
         p.moons = p.enchant == Defs.EN_MOON ? 1 : 0;
@@ -235,6 +296,7 @@ final class Game {
         stars -= c;
         p.spent += c;
         p.level++;
+        Sfx.play(Sfx.UPGRADE);
         ring(p.x, p.y, 0xFFFFD23F, 90);
         text(p.x, p.y - 70, "Lv " + p.level, 0xFFFFD23F);
         return null;
@@ -251,14 +313,22 @@ final class Game {
     // ------------------------------------------------------------------ waves
     void startWave() {
         wave++;
+        Sfx.play(Sfx.WAVE_START);
         inWave = true;
         queue.clear();
-        int w = wave + stage * 2;
+        int g = Defs.galaxyOf(stage);
+        int w = wave + (stage % Defs.PER_GALAXY) / 2 + g * 4;
         int n = 4 + (int) (wave * 1.3f);
         for (int i = 0; i < n; i++) queue.add(pickEnemy(w));
         boolean boss = wave % 10 == 0 || wave == maxWave;
         boolean mini = !boss && wave % 10 == 5;
-        if (boss) {
+        if (stage == Defs.RAID && boss) {
+            queue.add(Defs.E_TITAN);
+            showBanner(L.t("บอส Raid: Void Titan!", "Raid boss: Void Titan!"), 0xFFFF2B5B);
+        } else if (stage == Defs.RAID && mini) {
+            queue.add(MINI_FLAG + Defs.E_WRAITH);
+            showBanner(L.t("มินิบอส Raid!", "Raid mini boss!"), 0xFFFF8A2B);
+        } else if (boss) {
             queue.add(Defs.E_BLACKHOLE);
             showBanner(L.t("บอส: หลุมดำมาแล้ว!", "Boss: Black Hole incoming!"), 0xFFB86BFF);
         } else if (mini) {
@@ -274,6 +344,17 @@ final class Game {
     static final int MINI_FLAG = 100;
 
     int pickEnemy(int w) {
+        if (stage == Defs.RAID) {
+            int k = pickEnemyBase(Math.min(w, 16));
+            float r = rnd.nextFloat();
+            if (wave >= 5 && r < 0.18f) return Defs.E_VOIDLING;
+            if (wave >= 15 && r < 0.3f) return Defs.E_WRAITH;
+            return k;
+        }
+        return pickEnemyBase(w);
+    }
+
+    int pickEnemyBase(int w) {
         float[] weight = new float[8];
         weight[Defs.E_METEOR] = 5;
         if (w >= 2) weight[Defs.E_SHOOT] = 3;
@@ -301,7 +382,12 @@ final class Game {
     Enemy makeEnemy(int type) {
         Enemy e = new Enemy();
         e.type = type;
-        if (type == Defs.E_BLACKHOLE) {
+        if (type == Defs.E_TITAN) {
+            e.boss = true;
+            e.maxHp = Defs.E_HP[type] * (1f + 0.35f * (wave / 10 - 1)) * (1f + 0.012f * wave * wave / 10f) * Defs.ST_HP[stage];
+            e.maxShield = e.maxHp * 0.25f;
+            e.shield = e.maxShield;
+        } else if (type == Defs.E_BLACKHOLE) {
             e.boss = true;
             e.maxHp = Defs.E_HP[type] * (1f + 0.18f * Math.max(0, wave - 10)) * Defs.ST_HP[stage]
                     * (wave >= 10 ? 1f : 0.6f);
@@ -309,11 +395,13 @@ final class Game {
             e.maxHp = Defs.E_HP[type] * hpScale();
         }
         e.hp = e.maxHp;
-        if (type == Defs.E_EXOPLANET) {
+        if (type == Defs.E_TITAN) {
+            // shield set above
+        } else if (type == Defs.E_EXOPLANET) {
             e.maxShield = e.maxHp * 0.35f;
             e.shield = e.maxShield;
         }
-        e.speed = Defs.E_SPEED[type] * (1f + Math.min(0.25f, wave * 0.006f));
+        e.speed = Defs.E_SPEED[type] * (1f + Math.min(0.25f, wave * 0.006f)) * Defs.ST_SPEED[stage];
         e.radius = Defs.E_RADIUS[type];
         e.baseDmg = Defs.E_BASEDMG[type];
         e.abilT = rnd.nextFloat() * 2f;
@@ -344,16 +432,63 @@ final class Game {
 
     void waveCleared() {
         inWave = false;
+        if (stage == Defs.RAID) earnOil += 1 + wave / 10;
         int g = 4 + wave / 3;
         stars += g;
         earnStars += 4 + wave / 2;
         if (wave >= maxWave) {
             won = true;
-            earnStars += 100 * (stage + 1);
+            Sfx.play(Sfx.WIN);
+            earnStars += stage == Defs.RAID ? 3000 : 80 + 30 * stage;
+            if (stage == Defs.RAID) earnOil += 100;
             return;
         }
         showBanner(L.t("เคลียร์เวฟ ", "Wave cleared ") + wave + "  +" + g + " SP", 0xFF9CFF7A);
         prepT = 5f;
+    }
+
+    // ------------------------------------------------------------------ skills
+    /** Nightmare: spend a lot of SP, destroy itself and every enemy on the map (bosses lose 40% HP) */
+    String nuke(Planet p) {
+        int cost = Defs.nukeCost(wave);
+        if (stars < cost) return L.t("SP ไม่พอ (ต้องใช้ ", "Not enough SP (needs ") + cost + ")";
+        stars -= cost;
+        for (Enemy e : enemies) {
+            if (e.dead) continue;
+            if (e.boss || e.type == Defs.E_TITAN) damage(e, e.maxHp * 0.4f, p);
+            else kill(e, p);
+        }
+        for (Planet q : slots) if (q == p) slots[p.slot] = null;
+        shake = 1f;
+        ring(p.x, p.y, 0xFFFF1A3A, 900);
+        ring(p.x, p.y, 0xFF7A0010, 600);
+        for (int k = 0; k < 60; k++) particle(p.x, p.y, k % 2 == 0 ? 0xFFFF1A3A : 0xFF2A0612, 600);
+        showBanner(L.t("NIGHTMARE! ศัตรูทั้งแมพถูกทำลาย", "NIGHTMARE! The map is wiped"), 0xFFFF1A3A);
+        Sfx.play(Sfx.BOSS_KILL, 0.7f);
+        return null;
+    }
+
+    /** King: Elite Command, once per match - 3 Knight Moons march down the path and the base gets +5 HP */
+    String eliteCommand(Planet p) {
+        if (kingSkillUsed) return L.t("ใช้ Elite Command ไปแล้วในด่านนี้", "Elite Command was already used this match");
+        kingSkillUsed = true;
+        baseHp += 5;
+        maxBaseHp = Math.max(maxBaseHp, baseHp);
+        for (int k = 0; k < 3; k++) {
+            HeatWave h = new HeatWave();
+            h.d = total - k * 70;
+            h.maxHp = dmgOf(p) * 40f * (1f + 0.15f * wave) * Defs.ST_HP[stage];
+            h.hp = h.maxHp;
+            h.summon = -2; // knight moon
+            h.speed = 110f;
+            h.src = p;
+            heat.add(h);
+        }
+        ring(px[px.length - 1], py[py.length - 1], 0xFFFFD23F, 260);
+        text(px[px.length - 1], py[py.length - 1] - 90, "+5 HP", 0xFF7CFF8A);
+        showBanner(L.t("Elite Command! Knight Moon x3", "Elite Command! Knight Moons x3"), 0xFFFFD23F);
+        Sfx.play(Sfx.WIN, 1.3f);
+        return null;
     }
 
     void skipPrep() {
@@ -382,6 +517,13 @@ final class Game {
         }
 
         if (infiniteSP) stars = 999;
+        for (int i = walls.size() - 1; i >= 0; i--) {
+            Wall w = walls.get(i);
+            if (w.hitT > 0) w.hitT -= dt;
+            boolean owner = false;
+            for (Planet q : slots) if (q == w.src) owner = true;
+            if (w.dead || !owner) walls.remove(i);
+        }
         computeBuffs();
         updatePlanets(dt);
         updateEnemies(dt);
@@ -394,14 +536,18 @@ final class Game {
         if (baseHp <= 0 && !lost) {
             baseHp = 0;
             lost = true;
+            Sfx.play(Sfx.LOSE);
             shake = 0.8f;
         }
     }
 
     void computeBuffs() {
+        boolean king = false;
+        for (Planet q : slots) if (q != null && q.type == Defs.KING && q.disabledT <= 0) king = true;
         for (Planet p : slots) {
             if (p == null) continue;
-            p.buff = 0;
+            p.king = king;
+            p.buff = king ? 0.10f : 0;
             for (Planet q : slots) {
                 if (q == null || q == p || q.type != Defs.PLUTO || q.disabledT > 0) continue;
                 if (dist(p.x, p.y, q.x, q.y) <= 240) p.buff += 0.10f;
@@ -430,6 +576,11 @@ final class Game {
             }
             int kind = Defs.P_KIND[p.type];
             float cd = cdOf(p);
+            if (kind == Defs.K_COMMANDER) {
+                double a = p.anim * 0.9 + p.slot;
+                p.x = p.ax + (float) Math.cos(a) * 110f;
+                p.y = p.ay + (float) Math.sin(a) * 110f;
+            }
             if (kind == Defs.K_PRODUCE) {
                 p.prodT += dt;
                 if (p.prodT >= cd) {
@@ -461,12 +612,65 @@ final class Game {
                     applyMaterialOnHit(e, dmg, p);
                 }
                 if (any) p.flash = 0.2f;
+            } else if (kind == Defs.K_WALL) {
+                // Cyber: keep up to 3 walls on the nearest stretch of path
+                p.cdT = cd;
+                float[] offs = {-75, 0, 75};
+                for (float o : offs) {
+                    float d = Math.max(60, Math.min(total - 60, p.wallD + o));
+                    boolean have = false;
+                    for (Wall w : walls) if (!w.dead && w.src == p && Math.abs(w.d - d) < 20) have = true;
+                    if (have) continue;
+                    Wall w = new Wall();
+                    w.src = p;
+                    w.d = d;
+                    pointAt(d, tmp);
+                    w.x = tmp[0];
+                    w.y = tmp[1];
+                    w.maxHp = dmgOf(p) * (1f + 0.12f * Math.max(0, wave - 1)) * Defs.ST_HP[stage] * 3.5f;
+                    w.hp = w.maxHp;
+                    walls.add(w);
+                    ring(w.x, w.y, 0xFF5EF2FF, 70);
+                    p.flash = 0.3f;
+                    break; // one wall per cycle
+                }
+            } else if (kind == Defs.K_HAUNT) {
+                // Savior: haunt and slow everything in range
+                p.cdT = cd;
+                float r = rangeOf(p);
+                boolean any = false;
+                for (Enemy e : enemies) {
+                    if (e.dead || dist(p.x, p.y, e.x, e.y) > r + e.radius) continue;
+                    any = true;
+                    e.hauntT = 1.2f;
+                    if (e.type != Defs.E_WRAITH) applySlow(e, 0.35f, 0.8f);
+                }
+                if (any) p.flash = 0.2f;
+            } else if (kind == Defs.K_STORM) {
+                // Galacia: a water storm that stuns, no damage
+                Enemy t = findTarget(p.x, p.y, rangeOf(p));
+                if (t == null) { p.cdT = 0; continue; }
+                p.cdT = cd;
+                float im = iceMul(p);
+                for (Enemy e : enemies) {
+                    if (e.dead || e.phased || dist(t.x, t.y, e.x, e.y) > 115 + e.radius) continue;
+                    float st = (e.boss ? 0.45f : e.mini ? 0.8f : 1.4f) * im * (1f + 0.04f * (p.plv - 1));
+                    e.stunT = Math.max(e.stunT, st);
+                }
+                ring(t.x, t.y, 0xFF7FD8FF, 230);
+                for (int k = 0; k < 14; k++) particle(t.x, t.y, k % 2 == 0 ? 0xFFDFF8FF : 0xFF4FC8FF, 260);
+                Sfx.play(Sfx.S_ICE, 0.7f);
+                p.flash = 0.25f;
+            } else if (kind == Defs.K_NUKE || kind == Defs.K_KING) {
+                p.cdT = 1f; // skill planets never attack
             } else if (kind == Defs.K_SUNWAVE) {
                 if (!inWave || enemies.isEmpty()) { p.cdT = 0.2f; continue; }
                 p.cdT = cd;
+                Sfx.play(Sfx.S_WAVE);
                 HeatWave h = new HeatWave();
                 h.d = total;
-                h.maxHp = dmgOf(p) * 20f * (1f + 0.2f * sunCount) * fireMul(p);
+                // each wave is a bit stronger than the last, capped so the Sun can't snowball forever
+                h.maxHp = dmgOf(p) * 20f * (1f + 0.15f * Math.min(sunCount, 8)) * fireMul(p);
                 h.hp = h.maxHp;
                 h.src = p;
                 sunCount++;
@@ -478,6 +682,12 @@ final class Game {
                 if (t == null) { p.cdT = 0; continue; }
                 p.cdT = cd;
                 fire(p, t, p.x, p.y, 1f, false);
+                if (p.spirits > 0) {
+                    // each spirit adds a ghost bolt worth 5% of the host's damage
+                    float sd = dmgOf(p) * 0.05f * p.spirits;
+                    damage(t, sd, p);
+                    if (rnd.nextFloat() < 0.5f) particle(t.x, t.y, 0xFFB8FFF0, 120);
+                }
                 for (int m = 0; m < p.moons; m++) {
                     double a = p.orbitA + m * Math.PI * 2 / p.moons;
                     float mx = p.x + (float) Math.cos(a) * 62f;
@@ -491,6 +701,7 @@ final class Game {
 
     void fire(Planet p, Enemy t, float x, float y, float mul, boolean mini) {
         int kind = Defs.P_KIND[p.type];
+        if (!mini) Sfx.play(shotSound(kind), 0.92f + rnd.nextFloat() * 0.16f);
         Shot s = new Shot();
         s.src = p;
         s.target = t;
@@ -501,15 +712,30 @@ final class Game {
         s.life = 3f;
         s.size = 1f;
         if (mini) kind = Defs.K_ROCK;
+        if (kind == Defs.K_COMMANDER) kind = Defs.K_MISSILE;
         switch (kind) {
-            case Defs.K_MISSILE: s.speed = 560; break;
+            case Defs.K_MISSILE: s.speed = 560; s.splash = 75; s.splashMul = 0.45f; break;
             case Defs.K_ROCK: s.speed = 620; break;
             case Defs.K_BUFF: kind = Defs.K_ROCK; s.speed = 600; s.size = 0.8f; break;
             case Defs.K_SWARM:
                 s.speed = 720; s.size = 0.6f;
                 s.x += rnd.nextFloat() * 30 - 15; s.y += rnd.nextFloat() * 30 - 15;
                 break;
-            case Defs.K_SMOKE: s.speed = 380; s.burnDps = s.dmg * 5f * fireMul(p); s.burnDur = 3f * fireDurMul(p); break;
+            case Defs.K_SMOKE: s.speed = 380; s.burnDps = s.dmg * 5f * fireMul(p); s.burnDur = 3f * fireDurMul(p); s.splash = 90; s.splashMul = 0.5f; break;
+            case Defs.K_LANCE: {
+                s.speed = 950;
+                s.burnDps = s.dmg * 1.4f * fireMul(p);
+                s.burnDur = 3.5f * fireDurMul(p);
+                s.hit = new HashSet<>();
+                float dx = t.x - x, dy = t.y - y, l = Math.max(1f, dist(0, 0, dx, dy));
+                s.vx = dx / l * s.speed;
+                s.vy = dy / l * s.speed;
+                s.life = rangeOf(p) * 1.6f / s.speed;
+                s.target = null;
+                s.splash = 120;
+                s.splashMul = 0.6f;
+                break;
+            }
             case Defs.K_FIREROCK: s.speed = 720; s.size = 0.7f; s.burnDps = s.dmg * 1.2f * fireMul(p); s.burnDur = 2f * fireDurMul(p); break;
             case Defs.K_ICE: {
                 float im = iceMul(p);
@@ -541,17 +767,23 @@ final class Game {
             Shot s = shots.get(i);
             s.life -= dt;
             s.spin += dt * 8f;
-            if (s.kind == Defs.K_TORNADO) {
+            if (s.kind == Defs.K_TORNADO || s.kind == Defs.K_LANCE) {
                 s.x += s.vx * dt;
                 s.y += s.vy * dt;
-                for (Enemy e : enemies) {
+                boolean lance = s.kind == Defs.K_LANCE;
+                for (int k = 0; k < enemies.size(); k++) {
+                    Enemy e = enemies.get(k);
                     if (e.dead || e.phased || s.hit.contains(e)) continue;
-                    if (dist(s.x, s.y, e.x, e.y) < 46 + e.radius) {
+                    if (dist(s.x, s.y, e.x, e.y) < (lance ? 34 : 46) + e.radius) {
                         s.hit.add(e);
-                        hitEnemy(s, e);
+                        hitEnemy(s, e, false);
                     }
                 }
-                if (s.life <= 0) shots.remove(i);
+                if (s.life <= 0) {
+                    // the hero lance bursts in a ring of fire where it ends
+                    if (lance) burst(s, s.x, s.y);
+                    shots.remove(i);
+                }
                 continue;
             }
             if (s.target == null || s.target.dead || s.target.phased) {
@@ -574,7 +806,28 @@ final class Game {
         }
     }
 
-    void hitEnemy(Shot s, Enemy e) {
+    void hitEnemy(Shot s, Enemy e) { hitEnemy(s, e, true); }
+
+    /** AoE: damage (and burn) every other enemy around the point */
+    void burst(Shot s, float x, float y) {
+        if (s.splash <= 0) return;
+        ring(x, y, s.kind == Defs.K_LANCE ? 0xFFFF6A3D : 0xFFFFB060, s.splash * 1.6f);
+        for (int k = 0; k < enemies.size(); k++) {
+            Enemy o = enemies.get(k);
+            if (o.dead || o.phased || dist(x, y, o.x, o.y) > s.splash + o.radius) continue;
+            if (s.hit != null && s.hit.contains(o) && s.kind != Defs.K_LANCE) continue;
+            damage(o, s.dmg * s.splashMul, s.src);
+            if (s.burnDps > 0) applyBurn(o, s.burnDps * 0.6f, s.burnDur);
+        }
+    }
+
+    void hitEnemy(Shot s, Enemy e, boolean splashNow) {
+        if (splashNow && s.splash > 0) {
+            // splash first so the main target is not counted twice
+            if (s.hit == null) s.hit = new HashSet<>();
+            s.hit.add(e);
+            burst(s, e.x, e.y);
+        }
         float dmg = s.dmg;
         if (s.src != null && s.src.material == Defs.MAT_DIAMOND && rnd.nextFloat() < 0.15f) {
             dmg *= 2f;
@@ -582,6 +835,7 @@ final class Game {
         }
         damage(e, dmg, s.src);
         if (s.burnDps > 0) applyBurn(e, s.burnDps, s.burnDur);
+        else if (s.src != null && s.src.hellMoon) applyBurn(e, dmg * 0.6f * fireMul(s.src), 2.5f); // Hell Moon: every hit burns
         if (s.slowAmt > 0) applySlow(e, s.slowAmt, s.slowDur);
         if (s.stunCh > 0 && rnd.nextFloat() < s.stunCh && !e.boss && !e.mini) {
             e.stunT = Math.max(e.stunT, s.stunDur);
@@ -591,7 +845,7 @@ final class Game {
         int c;
         switch (s.kind) {
             case Defs.K_SMOKE: c = 0xFFFF4D3D; puff(e.x, e.y, 0x99FF3B2F); break;
-            case Defs.K_FIREROCK: case Defs.K_TORNADO: c = 0xFFFF8A2B; break;
+            case Defs.K_FIREROCK: case Defs.K_TORNADO: case Defs.K_LANCE: c = 0xFFFF8A2B; break;
             case Defs.K_ICE: c = 0xFF9BEFFF; break;
             case Defs.K_MISSILE: c = 0xFFFFE08A; break;
             default: c = 0xFFD9C7B0;
@@ -607,6 +861,7 @@ final class Game {
     }
 
     void applySlow(Enemy e, float amt, float dur) {
+        if (e.type == Defs.E_WRAITH) return; // raid wraiths can't be slowed
         if (e.boss) amt *= 0.5f;
         if (amt >= e.slow) { e.slow = amt; e.slowT = Math.max(e.slowT, dur); }
     }
@@ -630,8 +885,21 @@ final class Game {
         if (e.hp <= 0) kill(e, src);
     }
 
+    static int shotSound(int kind) {
+        switch (kind) {
+            case Defs.K_MISSILE: return Sfx.S_MISSILE;
+            case Defs.K_ROCK: case Defs.K_BUFF: return Sfx.S_ROCK;
+            case Defs.K_SWARM: return Sfx.S_RAPID;
+            case Defs.K_SMOKE: case Defs.K_FIREROCK: case Defs.K_TORNADO: return Sfx.S_FIRE;
+            case Defs.K_ICE: case Defs.K_AURA: return Sfx.S_ICE;
+            case Defs.K_LANCE: return Sfx.S_LANCE;
+            default: return Sfx.S_RAPID;
+        }
+    }
+
     void kill(Enemy e, Planet src) {
         e.dead = true;
+        Sfx.play(e.boss || e.mini ? Sfx.BOSS_KILL : Sfx.KILL, 0.9f + rnd.nextFloat() * 0.25f);
         boolean big = e.boss || e.mini;
         int c = e.boss ? 0xFFB86BFF : 0xFFFFB35C;
         ring(e.x, e.y, c, e.radius * 2f);
@@ -675,6 +943,38 @@ final class Game {
                 showBanner(L.t("Galaxia เรียก ", "Galaxia summoned ") + Defs.E_NAME[e.type] + "!", 0xFF5EF2FF);
             }
         }
+        if (e.hauntT > 0 && !e.boss) {
+            // Savior: the haunted enemy returns as a spirit around the nearest attacking planet
+            Planet host = null;
+            float bd = 1e9f;
+            for (Planet q : slots) {
+                if (q == null || !attacks(q)) continue;
+                float d = dist(q.x, q.y, e.x, e.y);
+                if (d < bd) { bd = d; host = q; }
+            }
+            if (host != null && host.spirits < 8) {
+                host.spirits++;
+                text(host.x, host.y - 80, L.t("+1 วิญญาณ", "+1 Spirit"), 0xFFB8FFF0);
+                for (int k = 0; k < 8; k++) particle(e.x, e.y, 0xFFB8FFF0, 160);
+            }
+        }
+        if (stage == Defs.RAID) {
+            earnOil += e.boss ? 8 : e.mini ? 3 : 0;
+        }
+        if (e.type == Defs.E_VOIDLING && !e.child) {
+            for (int k = 0; k < 2; k++) {
+                Enemy m = makeEnemy(Defs.E_VOIDLING);
+                m.child = true;
+                m.maxHp = e.maxHp * 0.35f;
+                m.hp = m.maxHp;
+                m.radius *= 0.7f;
+                m.d = Math.max(0, e.d - 20 * k);
+                pointAt(m.d, tmp);
+                m.x = tmp[0];
+                m.y = tmp[1];
+                pending.add(m);
+            }
+        }
         if (e.type == Defs.E_MEGA) {
             for (int k = 0; k < 2; k++) {
                 Enemy m = makeEnemy(Defs.E_METEOR);
@@ -708,8 +1008,29 @@ final class Game {
                 if (rnd.nextFloat() < dt * 6) particle(e.x, e.y, 0xFF7CFF4A, 50);
             }
             if (e.slowT > 0) { e.slowT -= dt; if (e.slowT <= 0) e.slow = 0; }
+            if (e.hauntT > 0) e.hauntT -= dt;
             if (e.stunT > 0) e.stunT -= dt;
-            else e.d += e.speed * (1f - e.slow) * dt;
+            else {
+                float nd = e.d + e.speed * (1f - e.slow) * dt;
+                e.blocked = false;
+                if (!e.phased) {
+                    // Cyber walls stop enemies until they break through
+                    for (Wall w : walls) {
+                        if (w.dead || w.d < e.d - 2 || w.d > nd + e.radius * 0.6f) continue;
+                        nd = Math.min(nd, Math.max(e.d, w.d - e.radius * 0.6f));
+                        w.hp -= (e.boss ? 60f : e.mini ? 30f : 12f) * e.baseDmg * dt * Defs.ST_HP[stage];
+                        w.hitT = 0.15f;
+                        e.blocked = true;
+                        if (w.hp <= 0) {
+                            w.dead = true;
+                            ring(w.x, w.y, 0xFF5EF2FF, 90);
+                            for (int k = 0; k < 12; k++) particle(w.x, w.y, 0xFF5EF2FF, 220);
+                        }
+                        break;
+                    }
+                }
+                e.d = nd;
+            }
 
             e.abilT += dt;
             e.noDmgT += dt;
@@ -732,6 +1053,24 @@ final class Game {
                             o.hp = Math.min(o.maxHp, o.hp + o.maxHp * 0.08f);
                         }
                         ring(e.x, e.y, 0xFF7CFF8A, 170);
+                    }
+                    break;
+                case Defs.E_WRAITH:
+                    e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.03f * dt);
+                    break;
+                case Defs.E_TITAN:
+                    if (e.noDmgT > 3f && e.shield < e.maxShield) e.shield = Math.min(e.maxShield, e.shield + e.maxShield * 0.15f * dt);
+                    if (e.abilT > 6f) {
+                        e.abilT = 0;
+                        for (int k = 0; k < 2; k++) {
+                            Enemy m = makeEnemy(Defs.E_VOIDLING);
+                            m.d = Math.max(0, e.d - 40 - 30 * k);
+                            pointAt(m.d, tmp);
+                            m.x = tmp[0];
+                            m.y = tmp[1];
+                            pending.add(m);
+                        }
+                        ring(e.x, e.y, 0xFFFF2B5B, 200);
                     }
                     break;
                 case Defs.E_EXOPLANET:
@@ -758,6 +1097,7 @@ final class Game {
 
             if (e.d >= total) {
                 baseHp -= e.baseDmg;
+                Sfx.play(Sfx.BASE_HIT);
                 shake = 0.35f;
                 pointAt(total, tmp);
                 ring(tmp[0], tmp[1], 0xFFFF4D5E, 110);
@@ -778,7 +1118,7 @@ final class Game {
             HeatWave h = heat.get(i);
             h.d -= h.speed * dt;
             h.angle += dt * 60f;
-            boolean ally = h.summon >= 0;
+            boolean ally = h.summon != -1; // summoned boss (>=0) or a King's knight moon (-2)
             for (Enemy e : enemies) {
                 if (e.dead || h.hit.contains(e) || Math.abs(e.d - h.d) > (ally ? 60 : 40) + e.radius) continue;
                 h.hit.add(e);
@@ -790,7 +1130,7 @@ final class Game {
                     h.hp -= dmg * 0.5f;
                 } else {
                     h.hp -= dmg;
-                    ring(e.x, e.y, 0xFF5EF2FF, 80);
+                    ring(e.x, e.y, h.summon == -2 ? 0xFFFFD23F : 0xFF5EF2FF, 80);
                 }
                 if (h.hp <= 0) break;
             }

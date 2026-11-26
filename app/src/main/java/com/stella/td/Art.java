@@ -272,7 +272,42 @@ final class Art {
             satellite(c, cx, cy, size);
             return b;
         }
-        boolean ringed = type == Defs.SATURN || type == Defs.URANUS;
+        if (type == Defs.SMART_SAT || type == Defs.SAVIOR_SAT || type == Defs.COMMANDER) {
+            Bitmap base = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            satellite(new Canvas(base), cx, cy, size);
+            // recolour the panels: gold (Smart), ghost cyan (Savior), crimson (Commander)
+            float hue = type == Defs.SMART_SAT ? 170 : type == Defs.SAVIOR_SAT ? -40 : 140;
+            Bitmap rc = recolor(base, hue, type == Defs.SAVIOR_SAT ? 0.6f : 1.3f, type == Defs.SAVIOR_SAT ? 1.25f : 1.05f);
+            if (type == Defs.SAVIOR_SAT) {
+                c.drawCircle(cx, cy, size * 0.46f, grad(new RadialGradient(cx, cy, size * 0.46f, 0x667CFFE0, 0x007CFFE0, Shader.TileMode.CLAMP)));
+            }
+            c.drawBitmap(rc, 0, 0, null);
+            Paint o = stroke(size * 0.02f, OUTLINE);
+            Paint f = fill();
+            if (type == Defs.SMART_SAT) {
+                // satellite dish on top
+                f.setColor(0xFFFFE27A);
+                RectF dish = new RectF(cx - size * 0.1f, cy - size * 0.36f, cx + size * 0.1f, cy - size * 0.2f);
+                c.drawArc(dish, 0, 180, true, f);
+                c.drawArc(dish, 0, 180, true, o);
+                f.setColor(0xFFFFFFFF);
+                c.drawCircle(cx, cy - size * 0.33f, size * 0.025f, f);
+            } else if (type == Defs.SAVIOR_SAT) {
+                // halo
+                Paint h = stroke(size * 0.03f, 0xFFB8FFF0);
+                c.drawOval(new RectF(cx - size * 0.13f, cy - size * 0.34f, cx + size * 0.13f, cy - size * 0.27f), h);
+            } else {
+                // missile pods
+                for (int k = -1; k <= 1; k += 2) {
+                    f.setColor(0xFFFF4B4B);
+                    RectF pod = new RectF(cx + k * size * 0.07f - size * 0.03f, cy - size * 0.3f, cx + k * size * 0.07f + size * 0.03f, cy - size * 0.14f);
+                    c.drawRoundRect(pod, size * 0.03f, size * 0.03f, f);
+                    c.drawRoundRect(pod, size * 0.03f, size * 0.03f, o);
+                }
+            }
+            return b;
+        }
+        boolean ringed = type == Defs.SATURN || type == Defs.URANUS || type == Defs.HERO || type == Defs.KING || type == Defs.GALACIA_P;
         float rf = ringed ? 0.27f : (type == Defs.SUN ? 0.3f : 0.36f);
         int atmo;
         float as, glow;
@@ -287,6 +322,11 @@ final class Art {
             case Defs.URANUS: atmo = 0xFFB8F6FF; as = 0.8f; glow = 0.16f; break;
             case Defs.NEPTUNE: atmo = 0xFF7FA6FF; as = 0.85f; glow = 0.16f; break;
             case Defs.PLUTO: atmo = 0xFFE8D4BE; as = 0.25f; glow = 0.06f; break;
+            case Defs.HERO: atmo = 0xFFFF6A3D; as = 1f; glow = 0.2f; break;
+            case Defs.CYBER: atmo = 0xFF5EF2FF; as = 1f; glow = 0.22f; break;
+            case Defs.NIGHTMARE: atmo = 0xFFFF1A3A; as = 1f; glow = 0.28f; break;
+            case Defs.GALACIA_P: atmo = 0xFF7FD8FF; as = 1f; glow = 0.2f; break;
+            case Defs.KING: atmo = 0xFFFFD23F; as = 1f; glow = 0.22f; break;
             default: atmo = 0xFFFFB030; as = 1f; glow = 0.58f; break;
         }
         float r = size * rf;
@@ -296,11 +336,129 @@ final class Art {
         float[] uraR = {1.45f, 1.58f, 1.72f};
         if (type == Defs.SATURN) rings(c, cx, cy, r, -14, false, sat, satR, 0.09f);
         if (type == Defs.URANUS) rings(c, cx, cy, r, -72, false, ura, uraR, 0.03f);
-        Bitmap s = Real.sphere(size, rf, Real.surface(type), atmo, as, glow, type == Defs.SUN, 0f, type * 17 + 3);
+        int[] hero = {0x66FF4D2B, 0xEEFFC83A, 0xFFFFF0A0, 0x22000000, 0xCCFF8A2B};
+        float[] heroR = {1.3f, 1.42f, 1.5f, 1.58f, 1.66f};
+        if (type == Defs.HERO) rings(c, cx, cy, r, -24, false, hero, heroR, 0.07f);
+        int[] king = {0x88FFD23F, 0xFFFFF0A0, 0xEEB86BFF, 0xCCFFD23F};
+        float[] kingR = {1.32f, 1.42f, 1.52f, 1.6f};
+        int[] water = {0x664FC8FF, 0xAADFF8FF, 0x884FA8FF};
+        float[] waterR = {1.3f, 1.42f, 1.55f};
+        if (type == Defs.KING) rings(c, cx, cy, r, -12, false, king, kingR, 0.06f);
+        if (type == Defs.GALACIA_P) rings(c, cx, cy, r, 20, false, water, waterR, 0.12f);
+        Bitmap s = Real.toon(size, rf, Real.surface(type), atmo, glow * 1.1f + 0.08f, type == Defs.SUN, type * 17 + 3);
         c.drawBitmap(s, 0, 0, null);
         if (type == Defs.SATURN) rings(c, cx, cy, r, -14, true, sat, satR, 0.09f);
         if (type == Defs.URANUS) rings(c, cx, cy, r, -72, true, ura, uraR, 0.03f);
+        if (type == Defs.KING) {
+            rings(c, cx, cy, r, -12, true, king, kingR, 0.06f);
+            crown(c, cx, cy - r * 1.02f, r * 0.62f);
+        }
+        if (type == Defs.GALACIA_P) {
+            rings(c, cx, cy, r, 20, true, water, waterR, 0.12f);
+            Paint d = fill();
+            for (int i = 0; i < 5; i++) {
+                double a = i * 1.26 + 0.3;
+                d.setColor(0xDDDFF8FF);
+                c.drawCircle(cx + (float) Math.cos(a) * r * 1.7f, cy + (float) Math.sin(a) * r * 0.6f, size * 0.018f, d);
+            }
+        }
+        if (type == Defs.NIGHTMARE) {
+            // black thorns around the dark planet
+            Paint th = fill();
+            th.setColor(0xFF1A0612);
+            Paint to = stroke(size * 0.012f, 0xFFFF1A3A);
+            for (int i = 0; i < 8; i++) {
+                double a = i * Math.PI / 4 + 0.2;
+                float x0 = cx + (float) Math.cos(a) * r * 0.95f, y0 = cy + (float) Math.sin(a) * r * 0.95f;
+                float x1 = cx + (float) Math.cos(a) * r * 1.35f, y1 = cy + (float) Math.sin(a) * r * 1.35f;
+                Path p = new Path();
+                p.moveTo(x0 + (float) Math.cos(a + 1.57) * r * 0.1f, y0 + (float) Math.sin(a + 1.57) * r * 0.1f);
+                p.lineTo(x1, y1);
+                p.lineTo(x0 - (float) Math.cos(a + 1.57) * r * 0.1f, y0 - (float) Math.sin(a + 1.57) * r * 0.1f);
+                p.close();
+                c.drawPath(p, th);
+                c.drawPath(p, to);
+            }
+        }
+        if (type == Defs.HERO) {
+            rings(c, cx, cy, r, -24, true, hero, heroR, 0.07f);
+            // golden sparks around the hero
+            Paint sp = fill();
+            for (int i = 0; i < 6; i++) {
+                double a = i * Math.PI / 3 + 0.4;
+                float d = r * (1.75f + (i % 2) * 0.12f);
+                float x = cx + (float) Math.cos(a) * d, y = cy + (float) Math.sin(a) * d * 0.75f;
+                sp.setColor(0xFFFFE27A);
+                c.drawPath(starPath(x, y, size * 0.035f, size * 0.012f, 4), sp);
+            }
+        }
         return b;
+    }
+
+    /** a small golden crown */
+    static void crown(Canvas c, float cx, float cy, float w) {
+        Path p = new Path();
+        p.moveTo(cx - w * 0.5f, cy + w * 0.2f);
+        p.lineTo(cx - w * 0.5f, cy - w * 0.25f);
+        p.lineTo(cx - w * 0.25f, cy);
+        p.lineTo(cx, cy - w * 0.4f);
+        p.lineTo(cx + w * 0.25f, cy);
+        p.lineTo(cx + w * 0.5f, cy - w * 0.25f);
+        p.lineTo(cx + w * 0.5f, cy + w * 0.2f);
+        p.close();
+        c.drawPath(p, grad(new LinearGradient(cx, cy - w * 0.4f, cx, cy + w * 0.2f, 0xFFFFF4B0, 0xFFE0A020, Shader.TileMode.CLAMP)));
+        c.drawPath(p, stroke(w * 0.06f, 0xFF5A3A08));
+        Paint g = fill();
+        g.setColor(0xFFFF4F8B);
+        c.drawCircle(cx, cy - w * 0.02f, w * 0.07f, g);
+    }
+
+    /** hue-rotate (degrees) and scale saturation / brightness of a bitmap */
+    static Bitmap recolor(Bitmap src, float hueDeg, float satMul, float valMul) {
+        int w = src.getWidth(), h = src.getHeight();
+        int[] px = new int[w * h];
+        src.getPixels(px, 0, w, 0, 0, w, h);
+        float[] hsv = new float[3];
+        for (int i = 0; i < px.length; i++) {
+            int c = px[i], a = c >>> 24;
+            if (a == 0) continue;
+            rgbToHsv(c, hsv);
+            hsv[0] = (hsv[0] + hueDeg + 360) % 360;
+            hsv[1] = Math.min(1f, hsv[1] * satMul);
+            hsv[2] = Math.min(1f, hsv[2] * valMul);
+            px[i] = (a << 24) | (hsvToRgb(hsv) & 0xFFFFFF);
+        }
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        out.setPixels(px, 0, w, 0, 0, w, h);
+        return out;
+    }
+
+    static void rgbToHsv(int c, float[] o) {
+        float r = ((c >> 16) & 255) / 255f, g = ((c >> 8) & 255) / 255f, b = (c & 255) / 255f;
+        float mx = Math.max(r, Math.max(g, b)), mn = Math.min(r, Math.min(g, b)), d = mx - mn;
+        float hh;
+        if (d == 0) hh = 0;
+        else if (mx == r) hh = 60 * (((g - b) / d) % 6);
+        else if (mx == g) hh = 60 * ((b - r) / d + 2);
+        else hh = 60 * ((r - g) / d + 4);
+        o[0] = hh < 0 ? hh + 360 : hh;
+        o[1] = mx == 0 ? 0 : d / mx;
+        o[2] = mx;
+    }
+
+    static int hsvToRgb(float[] h) {
+        float c = h[2] * h[1], x = c * (1 - Math.abs((h[0] / 60f) % 2 - 1)), m = h[2] - c;
+        float r, g, b;
+        int seg = (int) (h[0] / 60) % 6;
+        switch (seg) {
+            case 0: r = c; g = x; b = 0; break;
+            case 1: r = x; g = c; b = 0; break;
+            case 2: r = 0; g = c; b = x; break;
+            case 3: r = 0; g = x; b = c; break;
+            case 4: r = x; g = 0; b = c; break;
+            default: r = c; g = 0; b = x;
+        }
+        return 0xFF000000 | ((int) ((r + m) * 255) << 16) | ((int) ((g + m) * 255) << 8) | (int) ((b + m) * 255);
     }
 
     static void satellite(Canvas c, float cx, float cy, int size) {

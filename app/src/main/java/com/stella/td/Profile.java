@@ -7,7 +7,8 @@ import java.util.Random;
 /** Everything the player owns between matches. Saved in SharedPreferences. */
 final class Profile {
     static final int PULL1 = 100, PULL10 = 900, ROLL_COST = 1, CRYSTAL_COST = 1, MAX_LV = 10;
-    static final int DECK_SIZE = 4;
+    /** 4 normal slots + 1 slot (index Defs.SPECIAL_SLOT) only for Specialist planets */
+    static final int DECK_SIZE = 5;
 
     private final Store sp;
     final Random rnd = new Random();
@@ -15,7 +16,17 @@ final class Profile {
     Runnable onSave;
     long saveTime;
 
-    int stars, millite, crystals, unlocked, bossKills, games, wins, playSec, avatar;
+    int stars, millite, crystals, unlocked, bossKills, games, wins, playSec, avatar, giftDay;
+    /** Crystal Oil (from Raid) pays for Exclusive capsules and the Raid shop */
+    int oil, raidBest, raidCapsules;
+    /** owned skins (Skins.key) and the skin style worn by each planet (-1 = none) */
+    final java.util.TreeSet<Integer> skins = new java.util.TreeSet<>();
+    final int[] skinOn = new int[Defs.P_COUNT];
+    /** moons owned (by Defs.MOON_*) and the moon equipped on each planet (-1 = none) */
+    final int[] moons = new int[Defs.MOON_COUNT];
+    final int[] moonOn = new int[Defs.P_COUNT];
+    /** Base64 JPEG profile photo (used when avatar == -1) */
+    String photo;
     final boolean[] owned = new boolean[Defs.P_COUNT];
     final int[] copies = new int[Defs.P_COUNT];
     final int[] level = new int[Defs.P_COUNT];
@@ -69,6 +80,20 @@ final class Profile {
         unlocked = Math.max(1, sp.getInt("unlocked", 1));
         bossKills = sp.getInt("bossKills", 0);
         games = sp.getInt("games", 0);
+        giftDay = sp.getInt("giftDay", 0);
+        oil = sp.getInt("oil", 0);
+        raidBest = sp.getInt("raidBest", 0);
+        raidCapsules = sp.getInt("raidCapsules", 0);
+        skins.clear();
+        for (int k : ints(sp.getString("skins", null), 400, -1)) if (k >= 0) skins.add(k);
+        int[] so = ints(sp.getString("skinOn", null), Defs.P_COUNT, -1);
+        System.arraycopy(so, 0, skinOn, 0, Defs.P_COUNT);
+        int[] mo = ints(sp.getString("moons", null), Defs.MOON_COUNT, 0);
+        System.arraycopy(mo, 0, moons, 0, Defs.MOON_COUNT);
+        int[] mq = ints(sp.getString("moonOn", null), Defs.P_COUNT, -1);
+        System.arraycopy(mq, 0, moonOn, 0, Defs.P_COUNT);
+        photo = sp.getString("photo", null);
+        if (avatar < 0 && (photo == null || photo.isEmpty())) avatar = 0;
         int[] own = ints(sp.getString("owned", null), Defs.P_COUNT, 0);
         int[] cp = ints(sp.getString("copies", null), Defs.P_COUNT, 0);
         int[] lv = ints(sp.getString("level", null), Defs.P_COUNT, 1);
@@ -123,6 +148,18 @@ final class Profile {
         m.put("unlocked", unlocked);
         m.put("bossKills", bossKills);
         m.put("games", games);
+        m.put("giftDay", giftDay);
+        m.put("oil", oil);
+        m.put("raidBest", raidBest);
+        m.put("raidCapsules", raidCapsules);
+        int[] sk = new int[skins.size()];
+        int si = 0;
+        for (int k : skins) sk[si++] = k;
+        m.put("skins", str(sk));
+        m.put("skinOn", str(skinOn));
+        m.put("moons", str(moons));
+        m.put("moonOn", str(moonOn));
+        m.put("photo", photo == null ? "" : photo);
         m.put("owned", str(own));
         m.put("copies", str(copies));
         m.put("level", str(level));
@@ -161,6 +198,55 @@ final class Profile {
         load();
     }
 
+    /** Star paid when a planet is sold, by rarity (grows with its level) */
+    static final int[] SELL_BASE = {40, 120, 350, 900, 2200, 5000, 0};
+
+    int sellValue(int t) {
+        int base = SELL_BASE[Defs.P_RARITY[t]];
+        return base + base * (level[t] - 1) / 3 + base * copies[t] / 2;
+    }
+
+    /** exclusives can't be sold, and you must keep at least one planet */
+    boolean canSell(int t) {
+        if (!owned[t] || Defs.P_RARITY[t] == Defs.EXCLUSIVE) return false;
+        return ownedCount() > 1;
+    }
+
+    /** sell a planet: it is removed with its level, enchant and material; returns the Star earned */
+    int sell(int t) {
+        if (!canSell(t)) return 0;
+        int v = sellValue(t);
+        stars += v;
+        owned[t] = false;
+        copies[t] = 0;
+        level[t] = 1;
+        enchant[t] = -1;
+        tier[t] = 0;
+        material[t] = -1;
+        moonOn[t] = -1;
+        for (int i = 0; i < deck.length; i++) if (deck[i] == t) deck[i] = -1;
+        if (deckCount() == 0) for (int k = 0; k < Defs.P_COUNT; k++) if (owned[k]) { deck[0] = k; break; }
+        save();
+        return v;
+    }
+
+    static final int GIFT_STARS = 200;
+
+    static int today() {
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        return cal.get(java.util.Calendar.YEAR) * 400 + cal.get(java.util.Calendar.DAY_OF_YEAR);
+    }
+
+    boolean giftReady() { return giftDay != today(); }
+
+    boolean claimGift() {
+        if (!giftReady()) return false;
+        giftDay = today();
+        stars += GIFT_STARS;
+        save();
+        return true;
+    }
+
     void unlockAllPlanets() {
         for (int t = 0; t < Defs.P_COUNT; t++) owned[t] = true;
         save();
@@ -172,7 +258,7 @@ final class Profile {
     }
 
     void unlockAllStages() {
-        unlocked = Defs.ST_NAME.length;
+        unlocked = Defs.ST_COUNT;
         save();
     }
 
@@ -227,9 +313,86 @@ final class Profile {
         for (int i = 0; i < DECK_SIZE; i++) {
             if (deck[i] == t) return;
         }
-        for (int i = 0; i < DECK_SIZE; i++) {
+        if (isSpecialist(t)) {
+            if (deck[Defs.SPECIAL_SLOT] < 0) deck[Defs.SPECIAL_SLOT] = t;
+            return;
+        }
+        for (int i = 0; i < Defs.SPECIAL_SLOT; i++) {
             if (deck[i] < 0) { deck[i] = t; return; }
         }
+    }
+
+    // ------------------------------------------------------------------ Crystal Oil: Exclusive capsule, Raid shop, skins, moons
+    int[] pullCapsule(int count) {
+        int cost = count >= 10 ? Defs.CAPSULE_OIL_10 : Defs.CAPSULE_OIL * count;
+        if (oil < cost) return null;
+        oil -= cost;
+        int[] res = new int[count];
+        lastNew = new boolean[count];
+        for (int i = 0; i < count; i++) {
+            int t = Defs.CAPSULE_POOL[pick(Defs.CAPSULE_RATE, rnd)];
+            res[i] = t;
+            if (owned[t]) copies[t]++;
+            else {
+                owned[t] = true;
+                lastNew[i] = true;
+                autoEquip(t);
+            }
+        }
+        save();
+        return res;
+    }
+
+    static final int DUP_SKIN_OIL = 10;
+
+    boolean buyCapsules(int n) {
+        if (n <= 0 || oil < Defs.SHOP_CAPSULE * n) return false;
+        oil -= Defs.SHOP_CAPSULE * n;
+        raidCapsules += n;
+        save();
+        return true;
+    }
+
+    boolean buyMoon(int m) {
+        if (oil < Defs.SHOP_HELLMOON) return false;
+        oil -= Defs.SHOP_HELLMOON;
+        moons[m]++;
+        save();
+        return true;
+    }
+
+    /** open one Raid capsule: returns the skin key, negative (-key-1) when it was a duplicate (refunded in oil) */
+    int openCapsule() {
+        if (raidCapsules <= 0) return Integer.MIN_VALUE;
+        raidCapsules--;
+        int k = Skins.roll(rnd);
+        int res = k;
+        if (skins.contains(k)) {
+            oil += DUP_SKIN_OIL;
+            res = -k - 1;
+        } else skins.add(k);
+        save();
+        return res;
+    }
+
+    void equipSkin(int planet, int style) {
+        skinOn[planet] = style >= 0 && skins.contains(Skins.key(style, planet)) ? style : -1;
+        save();
+    }
+
+    int moonsFree(int m) {
+        int used = 0;
+        for (int v : moonOn) if (v == m) used++;
+        return moons[m] - used;
+    }
+
+    String equipMoon(int planet, int m) {
+        if (m < 0) { moonOn[planet] = -1; save(); return null; }
+        if (moonOn[planet] == m) return null;
+        if (moonsFree(m) <= 0) return L.t("ไม่มี " + Defs.MOON_NAME[m] + " ว่าง (ซื้อที่ร้าน Raid)", "No free " + Defs.MOON_NAME[m] + " (buy one in the Raid shop)");
+        moonOn[planet] = m;
+        save();
+        return null;
     }
 
     // ------------------------------------------------------------------ factory (enchant) & lab (material)
@@ -242,7 +405,9 @@ final class Profile {
         return 0;
     }
 
-    boolean rollEnchant(int t) {
+    boolean rollEnchant(int t) { return rollEnchant(t, true); }
+
+    boolean rollEnchant(int t, boolean doSave) {
         if (!owned[t] || millite < ROLL_COST) return false;
         millite -= ROLL_COST;
         int e = pick(Defs.EN_CHANCE, rnd);
@@ -253,15 +418,17 @@ final class Profile {
             tier[t] = x < 0.6f ? 1 : (x < 0.9f ? 2 : 3);
         } else if (n == 2) tier[t] = rnd.nextFloat() < 0.7f ? 1 : 2;
         else tier[t] = 0;
-        save();
+        if (doSave) save();
         return true;
     }
 
-    boolean rollMaterial(int t) {
+    boolean rollMaterial(int t) { return rollMaterial(t, true); }
+
+    boolean rollMaterial(int t, boolean doSave) {
         if (!owned[t] || crystals < CRYSTAL_COST) return false;
         crystals -= CRYSTAL_COST;
         material[t] = pick(Defs.MAT_CHANCE, rnd);
-        save();
+        if (doSave) save();
         return true;
     }
 
@@ -299,15 +466,23 @@ final class Profile {
     }
 
     /** toggles the planet in the deck; returns error or null */
+    static boolean isSpecialist(int t) { return Defs.P_CATEGORY[t] == Defs.CAT_SPECIALIST; }
+
     String toggleDeck(int t) {
         if (!owned[t]) return L.t("ยังไม่มีดวงดาวนี้", "You don't own this planet");
         for (int i = 0; i < DECK_SIZE; i++) {
             if (deck[i] == t) { deck[i] = -1; save(); return null; }
         }
-        for (int i = 0; i < DECK_SIZE; i++) {
+        if (isSpecialist(t)) {
+            // the specialist slot holds one planet; a new one replaces the old
+            deck[Defs.SPECIAL_SLOT] = t;
+            save();
+            return null;
+        }
+        for (int i = 0; i < Defs.SPECIAL_SLOT; i++) {
             if (deck[i] < 0) { deck[i] = t; save(); return null; }
         }
-        return L.t("Deck เต็มแล้ว (ใส่ได้ 4 ดวง)", "Deck is full (4 planets)");
+        return L.t("Deck เต็มแล้ว (ใส่ได้ 4 ดวง + ช่อง Specialist)", "Deck is full (4 planets + the Specialist slot)");
     }
 
     int deckCount() {
@@ -316,7 +491,18 @@ final class Profile {
         return n;
     }
 
+    /** set by addRewards for the result screen */
+    boolean firstClear, heroUnlocked;
+
+    /** Crystal Oil the last Raid paid (for the result screen) */
+    int lastOil;
+
     void addRewards(Game g) {
+        if (g.stage == Defs.RAID) {
+            lastOil = g.earnOil;
+            oil += g.earnOil;
+            raidBest = Math.max(raidBest, g.won ? Defs.RAID_WAVES : g.wave);
+        }
         stars += g.earnStars;
         millite += g.earnMillite;
         crystals += g.earnCrystal;
@@ -325,9 +511,23 @@ final class Profile {
         games++;
         int reached = g.won ? g.wave : Math.max(0, g.wave - 1);
         if (reached > best[g.stage]) best[g.stage] = reached;
-        if (g.won) {
+        firstClear = false;
+        heroUnlocked = false;
+        if (g.won && g.stage != Defs.RAID) {
+            if (!clear[g.stage]) {
+                // first clear bonus
+                firstClear = true;
+                millite += 2 + Defs.galaxyOf(g.stage);
+                crystals += 1 + Defs.galaxyOf(g.stage);
+            }
             clear[g.stage] = true;
-            unlocked = Math.max(unlocked, Math.min(Defs.ST_NAME.length, g.stage + 2));
+            unlocked = Math.max(unlocked, Math.min(Defs.ST_COUNT, g.stage + 2));
+            if (g.stage == Defs.ST_COUNT - 1 && !owned[Defs.HERO]) {
+                // finishing all three galaxies grants the exclusive Hero planet
+                owned[Defs.HERO] = true;
+                heroUnlocked = true;
+                autoEquip(Defs.HERO);
+            }
         }
         save();
     }

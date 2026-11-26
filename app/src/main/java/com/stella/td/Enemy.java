@@ -9,4 +9,7 @@ final class Enemy {
     float abilT, noDmgT;
     int baseDmg;
     boolean dead, phased, boss, mini;
+    /** Savior's Haunted mark; split children don't split again; stopped at a wall */
+    float hauntT;
+    boolean child, blocked;
 }

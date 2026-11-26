@@ -20,18 +20,21 @@ import java.util.Locale;
 /** Renders every screen and handles touch. Match rules live in {@link Game}, saved data in {@link Profile}. */
 public final class GameView extends View {
 
-    static final String VERSION = "v2.6";
+    static final String VERSION = "v3.1";
+    /** must match versionCode in app/build.gradle */
+    static final int VERSION_CODE = 13;
 
     // hub screens
     static final int S_LOBBY = 0, S_SHOP = 1, S_PLANET = 2, S_PLAYMENU = 3, S_BANNER = 4, S_ENCHANT = 5, S_GAME = 6,
-            S_LOGIN = 7, S_ADMIN = 8, S_LEADER = 9;
+            S_LOGIN = 7, S_ADMIN = 8, S_LEADER = 9, S_TERM = 10, S_STAFF = 11, S_SERVER = 12, S_LOGS = 13;
     // popups
     static final int P_NONE = 0, P_PLAYER = 1, P_SETTINGS = 2, P_GACHA = 3, P_INDEX = 4, P_AUTO = 5, P_GIVE = 6,
-            P_AVATAR = 7, P_CONSOLE = 8;
+            P_AVATAR = 7, P_CONSOLE = 8, P_BULKRES = 9, P_ROLE = 10, P_EQUIP = 11, P_INV = 12, P_RSHOP = 13, P_ITEMS = 14;
 
     static final class Btn {
         final RectF r;
         final Runnable a;
+        boolean net;
         Btn(RectF r, Runnable a) { this.r = r; this.a = a; }
     }
 
@@ -44,6 +47,26 @@ public final class GameView extends View {
     boolean busy, dirty, pushing;
     String busyMsg = "";
     float pushAcc;
+    // ---- always-online state
+    static final int NET_CONNECTING = 0, NET_ONLINE = 1, NET_LOST = 2, NET_UPDATE = 3, NET_MAINT = 4, NET_NOSTAFF = 5;
+    /** true in the separate "Stella Console" app (package name ends with .console) */
+    final boolean consoleApp;
+    // ---- server announcements and staff screens
+    String bcMsg;
+    long bcTime;
+    float bcShowT;
+    Cloud.Server serverInfo;
+    boolean serverLoading, logsLoading;
+    java.util.List<Cloud.LogLine> logLines = new java.util.ArrayList<>();
+    String adminFilter = "";
+    String roleTarget;
+    String lastCommand;
+    int net = NET_CONNECTING;
+    String sessionId;
+    float beatAcc;
+    boolean beating, claimed, connecting;
+    int onlineCount, pingMs, beatFails;
+    float lostT;
     java.util.List<Cloud.Player> players = new java.util.ArrayList<>();
     boolean playersLoading;
     Profile adminProf;
@@ -63,9 +86,21 @@ public final class GameView extends View {
     int[] gachaRes;
     boolean[] gachaNew;
     float gachaT;
-    boolean autoOn;
+    boolean autoOn; // kept false: auto roll was replaced by bulk roll
     int autoTarget = -1, autoCount;
+    // ---- bulk roll
+    final boolean[] keepEn = new boolean[Defs.EN_COUNT], keepMat = new boolean[Defs.MAT_COUNT];
+    final int[] keepTier = new int[Defs.EN_COUNT];
+    int bulkCount = 10;
+    boolean bulkRevert = true, bulkInit;
+    // result of the last bulk roll
+    int resRolls, resSpent, resGot = -1, resTier;
+    boolean resHit, resMat, resReverted;
+    final int[] resByRarity = new int[7];
     float autoT;
+    // ---- UI animation clocks
+    float transT = 9, popT = 9;
+    int lastScreen = -1, lastPopup = -1;
     float enchFlash, playAcc, saveAcc;
     int labTab, leaderTab;
 
@@ -73,7 +108,7 @@ public final class GameView extends View {
     float anim;
     long lastNs;
 
-    Bitmap bg, gBmp, earthBig;
+    Bitmap bg, gBmp, earthBig, nebulaBmp;
     volatile boolean ready;
     volatile float loadProg;
     boolean loadStarted;
@@ -84,6 +119,13 @@ public final class GameView extends View {
     final java.util.Random fxr = new java.util.Random();
     final Bitmap[] pBmp = new Bitmap[Defs.P_COUNT];
     final Bitmap[] eBmp = new Bitmap[Defs.E_COUNT];
+    int playGal = -1, playSel = -1;
+    // planet editor in the admin panel
+    int givePick = -1;
+    boolean giveDirty;
+    // ---- profile photos
+    Runnable photoPicker;
+    final java.util.HashMap<String, Bitmap> photoCache = new java.util.HashMap<>();
 
     Typeface bodyFont = Typeface.DEFAULT_BOLD, titleFont = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD_ITALIC);
     final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -124,7 +166,15 @@ public final class GameView extends View {
             twY[i] = r.nextFloat();
             twP[i] = r.nextFloat() * 6.28f;
         }
+        Sfx.enabled = acc.sfxOn();
+        Sfx.init(ctx);
         cloud = new Cloud(ctx, this::post);
+        consoleApp = ctx.getPackageName() != null && ctx.getPackageName().endsWith(".console");
+        if (consoleApp) {
+            cloud.sessionKey = "consoleSession";
+            cloud.countPresence = false;
+            cloud.console = true;
+        }
         if (cloud.hasSession()) startSession(false);
         else screen = S_LOGIN;
         setFocusable(true);
@@ -148,6 +198,7 @@ public final class GameView extends View {
                     loadProg = ++done / (float) total;
                 }
                 gBmp = Real.galaxy(320);
+                nebulaBmp = Real.nebula(270, 585, 11);
                 earthBig = Art.planet(Defs.EARTH, 720);
                 loadProg = 1f;
                 ready = true;
@@ -173,17 +224,99 @@ public final class GameView extends View {
         selType = enchSel = pf.deck[0] >= 0 ? pf.deck[0] : Defs.EARTH;
         game = null;
         popup = P_NONE;
-        screen = S_LOBBY;
+        screen = consoleApp ? S_ADMIN : S_LOBBY;
+        if (consoleApp) { adminSel = cloud.uid; refreshPlayers(); }
         lastSynced = 0;
-        if (brandNew) { pushNow(); return; }
-        cloud.loadMine((remote, err) -> {
-            if (pf == null) return;
-            if (Cloud.isBanError(err)) { kicked(err); return; }
-            if (err != null) { dirty = true; showToast(L.t("ออฟไลน์อยู่ จะซิงก์ทีหลัง", "Offline - will sync later")); return; }
-            long rt = Cloud.saveTimeOf(remote);
-            lastSynced = rt;
-            if (remote != null && rt > pf.saveTime) applyRemote(remote);
-            else if (remote == null || rt < pf.saveTime) pushNow();
+        connecting = false;
+        claimed = false;
+        beating = false;
+        net = NET_CONNECTING;
+        sessionId = Long.toHexString(System.nanoTime()) + Integer.toHexString((int) (Math.random() * 1e9));
+        connect(brandNew);
+    }
+
+    /** (re)connect: claim the session, download the save, then go online. The game is locked until this succeeds. */
+    void connect(boolean brandNew) {
+        if (pf == null || connecting) return;
+        connecting = true;
+        claimed = false;
+        if (net != NET_LOST) net = NET_CONNECTING;
+        final Profile mine = pf;
+        cloud.claimSession(sessionId, (ok, err) -> {
+            if (pf != mine) { connecting = false; return; }
+            if (Cloud.isBanError(err)) { connecting = false; kicked(err); return; }
+            if (err != null) { connecting = false; goLost(); return; }
+            claimed = true;
+            if (brandNew) { connecting = false; goOnline(); pushNow(); return; }
+            cloud.loadMine((remote, err2) -> {
+                connecting = false;
+                if (pf != mine) return;
+                if (Cloud.isBanError(err2)) { kicked(err2); return; }
+                if (err2 != null) { claimed = false; goLost(); return; }
+                long rt = Cloud.saveTimeOf(remote);
+                lastSynced = rt;
+                if (remote != null && rt > pf.saveTime) applyRemote(remote);
+                goOnline();
+                if (remote == null || rt < pf.saveTime) pushNow();
+            });
+        });
+    }
+
+    void goOnline() {
+        net = consoleApp && cloud.myRole() < Roles.STAFF ? NET_NOSTAFF : NET_ONLINE;
+        beatFails = 0;
+        beatAcc = 99; // heartbeat right away
+    }
+
+    void goMaintenance() {
+        net = NET_MAINT;
+        if (screen == S_GAME && game != null && !game.won && !game.lost) paused = true;
+    }
+
+    void goLost() {
+        if (net != NET_LOST) lostT = 0;
+        net = NET_LOST;
+        if (screen == S_GAME && game != null && !game.won && !game.lost) paused = true;
+    }
+
+    void beat() {
+        if (pf == null || cloud.uid == null) return;
+        if (!claimed) { connect(false); return; } // never finished connecting: start over instead
+        if (beating) return;
+        beating = true;
+        final Profile mine = pf;
+        cloud.heartbeat(sessionId, (b, err) -> {
+            beating = false;
+            if (pf != mine) return;
+            if (err != null) {
+                // one slow request is forgiven, two in a row means the connection is gone
+                if (++beatFails >= 2 || net == NET_LOST) goLost();
+                return;
+            }
+            beatFails = 0;
+            pingMs = b.ping;
+            onlineCount = Math.max(1, b.online);
+            if (b.ban != null) { kicked(Cloud.friendly(new Exception(b.ban))); return; }
+            if (b.kickedByStaff) { kicked(L.t("คุณถูกทีมงานเตะออกจากเกม", "You were kicked by a staff member")); return; }
+            if (b.kickedElsewhere) { kicked(L.t("ไอดีนี้ถูกล็อกอินจากเครื่องอื่น", "This account logged in on another device")); return; }
+            if (b.broadcast != null && b.broadcastTime != bcTime) {
+                bcTime = b.broadcastTime;
+                bcMsg = b.broadcast;
+                if (System.currentTimeMillis() - bcTime < 86400000L) bcShowT = 9f;
+            } else if (b.broadcast == null) bcMsg = null;
+            if (consoleApp) {
+                if (b.role < Roles.STAFF) { net = NET_NOSTAFF; return; }
+                if (net == NET_NOSTAFF) net = NET_ONLINE;
+            } else {
+                if (b.minVersion > VERSION_CODE) { net = NET_UPDATE; return; }
+                if (b.maintenance && b.role < Roles.STAFF) { goMaintenance(); return; }
+                if (net == NET_MAINT) { net = NET_ONLINE; showToast(L.t("เซิร์ฟเวอร์เปิดแล้ว!", "The server is open again!")); return; }
+            }
+            if (net == NET_LOST) {
+                net = NET_ONLINE;
+                showToast(L.t("เชื่อมต่อกลับมาแล้ว", "Reconnected"));
+                if (dirty) pushNow();
+            } else if (net == NET_UPDATE) net = NET_ONLINE;
         });
     }
 
@@ -206,11 +339,13 @@ public final class GameView extends View {
         game = null;
         popup = P_NONE;
         screen = S_LOGIN;
+        net = NET_CONNECTING;
         showToast(msg);
     }
 
     void pushNow() {
-        if (pf == null || cloud.uid == null || pushing || !Cloud.configured()) return;
+        // the console app never uploads its own (possibly empty) local save
+        if (pf == null || cloud.uid == null || pushing || !Cloud.configured() || consoleApp) return;
         pushing = true;
         dirty = false;
         final long st = pf.saveTime;
@@ -266,6 +401,7 @@ public final class GameView extends View {
                 L.t("สร้างไอดี", "Create"), v -> {
                     String e = Accounts.checkName(Accounts.norm(v[0]));
                     if (e != null) return e;
+                    if (Accounts.norm(v[0]).equals(Cloud.CONSOLE_USER)) return L.t("ชื่อนี้ถูกใช้ไปแล้ว", "This name is already taken");
                     if (v[1].length() < 6) return L.t("รหัสผ่านต้องยาวอย่างน้อย 6 ตัว", "Password must be at least 6 characters");
                     if (!v[1].equals(v[2])) return L.t("รหัสผ่านทั้งสองช่องไม่ตรงกัน", "Passwords do not match");
                     final String name = v[0].trim();
@@ -305,7 +441,10 @@ public final class GameView extends View {
     }
 
     void logout() {
-        if (dirty) pushNow();
+        // upload the latest save first, so my leaderboard entry stays up to date after I leave
+        if (pf != null) { pf.save(); pushNow(); }
+        cloud.offline();
+        net = NET_CONNECTING;
         cloud.logout();
         user = null;
         pf = null;
@@ -352,6 +491,9 @@ public final class GameView extends View {
             showToast(L.t("ใส่ดวงดาวใน Deck ก่อน (เมนู Planet)", "Add planets to your deck first (Planet menu)"));
             return;
         }
+        pf.heroUnlocked = false;
+        pf.firstClear = false;
+        popup = P_NONE;
         game = new Game(s, pf);
         game.infiniteSP = isAdmin() && acc.infiniteSP();
         screen = S_GAME;
@@ -377,11 +519,79 @@ public final class GameView extends View {
     // ================================================================== touch
     @Override
     public boolean onTouchEvent(MotionEvent e) {
-        if (e.getActionMasked() == MotionEvent.ACTION_UP) {
-            tap(e.getX(), e.getY());
-            performClick();
+        float x = e.getX(), y = e.getY();
+        switch (e.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                downX = x;
+                downY = y;
+                lastTouchY = y;
+                dragging = false;
+                scrollVel = 0;
+                break;
+            case MotionEvent.ACTION_MOVE:
+                if (!dragging && scrollOn && scrollView.contains(downX, downY) && Math.abs(y - downY) > 22 * u) dragging = true;
+                if (dragging) {
+                    float dy = y - lastTouchY;
+                    scrollY -= dy;
+                    scrollVel = -dy * 60;
+                }
+                lastTouchY = y;
+                break;
+            case MotionEvent.ACTION_UP:
+                if (!dragging) {
+                    tap(x, y);
+                    performClick();
+                }
+                dragging = false;
+                break;
+            default:
         }
         return true;
+    }
+
+    // one scrolling list per screen: its window on screen, offset and limit
+    final RectF scrollView = new RectF();
+    boolean scrollOn, dragging;
+    float scrollY, scrollMax, scrollVel, downX, downY, lastTouchY;
+    int scrollOwner = -1;
+
+    /** start a scroll window for this frame; content draws translated by -scrollY */
+    void beginScroll(Canvas c, int owner, RectF view, float contentH, float dt) {
+        if (scrollOwner != owner) { scrollOwner = owner; scrollY = 0; scrollVel = 0; }
+        scrollOn = true;
+        scrollView.set(view);
+        scrollMax = Math.max(0, contentH - view.height());
+        if (!dragging && scrollVel != 0) {
+            scrollY += scrollVel * dt;
+            scrollVel *= (float) Math.pow(0.04, dt);
+            if (Math.abs(scrollVel) < 5) scrollVel = 0;
+        }
+        if (scrollY < 0) { scrollY = 0; scrollVel = 0; }
+        if (scrollY > scrollMax) { scrollY = scrollMax; scrollVel = 0; }
+        c.save();
+        c.clipRect(view.left, view.top, view.right, view.bottom);
+        c.translate(0, -scrollY);
+    }
+
+    void endScroll(Canvas c) {
+        c.restore();
+        if (scrollMax > 0) {
+            // scrollbar
+            float vh = scrollView.height(), bh = Math.max(60 * u, vh * vh / (vh + scrollMax));
+            float by = scrollView.top + (vh - bh) * (scrollY / scrollMax);
+            p.setShader(null);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(0x66FFFFFF);
+            rf2.set(scrollView.right - 10 * u, by, scrollView.right - 3 * u, by + bh);
+            c.drawRoundRect(rf2, 4 * u, 4 * u, p);
+        }
+    }
+
+    /** a tappable rect inside the scroll window (given in content coordinates) */
+    void scrollBtn(RectF r, Runnable a) {
+        float top = r.top - scrollY, bot = r.bottom - scrollY;
+        if (bot < scrollView.top || top > scrollView.bottom) return;
+        btns.add(new Btn(new RectF(r.left, Math.max(top, scrollView.top), r.right, Math.min(bot, scrollView.bottom)), a));
     }
 
     @Override
@@ -391,9 +601,15 @@ public final class GameView extends View {
 
     void tap(float x, float y) {
         if (busy) return;
+        if (pf != null && net != NET_ONLINE) {
+            // only the buttons of the connection screen work while offline
+            for (int i = btns.size() - 1; i >= 0; i--) if (btns.get(i).net && btns.get(i).r.contains(x, y)) { btns.get(i).a.run(); return; }
+            return;
+        }
         for (int i = btns.size() - 1; i >= 0; i--) {
             Btn b = btns.get(i);
             if (b.r.contains(x, y)) {
+                Sfx.play(Sfx.CLICK);
                 b.a.run();
                 return;
             }
@@ -431,6 +647,11 @@ public final class GameView extends View {
         float dt = lastNs == 0 ? 0.016f : Math.min(0.05f, (now - lastNs) / 1e9f);
         lastNs = now;
         anim += dt;
+        transT += dt;
+        popT += dt;
+        if (bcShowT > 0) bcShowT -= dt;
+        if (screen != lastScreen) { lastScreen = screen; transT = 0; }
+        if (popup != lastPopup) { lastPopup = popup; popT = 0; }
         if (toastT > 0) toastT -= dt;
         if (gachaT < 10) gachaT += dt;
         if (enchFlash > 0) enchFlash -= dt;
@@ -440,10 +661,15 @@ public final class GameView extends View {
             saveAcc += dt;
             if (saveAcc > 15f) { saveAcc = 0; pf.save(); }
             pushAcc += dt;
-            if (dirty && pushAcc > 20f && screen != S_GAME) { pushAcc = 0; pushNow(); }
+            if (net == NET_ONLINE && dirty && pushAcc > 20f && screen != S_GAME) { pushAcc = 0; pushNow(); }
+            beatAcc += dt;
+            float every = net == NET_ONLINE ? 12f : 4f;
+            if (net != NET_CONNECTING && beatAcc > every) { beatAcc = 0; beat(); }
+            if (net == NET_LOST) lostT += dt;
         }
         updateAuto(dt);
-        if (screen == S_GAME && game != null && !paused) {
+        boolean locked = pf != null && net != NET_ONLINE;
+        if (screen == S_GAME && game != null && !paused && !locked) {
             float t = dt * speed;
             while (t > 0) {
                 float s = Math.min(t, 0.02f);
@@ -454,6 +680,7 @@ public final class GameView extends View {
             if (game.won || game.lost) saveResult();
         }
         btns.clear();
+        scrollOn = false;
         if (bg != null) c.drawBitmap(bg, 0, 0, null);
         twinkles(c);
         if (!ready) {
@@ -462,6 +689,10 @@ public final class GameView extends View {
             return;
         }
         if (screen != S_GAME) meteorShower(c, dt);
+        // screen entrance: slide up + fade in
+        float te = ease(Math.min(1f, transT / 0.35f));
+        c.save();
+        if (te < 1f && screen != S_GAME) c.translate(0, (1f - te) * 90 * u);
         switch (screen) {
             case S_LOBBY: drawLobby(c); break;
             case S_SHOP: drawShop(c); break;
@@ -472,23 +703,48 @@ public final class GameView extends View {
             case S_LOGIN: drawLogin(c); break;
             case S_ADMIN: drawAdmin(c); break;
             case S_LEADER: drawLeader(c); break;
+            case S_TERM: drawTerm(c); break;
+            case S_STAFF: drawStaff(c); break;
+            case S_SERVER: drawServer(c); break;
+            case S_LOGS: drawLogs(c); break;
             default:
                 if (game != null) drawPlay(c);
                 else screen = S_PLAYMENU;
                 break;
         }
-        if (screen != S_GAME && screen != S_LOGIN && screen != S_ADMIN && screen != S_LEADER) drawNav(c);
+        c.restore();
+        if (te < 1f && screen != S_GAME) {
+            p.setShader(null);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(((int) ((1f - te) * 200) << 24) | 0x0A0420);
+            c.drawRect(0, 0, W, H, p);
+        }
+        if (screen != S_GAME && screen != S_LOGIN && screen != S_LEADER && !staffScreen(screen)) drawNav(c);
+        // popup entrance: pop with a little overshoot
+        float pe = Math.min(1f, popT / 0.28f);
+        float ps = popup != P_NONE && pe < 1f ? 0.82f + 0.18f * backOut(pe) : 1f;
+        c.save();
+        if (ps != 1f) c.scale(ps, ps, W / 2, H / 2);
         switch (popup) {
             case P_PLAYER: drawPlayerInfo(c); break;
             case P_SETTINGS: drawSettings(c); break;
             case P_GACHA: drawGachaResult(c); break;
             case P_INDEX: drawIndex(c); break;
             case P_AUTO: drawAutoPick(c); break;
+            case P_BULKRES: drawBulkResult(c); break;
             case P_GIVE: drawGivePlanet(c); break;
             case P_AVATAR: drawAvatarPick(c); break;
-            case P_CONSOLE: drawConsole(c); break;
+            case P_CONSOLE: popup = P_NONE; go(S_TERM); break;
+            case P_ROLE: drawRolePick(c); break;
+            case P_EQUIP: drawEquip(c); break;
+            case P_INV: drawInventory(c); break;
+            case P_RSHOP: drawRaidShop(c); break;
+            case P_ITEMS: drawGiveItems(c); break;
             default: break;
         }
+        c.restore();
+        if (pf != null && net != NET_ONLINE && ready) drawNetLock(c);
+        if (bcShowT > 0 && bcMsg != null && pf != null) drawBroadcast(c);
         if (busy) {
             dim(c);
             glowCircle(c, W / 2, H / 2, 200 * u, 0x66B86BFF);
@@ -504,6 +760,106 @@ public final class GameView extends View {
             pill(c, W / 2, y, toast, 40 * u, 0xFFFFFFFF, 0xEE2A1650);
         }
         postInvalidateOnAnimation();
+    }
+
+    /** small "● 12 online • 85 ms" status pill */
+    void netPill(Canvas c, float cx, float cy) {
+        if (net != NET_ONLINE) return;
+        String s = L.t("ออนไลน์ ", "Online ") + onlineCount + L.t(" คน", "") + "  •  " + pingMs + " ms";
+        tp.setTextSize(26 * u);
+        tp.setTypeface(bodyFont);
+        float w = tp.measureText(s) + 80 * u;
+        rf.set(cx - w / 2, cy - 24 * u, cx + w / 2, cy + 24 * u);
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0xAA120A2A);
+        c.drawRoundRect(rf, 24 * u, 24 * u, p);
+        int dot = pingMs < 150 ? 0xFF4DFF8A : pingMs < 400 ? 0xFFFFD23F : 0xFFFF6B5B;
+        float pulse = 0.5f + 0.5f * (float) Math.sin(anim * 4);
+        p.setColor(alpha(dot, (int) (60 + 80 * pulse)));
+        c.drawCircle(rf.left + 30 * u, cy, 13 * u, p);
+        p.setColor(dot);
+        c.drawCircle(rf.left + 30 * u, cy, 7 * u, p);
+        plain(c, s, rf.left + 50 * u, cy + 9 * u, 26 * u, 0xFFE6E0FF, Paint.Align.LEFT, 0);
+    }
+
+    /** full-screen lock shown while the game has no connection to the server */
+    void drawNetLock(Canvas c) {
+        dim(c);
+        if (screen != S_GAME) dim(c);
+        RectF r = new RectF(80 * u, H / 2 - 420 * u, W - 80 * u, H / 2 + 420 * u);
+        panel(c, r, 0xF01C1240, 44 * u);
+        float cx = W / 2, cy = r.top + 230 * u;
+        if (net == NET_CONNECTING || (net == NET_LOST && connecting && lostT < 1)) {
+            glowCircle(c, cx, cy, 170 * u, 0x664FE0FF);
+            sp.setPathEffect(null);
+            sp.setStrokeWidth(12 * u);
+            sp.setColor(0xFF4FE0FF);
+            rf.set(cx - 80 * u, cy - 80 * u, cx + 80 * u, cy + 80 * u);
+            c.drawArc(rf, anim * 360, 260, false, sp);
+            title(c, L.t("กำลังเชื่อมต่อเซิร์ฟเวอร์", "Connecting to server"), cx, r.top + 450 * u, 50 * u, 0xFFFFFFFF, Paint.Align.CENTER, r.width() - 60 * u);
+            plain(c, L.t("กำลังโหลดข้อมูลของคุณ...", "Loading your save..."), cx, r.top + 520 * u, 32 * u, 0xFFB8F6FF, Paint.Align.CENTER, r.width() - 60 * u);
+        } else if (net == NET_LOST) {
+            // broken-signal icon
+            glowCircle(c, cx, cy, 170 * u, 0x66FF6B5B);
+            sp.setPathEffect(null);
+            sp.setStrokeCap(Paint.Cap.ROUND);
+            for (int i = 0; i < 3; i++) {
+                float rr = (40 + i * 38) * u;
+                sp.setStrokeWidth(14 * u);
+                sp.setColor(i == 2 ? 0x55FFFFFF : 0xFFFF8A7A);
+                rf.set(cx - rr, cy + 40 * u - rr, cx + rr, cy + 40 * u + rr);
+                c.drawArc(rf, 225, 90, false, sp);
+            }
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(0xFFFF8A7A);
+            c.drawCircle(cx, cy + 40 * u, 14 * u, p);
+            sp.setStrokeWidth(12 * u);
+            sp.setColor(0xFFFF4B5B);
+            c.drawLine(cx - 110 * u, cy - 90 * u, cx + 110 * u, cy + 110 * u, sp);
+            title(c, L.t("การเชื่อมต่อขาดหาย", "Connection lost"), cx, r.top + 450 * u, 52 * u, 0xFFFFD0D8, Paint.Align.CENTER, r.width() - 60 * u);
+            String sub = screen == S_GAME && game != null && !game.won && !game.lost
+                    ? L.t("ด่านถูกหยุดไว้ จะเล่นต่อได้เมื่อเน็ตกลับมา", "Match paused - it resumes when you're back online")
+                    : L.t("เกมนี้ต้องใช้อินเทอร์เน็ต กรุณาตรวจ Wi-Fi หรือเน็ตมือถือ", "This game needs internet. Check Wi-Fi or mobile data");
+            plain(c, sub, cx, r.top + 520 * u, 30 * u, 0xFFE6E0FF, Paint.Align.CENTER, r.width() - 60 * u);
+            int dots = (int) (anim * 2) % 4;
+            plain(c, L.t("กำลังลองเชื่อมต่อใหม่", "Reconnecting") + "....".substring(0, dots) + "  (" + (int) lostT + "s)",
+                    cx, r.top + 580 * u, 28 * u, 0xFF9C94C8, Paint.Align.CENTER, 0);
+            rf.set(r.left + 60 * u, r.bottom - 200 * u, cx - 15 * u, r.bottom - 90 * u);
+            netButton(c, rf, L.t("ลองใหม่", "Retry"), 0xFF33A8D0, () -> { beatAcc = 0; beat(); });
+            rf.set(cx + 15 * u, r.bottom - 200 * u, r.right - 60 * u, r.bottom - 90 * u);
+            netButton(c, rf, L.t("ออกจากระบบ", "Log out"), 0xFF6B5BD6, this::logout);
+        } else if (net == NET_MAINT) {
+            glowCircle(c, cx, cy, 170 * u, 0x66FFB627);
+            wrench(c, cx, cy, 90 * u);
+            title(c, L.t("ปิดปรับปรุงเซิร์ฟเวอร์", "Server maintenance"), cx, r.top + 450 * u, 52 * u, 0xFFFFE27A, Paint.Align.CENTER, r.width() - 60 * u);
+            plain(c, L.t("ทีมงานกำลังอัปเดตเกม กลับมาใหม่อีกสักครู่นะ", "The team is updating the game, please come back soon"), cx, r.top + 520 * u, 30 * u, 0xFFE6E0FF, Paint.Align.CENTER, r.width() - 60 * u);
+            if (bcMsg != null) plain(c, "\"" + bcMsg + "\"", cx, r.top + 580 * u, 28 * u, 0xFFB8F6FF, Paint.Align.CENTER, r.width() - 60 * u);
+            rf.set(cx - 220 * u, r.bottom - 200 * u, cx + 220 * u, r.bottom - 90 * u);
+            netButton(c, rf, L.t("ออกจากระบบ", "Log out"), 0xFF6B5BD6, this::logout);
+        } else if (net == NET_NOSTAFF) {
+            glowCircle(c, cx, cy, 170 * u, 0x66FF6B5B);
+            shield(c, cx, cy, 90 * u);
+            title(c, L.t("ไม่มีสิทธิ์เข้าใช้", "No access"), cx, r.top + 450 * u, 52 * u, 0xFFFFD0D8, Paint.Align.CENTER, r.width() - 60 * u);
+            plain(c, L.t("แอป Console ใช้ได้เฉพาะทีมงาน (Staff ขึ้นไป)", "The Console app is for staff only (Staff and above)"), cx, r.top + 520 * u, 30 * u, 0xFFE6E0FF, Paint.Align.CENTER, r.width() - 60 * u);
+            plain(c, L.t("ให้ Owner หรือ Admin มอบยศให้ก่อน", "Ask an Owner or Admin to give you a rank"), cx, r.top + 575 * u, 28 * u, 0xFF9C94C8, Paint.Align.CENTER, r.width() - 60 * u);
+            rf.set(cx - 220 * u, r.bottom - 200 * u, cx + 220 * u, r.bottom - 90 * u);
+            netButton(c, rf, L.t("ออกจากระบบ", "Log out"), 0xFF6B5BD6, this::logout);
+        } else if (net == NET_UPDATE) {
+            glowCircle(c, cx, cy, 170 * u, 0x66FFD23F);
+            sprite(c, pBmp[Defs.SATURN], cx, cy, 110 * u, 255);
+            title(c, L.t("มีเวอร์ชันใหม่!", "New version available!"), cx, r.top + 450 * u, 52 * u, 0xFFFFE27A, Paint.Align.CENTER, r.width() - 60 * u);
+            plain(c, L.t("กรุณาอัปเดตเกมจากหน้า Releases บน GitHub ก่อนเล่นต่อ", "Please update the game from the GitHub Releases page to keep playing"),
+                    cx, r.top + 520 * u, 30 * u, 0xFFE6E0FF, Paint.Align.CENTER, r.width() - 60 * u);
+            plain(c, L.t("เวอร์ชันของคุณ: ", "Your version: ") + VERSION, cx, r.top + 580 * u, 28 * u, 0xFF9C94C8, Paint.Align.CENTER, 0);
+            rf.set(cx - 220 * u, r.bottom - 200 * u, cx + 220 * u, r.bottom - 90 * u);
+            netButton(c, rf, L.t("ออกจากระบบ", "Log out"), 0xFF6B5BD6, this::logout);
+        }
+    }
+
+    void netButton(Canvas c, RectF r, String label, int color, Runnable a) {
+        button(c, r, label, color, true, a);
+        btns.get(btns.size() - 1).net = true;
     }
 
     void twinkles(Canvas c) {
@@ -712,6 +1068,27 @@ public final class GameView extends View {
         sp.setColor(0x50FFFFFF);
         rf2.set(r.left + 3.5f * u, r.top + 3.5f * u, r.right - 3.5f * u, r.bottom - 3.5f * u);
         c.drawRoundRect(rf2, Math.max(0, rad - 3.5f * u), Math.max(0, rad - 3.5f * u), sp);
+        if (enabled && r.width() > 120 * u) {
+            // a glossy light sweep runs across each button every few seconds
+            float ph = (anim * 0.45f + (r.left * 0.37f + r.top * 0.71f) / W) % 2.2f;
+            if (ph < 1f) {
+                float bw2 = r.height() * 0.6f;
+                float x0 = r.left - bw2 * 2 + ph * (r.width() + bw2 * 3);
+                c.save();
+                Path cl = new Path();
+                cl.addRoundRect(new RectF(r), rad, rad, Path.Direction.CW);
+                c.clipPath(cl);
+                Path band = new Path();
+                band.moveTo(x0, r.bottom);
+                band.lineTo(x0 + bw2, r.top);
+                band.lineTo(x0 + bw2 * 1.6f, r.top);
+                band.lineTo(x0 + bw2 * 0.6f, r.bottom);
+                band.close();
+                p.setColor(0x38FFFFFF);
+                c.drawPath(band, p);
+                c.restore();
+            }
+        }
         sp.setStrokeWidth(4 * u);
         sp.setColor(0xFF0B0520);
         c.drawRoundRect(r, rad, rad, sp);
@@ -747,6 +1124,17 @@ public final class GameView extends View {
         sp.setColor(bright ? rarityColor : 0x55FFFFFF);
         rf2.set(r.left + 4 * u, r.top + 4 * u, r.right - 4 * u, r.bottom - 4 * u);
         c.drawRoundRect(rf2, Math.max(0, rad - 4 * u), Math.max(0, rad - 4 * u), sp);
+        if (bright && (rarityColor == Defs.RARITY_COLOR[Defs.LEGEND] || rarityColor == Defs.RARITY_COLOR[Defs.MYTHIC]
+                || rarityColor == Defs.RARITY_COLOR[Defs.EXCLUSIVE] || rarityColor == Defs.RARITY_COLOR[Defs.GALAXY]) && r.width() > 60 * u) {
+            // twinkling sparkle in the corner of rare cards
+            float tw = (float) Math.sin(anim * 3 + r.left * 0.01f);
+            if (tw > 0) {
+                float sx = r.left + r.width() * 0.2f, sy2 = r.top + r.height() * 0.2f;
+                p.setColor(alpha(0xFFFFFFFF, (int) (220 * tw)));
+                Path st = Art.starPath(sx, sy2, 9 * u * tw + 3 * u, 2 * u, 4);
+                c.drawPath(st, p);
+            }
+        }
         if (selected) {
             sp.setStrokeWidth(10 * u);
             sp.setColor(alpha(0xFFFFD23F, (int) (120 + 80 * Math.sin(anim * 5))));
@@ -895,6 +1283,30 @@ public final class GameView extends View {
         c.drawPath(d, sp);
     }
 
+    /** Crystal Oil: a glossy amber drop with a crystal glint */
+    void oilIcon(Canvas c, float x, float y, float r) {
+        Path d = new Path();
+        d.moveTo(x, y - r * 1.15f);
+        d.quadTo(x + r * 0.95f, y + r * 0.05f, x + r * 0.72f, y + r * 0.5f);
+        d.quadTo(x, y + r * 1.25f, x - r * 0.72f, y + r * 0.5f);
+        d.quadTo(x - r * 0.95f, y + r * 0.05f, x, y - r * 1.15f);
+        d.close();
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0xFFFFFFFF);
+        p.setShader(new LinearGradient(x - r, y - r, x + r, y + r, new int[]{0xFFFFE0A0, 0xFFFF8A2B, 0xFF7A1E5A},
+                null, Shader.TileMode.CLAMP));
+        c.drawPath(d, p);
+        p.setShader(null);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(r * 0.1f);
+        sp.setColor(0xFF3A0A20);
+        c.drawPath(d, sp);
+        p.setColor(0xCCFFFFFF);
+        c.drawCircle(x - r * 0.3f, y + r * 0.1f, r * 0.18f, p);
+        p.setColor(0xFF5EF2FF);
+        c.drawCircle(x + r * 0.25f, y + r * 0.45f, r * 0.12f, p);
+    }
+
     void crystalIcon(Canvas c, float x, float y, float r) {
         float[][] shards = {{0, 0, 1f}, {-0.45f, 0.2f, 0.65f}, {0.45f, 0.25f, 0.6f}};
         for (float[] s : shards) {
@@ -931,14 +1343,15 @@ public final class GameView extends View {
         p.setShader(null);
         sp.setPathEffect(null);
         sp.setStrokeWidth(3 * u);
-        sp.setColor(kind == 1 ? 0x99C58CFF : kind == 2 ? 0x995EF2FF : 0x99FFD23F);
+        sp.setColor(kind == 1 ? 0x99C58CFF : kind == 2 ? 0x995EF2FF : kind == 3 ? 0x99FF9A3B : 0x99FFD23F);
         c.drawRoundRect(rf, 36 * u, 36 * u, sp);
         float ix = rf.left + 38 * u;
-        glowCircle(c, ix, cy, 40 * u, kind == 1 ? 0x77C58CFF : kind == 2 ? 0x775EF2FF : 0x77FFD23F);
+        glowCircle(c, ix, cy, 40 * u, kind == 1 ? 0x77C58CFF : kind == 2 ? 0x775EF2FF : kind == 3 ? 0x77FF9A3B : 0x77FFD23F);
         if (kind == 0) star(c, ix, cy, 24 * u);
         else if (kind == 1) milliteIcon(c, ix, cy, 24 * u);
+        else if (kind == 3) oilIcon(c, ix, cy, 26 * u);
         else crystalIcon(c, ix, cy, 26 * u);
-        text(c, s, ix + 36 * u, cy + 15 * u, 40 * u, kind == 1 ? 0xFFE2C6FF : kind == 2 ? 0xFFB8F6FF : 0xFFFFE27A, Paint.Align.LEFT, 0);
+        text(c, s, ix + 36 * u, cy + 15 * u, 40 * u, kind == 1 ? 0xFFE2C6FF : kind == 2 ? 0xFFB8F6FF : kind == 3 ? 0xFFFFC890 : 0xFFFFE27A, Paint.Align.LEFT, 0);
     }
 
     void header(Canvas c, String title) {
@@ -967,7 +1380,73 @@ public final class GameView extends View {
     static final int AVATARS = 12;
 
     /** profile icon: astronaut, alien, rocket, UFO, comet, black hole, or a planet */
+    Bitmap photoBmp(String b64) {
+        if (b64 == null || b64.isEmpty()) return null;
+        Bitmap b = photoCache.get(b64);
+        if (b == null && !photoCache.containsKey(b64)) {
+            b = Photo.decode(b64);
+            if (photoCache.size() > 60) photoCache.clear();
+            photoCache.put(b64, b);
+        }
+        return b;
+    }
+
+    /** sprite of a planet wearing a skin style (cached) */
+    final java.util.HashMap<Integer, Bitmap> skinCache = new java.util.HashMap<>();
+
+    Bitmap skinBmp(int type, int style) {
+        if (style < 0 || pBmp[type] == null) return pBmp[type];
+        int k = Skins.key(style, type);
+        Bitmap b = skinCache.get(k);
+        if (b == null) {
+            b = SkinArt.make(pBmp[type], style, type);
+            skinCache.put(k, b);
+        }
+        return b;
+    }
+
+    Bitmap hellMoon;
+
+    /** the Hell Moon equipment sprite: the moon recoloured to fire */
+    Bitmap hellMoonBmp() {
+        if (hellMoon == null && pBmp[Defs.MOON] != null) hellMoon = SkinArt.hellMoon(pBmp[Defs.MOON]);
+        return hellMoon;
+    }
+
+    Bitmap moonBmp(int m) { return m == Defs.MOON_HELL ? hellMoonBmp() : pBmp[Defs.MOON]; }
+
+    /** my planet as it looks with its equipped skin */
+    Bitmap pbmp(int type) { return pf == null ? pBmp[type] : skinBmp(type, pf.skinOn[type]); }
+
+    /** a round photo, or the drawn icon when there is no photo */
+    void avatarOf(Canvas c, float x, float y, float r, int id, String photo) {
+        Bitmap b = id < 0 ? photoBmp(photo) : null;
+        if (b == null) { avatar(c, x, y, r, Math.max(0, id)); return; }
+        c.save();
+        Path cl = new Path();
+        cl.addCircle(x, y, r * 0.95f, Path.Direction.CW);
+        c.clipPath(cl);
+        c.drawBitmap(b, null, new RectF(x - r * 0.95f, y - r * 0.95f, x + r * 0.95f, y + r * 0.95f), null);
+        c.restore();
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(r * 0.08f);
+        sp.setColor(0x66FFFFFF);
+        c.drawCircle(x, y, r * 0.95f, sp);
+    }
+
+    void setPhoto(String b64) {
+        if (pf == null) return;
+        if (b64 == null) { showToast(L.t("อ่านรูปนี้ไม่ได้ ลองรูปอื่น", "Couldn't read that picture, try another")); return; }
+        pf.photo = b64;
+        pf.avatar = -1;
+        pf.save();
+        pushNow();
+        popup = P_PLAYER;
+        showToast(L.t("เปลี่ยนรูปโปรไฟล์แล้ว", "Profile picture updated"));
+    }
+
     void avatar(Canvas c, float x, float y, float r, int id) {
+        if (id < 0) { avatarOf(c, x, y, r, id, pf != null ? pf.photo : null); return; }
         p.setStyle(Paint.Style.FILL);
         p.setShader(null);
         switch (id) {
@@ -1209,7 +1688,7 @@ public final class GameView extends View {
         gear(c, rf.centerX(), rf.centerY() - 4 * u, 40 * u);
         if (isAdmin()) {
             rf.set(W - 290 * u, 50 * u, W - 170 * u, 170 * u);
-            button(c, rf, null, 0xFFD0407A, true, () -> { adminSel = cloud.uid; screen = S_ADMIN; refreshPlayers(); selectAdmin(cloud.uid); });
+            button(c, rf, null, 0xFFD0407A, true, () -> { adminSel = cloud.uid; go(S_ADMIN); refreshPlayers(); selectAdmin(cloud.uid); });
             shield(c, rf.centerX(), rf.centerY() - 6 * u, 42 * u);
         }
         chip(c, W / 2 - 110 * u, 110 * u, 0, pf.stars);
@@ -1218,6 +1697,8 @@ public final class GameView extends View {
         RectF tag = new RectF(W / 2 - 250 * u, 395 * u, W / 2 + 250 * u, 455 * u);
         panel(c, tag, 0xCC1A0F3D, 30 * u);
         plain(c, L.t("สถานีอวกาศ Stella • ผู้บัญชาการ ", "Stella Station • Commander ") + user, W / 2, 435 * u, 30 * u, 0xFFE6E0FF, Paint.Align.CENTER, 480 * u);
+        netPill(c, W / 2, 490 * u);
+        if (bcMsg != null && System.currentTimeMillis() - bcTime < 86400000L) ticker(c, 545 * u);
         plain(c, VERSION, W - 30 * u, navTop - 30 * u, 26 * u, 0x99FFFFFF, Paint.Align.RIGHT, 0);
     }
 
@@ -1337,73 +1818,163 @@ public final class GameView extends View {
     // ================================================================== shop
     void drawShop(Canvas c) {
         header(c, L.t("ร้านค้า", "Shop"));
-        float cw = (W - 140 * u) / 2f, ch = 360 * u, y0 = 230 * u;
-        String[] names = {L.t("แพ็กเริ่มต้น", "Starter pack"), L.t("สกินดวงดาว", "Planet skins"), L.t("Star Pass", "Star Pass"), L.t("ข้อเสนอรายวัน", "Daily deals")};
-        for (int i = 0; i < 4; i++) {
-            float x = 50 * u + (i % 2) * (cw + 40 * u), y = y0 + (i / 2) * (ch + 40 * u);
-            RectF q = new RectF(x, y, x + cw, y + ch);
-            rarityCard(c, q, Defs.RARITY_COLOR[i + 1], false, false, 36 * u);
-            glowCircle(c, q.centerX(), q.top + ch * 0.4f, 110 * u, alpha(Defs.RARITY_COLOR[i + 1], 0x44));
-            title(c, "?", q.centerX(), q.top + ch * 0.5f, 120 * u, 0xFF6A6488);
-            text(c, names[i], q.centerX(), q.bottom - 90 * u, 38 * u, 0xFFE6E0FF, Paint.Align.CENTER, cw - 30 * u);
-            plain(c, L.t("เร็ว ๆ นี้", "Coming soon"), q.centerX(), q.bottom - 40 * u, 30 * u, 0xFF8A84A0, Paint.Align.CENTER, 0);
+        float cw = (W - 140 * u) / 2f, ch = 420 * u, y0 = 220 * u;
+        // top-up is left out until the game is on Google Play
+        String[] names = {L.t("ของขวัญรายวัน", "Daily gift"), "Star Pass", L.t("สกินดวงดาว", "Planet skins")};
+        int[] cols = {0xFF33C6A6, 0xFFB86BFF, 0xFF4FA3FF};
+        int[] icon = {0, 2, 3};
+        for (int i = 0; i < 3; i++) {
+            float appear = ease(Math.min(1f, Math.max(0f, (transT - i * 0.06f) / 0.35f)));
+            // the daily gift spans the whole first row
+            float x = i == 0 ? 50 * u : 50 * u + ((i - 1) % 2) * (cw + 40 * u);
+            float y = y0 + (i == 0 ? 0 : ch + 40 * u) + (1f - appear) * 60 * u;
+            RectF q = new RectF(x, y, i == 0 ? W - 50 * u : x + cw, y + ch);
+            boolean live = i == 0;
+            rarityCard(c, q, cols[i], live, false, 36 * u);
+            float ix = q.centerX(), iy = q.top + ch * 0.36f + (float) Math.sin(anim * 2.2f + i) * 10 * u;
+            glowCircle(c, ix, iy, 130 * u, alpha(cols[i], 0x55));
+            shopIcon(c, icon[i], ix, iy, 80 * u);
+            text(c, names[i], q.centerX(), q.bottom - 120 * u, 40 * u, 0xFFFFFFFF, Paint.Align.CENTER, cw - 30 * u);
+            if (i == 0) {
+                boolean ready = pf.giftReady();
+                rf.set(q.left + 30 * u, q.bottom - 95 * u, q.right - 30 * u, q.bottom - 25 * u);
+                button(c, rf, ready ? L.t("รับ ", "Claim ") + Profile.GIFT_STARS + " Star" : L.t("รับแล้ว • พรุ่งนี้มาใหม่", "Claimed • back tomorrow"),
+                        0xFF2E9A6A, ready, () -> {
+                            if (pf.claimGift()) { Sfx.play(Sfx.COIN); showToast("+" + Profile.GIFT_STARS + " Star!"); pushNow(); }
+                        });
+            } else {
+                plain(c, L.t("เร็ว ๆ นี้", "Coming soon"), q.centerX(), q.bottom - 50 * u, 30 * u, 0xFFB8B2CC, Paint.Align.CENTER, 0);
+                btns.add(new Btn(q, () -> showToast(L.t("เร็ว ๆ นี้", "Coming soon"))));
+            }
         }
-        plain(c, L.t("Crystal ได้จากการล้มบอสเท่านั้น (มินิบอส 1 • บอส 2)", "Crystals drop only from bosses (mini boss 1 • boss 2)"),
-                W / 2, y0 + 2 * (ch + 40 * u) + 40 * u, 32 * u, 0xFFB8F6FF, Paint.Align.CENTER, W - 80 * u);
+    }
+
+    void shopIcon(Canvas c, int kind, float x, float y, float r) {
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        sp.setPathEffect(null);
+        switch (kind) {
+            case 0: { // gift box
+                float lid = (float) Math.max(0, Math.sin(anim * 3)) * r * 0.12f;
+                rf2.set(x - r * 0.8f, y - r * 0.2f, x + r * 0.8f, y + r * 0.85f);
+                p.setColor(0xFFFF5B7A);
+                c.drawRoundRect(rf2, r * 0.12f, r * 0.12f, p);
+                rf2.set(x - r * 0.95f, y - r * 0.5f - lid, x + r * 0.95f, y - r * 0.15f - lid);
+                p.setColor(0xFFFF7A95);
+                c.drawRoundRect(rf2, r * 0.1f, r * 0.1f, p);
+                p.setColor(0xFFFFD23F);
+                c.drawRect(x - r * 0.14f, y - r * 0.5f - lid, x + r * 0.14f, y + r * 0.85f, p);
+                rf2.set(x - r * 0.55f, y - r * 0.85f - lid, x - r * 0.02f, y - r * 0.48f - lid);
+                c.drawOval(rf2, p);
+                rf2.set(x + r * 0.02f, y - r * 0.85f - lid, x + r * 0.55f, y - r * 0.48f - lid);
+                c.drawOval(rf2, p);
+                sp.setStrokeWidth(4 * u);
+                sp.setColor(0xFF140A2A);
+                rf2.set(x - r * 0.8f, y - r * 0.2f, x + r * 0.8f, y + r * 0.85f);
+                c.drawRoundRect(rf2, r * 0.12f, r * 0.12f, sp);
+                break;
+            }
+            case 1: // stack of star coins
+                for (int k = 0; k < 3; k++) star(c, x + (k - 1) * r * 0.55f, y + r * 0.25f - (k == 1 ? r * 0.35f : 0), r * 0.42f);
+                break;
+            case 2: { // pass ticket
+                c.save();
+                c.rotate(-12 + 4 * (float) Math.sin(anim * 2), x, y);
+                rf2.set(x - r, y - r * 0.55f, x + r, y + r * 0.55f);
+                p.setColor(0xFFB86BFF);
+                c.drawRoundRect(rf2, r * 0.15f, r * 0.15f, p);
+                p.setColor(0xFFE6D0FF);
+                rf2.set(x - r * 0.85f, y - r * 0.4f, x + r * 0.85f, y + r * 0.4f);
+                c.drawRoundRect(rf2, r * 0.1f, r * 0.1f, p);
+                star(c, x, y, r * 0.3f);
+                c.restore();
+                break;
+            }
+            default: // a planet wearing a skin ring
+                sprite(c, pBmp[Defs.EARTH], x, y, r * 0.9f, 255);
+                sp.setStrokeWidth(8 * u);
+                sp.setColor(hsv(anim * 80));
+                rf2.set(x - r * 1.2f, y - r * 0.35f, x + r * 1.2f, y + r * 0.35f);
+                c.drawArc(rf2, 0, 180, false, sp);
+        }
     }
 
     // ================================================================== planet menu
     void drawPlanetMenu(Canvas c) {
-        header(c, L.t("ดวงดาว", "Planet"));
-        float ctw = (W - 120 * u) / 3f;
-        for (int i = 0; i < 3; i++) {
-            final int ci = i;
-            rf.set(50 * u + i * (ctw + 10 * u), 185 * u, 50 * u + i * (ctw + 10 * u) + ctw, 265 * u);
-            String nm = L.en ? Defs.CAT_NAME[i] : Defs.CAT_NAME_TH[i];
-            button(c, rf, i == 0 ? nm : nm + L.t(" (เร็ว ๆ นี้)", " (soon)"), planetCat == i ? 0xFFFF8A2B : 0xFF3A3360, i == 0, () -> {
-                if (ci == 0) planetCat = 0;
-                else showToast(L.t("หมวดนี้เร็ว ๆ นี้", "This category is coming soon"));
-            });
-        }
+        header(c, L.t("ดวงดาว", "Planet"), 0, pf.stars, 3, pf.oil);
         int t = selType;
         boolean own = pf.owned[t];
-        // inventory (anchored to bottom)
+        // top row: inventory
+        rf.set(50 * u, 185 * u, 50 * u + 340 * u, 268 * u);
+        button(c, rf, L.t("กระเป๋า", "Inventory") + (pf.raidCapsules > 0 ? " (" + pf.raidCapsules + ")" : ""), 0xFFFF8A2B, true, () -> popup = P_INV);
+        int ownAll = 0;
+        for (int k = 0; k < Defs.P_COUNT; k++) if (pf.owned[k]) ownAll++;
+        plain(c, L.t("สะสม ", "Collected ") + ownAll + "/" + Defs.P_COUNT, W - 50 * u, 240 * u, 32 * u, 0xFFC9C2E6, Paint.Align.RIGHT, 0);
+        // scrolling collection, stacked by category
         float cell = (W - 100 * u) / 6f;
-        float invTop = navTop - 30 * u - cell * 2;
-        text(c, (L.en ? Defs.CAT_NAME[planetCat] : Defs.CAT_NAME_TH[planetCat]) + "  " + pf.ownedCount() + "/" + Defs.P_COUNT,
-                50 * u, invTop - 20 * u, 38 * u, 0xFFFFFFFF, Paint.Align.LEFT, 0);
-        for (int i = 0; i < Defs.P_COUNT; i++) {
-            final int ti = i;
-            float x = 50 * u + (i % 6) * cell, y = invTop + (i / 6) * cell;
-            RectF r = new RectF(x + 6 * u, y + 6 * u, x + cell - 6 * u, y + cell - 6 * u);
-            int rc = Defs.RARITY_COLOR[Defs.P_RARITY[i]];
-            rarityCard(c, r, rc, pf.owned[i], i == t, 22 * u);
-            sprite(c, pBmp[i], r.centerX(), r.centerY() - 6 * u, cell * 0.42f, pf.owned[i] ? 255 : 45);
-            if (pf.owned[i]) {
-                text(c, "Lv" + pf.level[i], r.centerX(), r.bottom - 14 * u, 26 * u, 0xFFFFFFFF);
-                if (pf.inDeck(i)) {
-                    p.setColor(0xFF33C6A6);
-                    c.drawCircle(r.right - 18 * u, r.top + 18 * u, 13 * u, p);
-                }
-            } else text(c, "?", r.centerX(), r.centerY() + 18 * u, 56 * u, 0xFF6A6488);
-            btns.add(new Btn(r, () -> selType = ti));
+        RectF view = new RectF(30 * u, navTop - 30 * u - cell * 2 - 80 * u, W - 30 * u, navTop - 8 * u);
+        float secH = 74 * u, contentH = 0;
+        int nCat = Defs.CAT_NAME.length;
+        int[] inCat = new int[nCat], ownCat = new int[nCat];
+        for (int k = 0; k < Defs.P_COUNT; k++) { inCat[Defs.P_CATEGORY[k]]++; if (pf.owned[k]) ownCat[Defs.P_CATEGORY[k]]++; }
+        for (int ci = 0; ci < nCat; ci++) contentH += secH + (float) Math.ceil(inCat[ci] / 6f) * cell + 16 * u;
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0x55080320);
+        c.drawRoundRect(view, 28 * u, 28 * u, p);
+        beginScroll(c, S_PLANET, view, contentH, 0.016f);
+        float y = view.top;
+        for (int ci = 0; ci < nCat; ci++) {
+            int col = ci == Defs.CAT_EXCLUSIVE ? Defs.RARITY_COLOR[Defs.EXCLUSIVE] : ci == Defs.CAT_SPECIALIST ? Defs.RARITY_COLOR[Defs.SPECIALIST] : 0xFFFF8A2B;
+            p.setColor(col);
+            rf2.set(50 * u, y + 26 * u, 58 * u, y + 62 * u);
+            c.drawRoundRect(rf2, 4 * u, 4 * u, p);
+            text(c, (L.en ? Defs.CAT_NAME[ci] : Defs.CAT_NAME_TH[ci]) + "  " + ownCat[ci] + "/" + inCat[ci], 72 * u, y + 58 * u, 36 * u, 0xFFFFFFFF, Paint.Align.LEFT, 0);
+            String how = ci == Defs.CAT_EXCLUSIVE ? L.t("สุ่มจากตู้ Exclusive (Crystal Oil)", "From the Exclusive capsule (Crystal Oil)")
+                    : ci == Defs.CAT_SPECIALIST ? L.t("หายากสุดในตู้ Exclusive • ช่อง Deck พิเศษ", "Rarest in the Exclusive capsule • own deck slot") : "";
+            if (!how.isEmpty()) plain(c, how, W - 50 * u, y + 56 * u, 25 * u, alpha(col, 0xDD), Paint.Align.RIGHT, 0);
+            y += secH;
+            int slot = 0;
+            for (int i = 0; i < Defs.P_COUNT; i++) {
+                if (Defs.P_CATEGORY[i] != ci) continue;
+                final int ti = i;
+                float x = 50 * u + (slot % 6) * cell, yy = y + (slot / 6) * cell;
+                slot++;
+                RectF r = new RectF(x + 6 * u, yy + 6 * u, x + cell - 6 * u, yy + cell - 6 * u);
+                int rc = Defs.RARITY_COLOR[Defs.P_RARITY[i]];
+                rarityCard(c, r, rc, pf.owned[i], i == t, 22 * u);
+                sprite(c, pf.owned[i] ? pbmp(i) : pBmp[i], r.centerX(), r.centerY() - 6 * u, cell * 0.42f, pf.owned[i] ? 255 : 45);
+                if (pf.owned[i]) {
+                    text(c, "Lv" + pf.level[i], r.centerX(), r.bottom - 14 * u, 26 * u, 0xFFFFFFFF);
+                    if (pf.inDeck(i)) {
+                        p.setColor(0xFF33C6A6);
+                        c.drawCircle(r.right - 18 * u, r.top + 18 * u, 13 * u, p);
+                    }
+                    if (pf.moonOn[i] >= 0) sprite(c, moonBmp(pf.moonOn[i]), r.left + 20 * u, r.top + 20 * u, 13 * u, 255);
+                } else text(c, "?", r.centerX(), r.centerY() + 18 * u, 56 * u, 0xFF6A6488);
+                scrollBtn(r, () -> selType = ti);
+            }
+            y += (float) Math.ceil(inCat[ci] / 6f) * cell + 16 * u;
         }
-        // deck row
-        float dTop = invTop - 210 * u, ds = 130 * u;
+        endScroll(c);
+        // deck row (4 normal + 1 specialist)
+        float ds = 128 * u, dTop = view.top - 30 * u - ds;
         text(c, "Deck", 50 * u, dTop + ds / 2 + 14 * u, 40 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
         for (int i = 0; i < Profile.DECK_SIZE; i++) {
             final int d = pf.deck[i];
-            float x = 190 * u + i * (ds + 24 * u);
+            boolean sp4 = i == Defs.SPECIAL_SLOT;
+            float x = 180 * u + i * (ds + 22 * u) + (sp4 ? 26 * u : 0);
             RectF r = new RectF(x, dTop, x + ds, dTop + ds);
-            rarityCard(c, r, d >= 0 ? Defs.RARITY_COLOR[Defs.P_RARITY[d]] : 0xFF6A6488, d >= 0, false, 24 * u);
+            rarityCard(c, r, d >= 0 ? Defs.RARITY_COLOR[Defs.P_RARITY[d]] : sp4 ? Defs.RARITY_COLOR[Defs.SPECIALIST] : 0xFF6A6488, d >= 0, false, 24 * u);
             if (d >= 0) {
-                sprite(c, pBmp[d], r.centerX(), r.centerY(), ds * 0.45f, 255);
+                sprite(c, pbmp(d), r.centerX(), r.centerY(), ds * 0.45f, 255);
                 btns.add(new Btn(r, () -> selType = d));
-            } else text(c, "+", r.centerX(), r.centerY() + 20 * u, 60 * u, 0xFF6A6488);
+            } else if (sp4) plain(c, "Specialist", r.centerX(), r.centerY() + 10 * u, 24 * u, 0xFFB8A878, Paint.Align.CENTER, 0);
+            else text(c, "+", r.centerX(), r.centerY() + 20 * u, 60 * u, 0xFF6A6488);
         }
         // buttons (two rows)
-        float bh = 96 * u, bw = (W - 140 * u) / 2f;
-        float b2 = dTop - 40 * u - bh, b1 = b2 - 24 * u - bh;
+        float bh = 92 * u, bw = (W - 140 * u) / 2f;
+        float b2 = dTop - 30 * u - bh, b1 = b2 - 20 * u - bh;
         boolean maxed = pf.level[t] >= Profile.MAX_LV;
         boolean canUp = own && !maxed && pf.copies[t] >= pf.upgradeCopies(t) && pf.stars >= pf.upgradeStars(t);
         rf.set(50 * u, b1, 50 * u + bw, b1 + bh);
@@ -1413,8 +1984,21 @@ public final class GameView extends View {
             else showToast(Defs.P_NAME[selType] + " Lv " + pf.level[selType] + "!");
         });
         rf.set(90 * u + bw, b1, 90 * u + bw * 2, b1 + bh);
-        button(c, rf, L.t("Evolve (เร็ว ๆ นี้)", "Evolve (soon)"), 0xFF6B5BD6, false,
-                () -> showToast(L.t("ระบบ Evolve เร็ว ๆ นี้", "Evolve is coming soon")));
+        final int sellT = t;
+        boolean sellable = own && pf.canSell(t);
+        button(c, rf, sellable ? L.t("ขาย +", "Sell +") + pf.sellValue(t) + " Star" : L.t("ขายไม่ได้", "Can't sell"), 0xFFD0407A, sellable,
+                () -> Dialogs.confirm(ctx, L.t("ขายดวงดาว", "Sell planet"),
+                        L.t("ขาย ", "Sell ") + Defs.P_NAME[sellT] + " (Lv " + pf.level[sellT] + ")" + L.t(" ได้ ", " for ") + pf.sellValue(sellT) + " Star?\n"
+                                + L.t("ดาวดวงนี้จะหายไปพร้อม Level, Enchant และ Material ย้อนกลับไม่ได้", "It's gone for good, together with its level, enchant and material."),
+                        L.t("ขายเลย", "Sell"), () -> {
+                            int got = pf.sell(sellT);
+                            if (got > 0) {
+                                showToast(L.t("ขายแล้ว +", "Sold +") + got + " Star");
+                                Sfx.play(Sfx.SELL);
+                                pushNow();
+                                for (int k = 0; k < Defs.P_COUNT; k++) if (pf.owned[k]) { selType = k; break; }
+                            }
+                        }));
         boolean inDeck = pf.inDeck(t);
         rf.set(50 * u, b2, 50 * u + bw, b2 + bh);
         button(c, rf, inDeck ? L.t("ถอดออกจาก Deck", "Remove from deck") : L.t("ใส่ Deck", "Add to deck"),
@@ -1423,18 +2007,13 @@ public final class GameView extends View {
                     if (err != null) showToast(err);
                 });
         rf.set(90 * u + bw, b2, 90 * u + bw * 2, b2 + bh);
-        button(c, rf, L.t("ไปที่ Lab", "Open Lab"), 0xFFB86BFF, own, () -> { enchSel = selType; go(S_ENCHANT); });
+        button(c, rf, L.t("อุปกรณ์", "Equipment"), 0xFFB86BFF, own, () -> popup = P_EQUIP);
         // status block
-        float sTop = b1 - 260 * u;
+        float sTop = b1 - 250 * u;
         int rar = Defs.P_RARITY[t];
         text(c, L.t("สถานะ:", "Status:"), 50 * u, sTop + 40 * u, 38 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
         text(c, L.t("ระดับ: ", "Rarity: ") + Defs.RARITY_NAME[rar], W - 50 * u, sTop + 40 * u, 38 * u, Defs.RARITY_COLOR[rar], Paint.Align.RIGHT, 0);
-        Planet tmpP = previewPlanet(t);
-        String s1;
-        if (Game.isProducer(tmpP)) s1 = String.format(Locale.US, L.t("ผลิต %.1f SP ทุก %.1f วิ", "Makes %.1f SP every %.1fs"), Game.produceRate(tmpP), Game.cdOf(tmpP));
-        else if (t == Defs.SUN) s1 = String.format(Locale.US, L.t("คลื่นความร้อน ทุก %.1f วิ", "Heat wave every %.1fs"), Game.cdOf(tmpP));
-        else s1 = String.format(Locale.US, L.t("ดาเมจ %.1f  ระยะ %d  ยิงทุก %.2f วิ", "DMG %.1f  Range %d  Every %.2fs"), Game.dmgOf(tmpP), (int) Game.rangeOf(tmpP), Game.cdOf(tmpP));
-        plain(c, s1, 50 * u, sTop + 95 * u, 32 * u, 0xFFE6E0FF, Paint.Align.LEFT, W - 100 * u);
+        plain(c, statLine(previewPlanet(t)), 50 * u, sTop + 95 * u, 32 * u, 0xFFE6E0FF, Paint.Align.LEFT, W - 100 * u);
         String cp = maxed ? "" : String.format(Locale.US, L.t("   การ์ดซ้ำ %d/%d  •  ใช้ %d Star", "   Copies %d/%d  •  Cost %d Star"),
                 pf.copies[t], pf.upgradeCopies(t), pf.upgradeStars(t));
         plain(c, "Lv " + pf.level[t] + "/" + Profile.MAX_LV + cp + L.t("   •  ในด่าน วางได้ ", "   •  In match: max ") + Defs.PLACE_LIMIT[t]
@@ -1448,13 +2027,345 @@ public final class GameView extends View {
             plain(c, matName(pf.material[t]), W - 105 * u, sTop + 204 * u, 32 * u, Defs.MAT_COLOR[pf.material[t]], Paint.Align.RIGHT, 0);
         } else plain(c, L.t("Material: ยังไม่มี", "Material: none"), W - 50 * u, sTop + 204 * u, 32 * u, 0xFF8A84A0, Paint.Align.RIGHT, 0);
         // big planet
-        float aTop = 280 * u, aBot = sTop - 20 * u;
-        float nameY = aBot - 60 * u;
-        float half = Math.min(240 * u, (nameY - 70 * u - aTop) * 0.45f);
+        float aTop = 280 * u, aBot = sTop - 10 * u;
+        float nameY = aBot - 110 * u;
+        float half = Math.min(220 * u, (nameY - 70 * u - aTop) * 0.45f);
         float cy = (aTop + nameY - 60 * u) / 2;
         bigPlanet(c, t, W / 2, cy, half, own);
-        text(c, Defs.P_NAME[t], W / 2, nameY, 60 * u, own ? 0xFFFFFFFF : 0xFF8A84A0);
-        plain(c, L.en ? Defs.P_DESC_EN[t] : Defs.P_DESC[t], W / 2, nameY + 45 * u, 30 * u, 0xFFC9C2E6, Paint.Align.CENTER, W - 100 * u);
+        if (own && pf.moonOn[t] >= 0) {
+            double ma = anim * 1.2;
+            float mx = W / 2 + (float) Math.cos(ma) * half * 1.35f, my = cy + (float) Math.sin(ma) * half * 0.4f;
+            glowCircle(c, mx, my, half * 0.4f, 0x88FF4B2B);
+            sprite(c, moonBmp(pf.moonOn[t]), mx, my, half * 0.2f, 255);
+        }
+        String nm = Defs.P_NAME[t] + (own && pf.skinOn[t] >= 0 ? "  •  " + (L.en ? Skins.NAME[pf.skinOn[t]] : Skins.NAME_TH[pf.skinOn[t]]) : "");
+        text(c, nm, W / 2, nameY, 56 * u, own ? 0xFFFFFFFF : 0xFF8A84A0, Paint.Align.CENTER, W - 80 * u);
+        plain(c, L.en ? Defs.P_DESC_EN[t] : Defs.P_DESC[t], W / 2, nameY + 45 * u, 28 * u, 0xFFC9C2E6, Paint.Align.CENTER, W - 100 * u);
+        atkChips(c, W / 2, nameY + 95 * u, Defs.P_ATTACK[t], 34 * u);
+        if (!own && t == Defs.HERO)
+            plain(c, L.t("ผ่านด่าน 3-15 เพื่อปลดล็อก", "Clear stage 3-15 to unlock"), W / 2, nameY - 70 * u, 30 * u, 0xFFFF9A7A, Paint.Align.CENTER, 0);
+    }
+
+    /** one-line stats for the planet page */
+    String statLine(Planet tp0) {
+        int kd = Defs.P_KIND[tp0.type];
+        if (Game.isProducer(tp0)) return String.format(Locale.US, L.t("ผลิต %.1f SP ทุก %.1f วิ", "Makes %.1f SP every %.1fs"), Game.produceRate(tp0), Game.cdOf(tp0));
+        if (tp0.type == Defs.SUN) return String.format(Locale.US, L.t("คลื่นความร้อน ทุก %.1f วิ", "Heat wave every %.1fs"), Game.cdOf(tp0));
+        if (kd == Defs.K_WALL) return String.format(Locale.US, L.t("สร้างกำแพง 3 ชั้นบนทางเดิน ทุก %.1f วิ", "Builds 3 walls on the path every %.1fs"), Game.cdOf(tp0));
+        if (kd == Defs.K_HAUNT) return String.format(Locale.US, L.t("Haunted + สโลว์ 35%%  ระยะ %d", "Haunted + 35%% slow  Range %d"), (int) Game.rangeOf(tp0));
+        if (kd == Defs.K_STORM) return String.format(Locale.US, L.t("พายุน้ำ สตัน ทุก %.1f วิ  ระยะ %d", "Water storm stun every %.1fs  Range %d"), Game.cdOf(tp0), (int) Game.rangeOf(tp0));
+        if (kd == Defs.K_NUKE) return L.t("ไม่โจมตี • สกิลระเบิดตัวเองและศัตรูทั้งแมพ", "No attacks • skill: blow up with every enemy");
+        if (kd == Defs.K_KING) return L.t("บัฟทุกดวง +10% ทุกค่า • Elite Command", "+10% all stats to every planet • Elite Command");
+        return String.format(Locale.US, L.t("ดาเมจ %.1f  ระยะ %d  ยิงทุก %.2f วิ", "DMG %.1f  Range %d  Every %.2fs"), Game.dmgOf(tp0), (int) Game.rangeOf(tp0), Game.cdOf(tp0));
+    }
+
+    // ------------------------------------------------------------------ equipment (skin + moon)
+    void drawEquip(Canvas c) {
+        final int t = selType;
+        RectF r = new RectF(40 * u, 160 * u, W - 40 * u, H - 160 * u);
+        popupFrame(c, r, L.t("อุปกรณ์: ", "Equipment: ") + Defs.P_NAME[t]);
+        float y = r.top + 160 * u;
+        sprite(c, pbmp(t), r.centerX(), y + 110 * u, 110 * u, 255);
+        if (pf.moonOn[t] >= 0) {
+            double ma = anim * 1.4;
+            sprite(c, moonBmp(pf.moonOn[t]), r.centerX() + (float) Math.cos(ma) * 160 * u, y + 110 * u + (float) Math.sin(ma) * 40 * u, 26 * u, 255);
+        }
+        y += 260 * u;
+        text(c, L.t("สกิน", "Skin"), r.left + 40 * u, y, 40 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        y += 20 * u;
+        java.util.ArrayList<Integer> opts = new java.util.ArrayList<>();
+        opts.add(-1);
+        for (int s = 0; s < Skins.STYLES; s++) if (pf.skins.contains(Skins.key(s, t))) opts.add(s);
+        float cell = (r.width() - 60 * u) / 5f;
+        for (int k = 0; k < opts.size(); k++) {
+            final int s = opts.get(k);
+            float x = r.left + 30 * u + (k % 5) * cell, yy = y + (k / 5) * (cell + 40 * u);
+            RectF cr = new RectF(x + 6 * u, yy + 6 * u, x + cell - 6 * u, yy + cell - 6 * u);
+            int rc = s < 0 ? 0xFF6A6488 : Defs.RARITY_COLOR[Skins.TIER[s]];
+            rarityCard(c, cr, rc, true, pf.skinOn[t] == s, 20 * u);
+            sprite(c, skinBmp(t, s), cr.centerX(), cr.centerY(), cell * 0.36f, 255);
+            plain(c, s < 0 ? L.t("ปกติ", "Default") : (L.en ? Skins.NAME[s] : Skins.NAME_TH[s]), cr.centerX(), cr.bottom + 30 * u, 24 * u, 0xFFE6E0FF, Paint.Align.CENTER, cell);
+            btns.add(new Btn(cr, () -> { pf.equipSkin(t, s); pushNow(); }));
+        }
+        if (opts.size() == 1)
+            plain(c, L.t("ยังไม่มีสกินของดาวนี้ — เปิด Raid Capsule ในกระเป๋า", "No skins for this planet yet — open Raid Capsules in your Inventory"),
+                    r.left + 30 * u + cell + 20 * u, y + cell / 2 + 10 * u, 26 * u, 0xFF8A84A0, Paint.Align.LEFT, r.width() - cell - 100 * u);
+        y += ((opts.size() + 4) / 5) * (cell + 40 * u) + 50 * u;
+        text(c, L.t("ดวงจันทร์", "Moon"), r.left + 40 * u, y, 40 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        y += 30 * u;
+        for (int m = 0; m < Defs.MOON_COUNT; m++) {
+            final int mm = m;
+            RectF row = new RectF(r.left + 30 * u, y, r.right - 30 * u, y + 130 * u);
+            p.setShader(null);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(alpha(Defs.MOON_COLOR[m], 0x30));
+            c.drawRoundRect(row, 20 * u, 20 * u, p);
+            glowCircle(c, row.left + 70 * u, row.centerY(), 60 * u, alpha(Defs.MOON_COLOR[m], 0x66));
+            sprite(c, moonBmp(m), row.left + 70 * u, row.centerY(), 40 * u, 255);
+            text(c, Defs.MOON_NAME[m] + "  x" + pf.moons[m], row.left + 130 * u, row.top + 52 * u, 34 * u, 0xFFFFFFFF, Paint.Align.LEFT, 0);
+            plain(c, L.en ? Defs.MOON_DESC_EN[m] : Defs.MOON_DESC[m], row.left + 130 * u, row.top + 98 * u, 24 * u, 0xFFC9C2E6, Paint.Align.LEFT, row.width() - 400 * u);
+            boolean on = pf.moonOn[t] == m;
+            rf.set(row.right - 240 * u, row.top + 25 * u, row.right - 20 * u, row.bottom - 25 * u);
+            button(c, rf, on ? L.t("ถอด", "Remove") : L.t("ใส่", "Equip"), on ? 0xFFFF6B5B : 0xFF33C6A6, on || pf.moonsFree(m) > 0, () -> {
+                String err = pf.equipMoon(t, pf.moonOn[t] == mm ? -1 : mm);
+                if (err != null) showToast(err);
+                else pushNow();
+            });
+            y += 150 * u;
+        }
+        rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 30 * u);
+        button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
+    }
+
+    // ------------------------------------------------------------------ inventory: capsules, skins, moons
+    int invReveal = Integer.MIN_VALUE;
+    float invRevealT;
+
+    void drawInventory(Canvas c) {
+        RectF r = new RectF(30 * u, 130 * u, W - 30 * u, H - 130 * u);
+        popupFrame(c, r, L.t("กระเป๋า", "Inventory"));
+        // capsule block
+        float y = r.top + 150 * u;
+        RectF box = new RectF(r.left + 30 * u, y, r.right - 30 * u, y + 300 * u);
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0x40FF3B6B);
+        c.drawRoundRect(box, 24 * u, 24 * u, p);
+        invRevealT += 0.016f;
+        if (invReveal != Integer.MIN_VALUE) {
+            int key = invReveal < 0 ? -invReveal - 1 : invReveal;
+            int st = Skins.styleOf(key), pt = Skins.planetOf(key);
+            float e = Math.min(1f, invRevealT / 0.6f);
+            int rc = Defs.RARITY_COLOR[Skins.TIER[st]];
+            glowCircle(c, box.left + 150 * u, box.centerY(), 150 * u * e, alpha(rc, 0x99));
+            sprite(c, skinBmp(pt, st), box.left + 150 * u, box.centerY(), 95 * u * backOut(e), 255);
+            text(c, Skins.name(key), box.left + 290 * u, box.top + 90 * u, 38 * u, rc, Paint.Align.LEFT, box.width() - 320 * u);
+            plain(c, Defs.RARITY_NAME[Skins.TIER[st]] + (invReveal < 0 ? L.t("  •  ซ้ำ! คืน +", "  •  Duplicate! +") + Profile.DUP_SKIN_OIL + " Oil" : L.t("  •  ใหม่!", "  •  New!")),
+                    box.left + 290 * u, box.top + 140 * u, 28 * u, 0xFFFFFFFF, Paint.Align.LEFT, 0);
+        } else {
+            capsuleIcon(c, box.left + 150 * u, box.centerY(), 90 * u);
+            text(c, "Raid Capsule x" + pf.raidCapsules, box.left + 290 * u, box.top + 90 * u, 40 * u, 0xFFFFFFFF, Paint.Align.LEFT, 0);
+            plain(c, L.t("ซื้อได้ที่ร้าน Raid ด้วย Crystal Oil", "Buy them in the Raid shop with Crystal Oil"), box.left + 290 * u, box.top + 140 * u, 26 * u, 0xFFC9C2E6, Paint.Align.LEFT, box.width() - 320 * u);
+        }
+        rf.set(box.left + 290 * u, box.bottom - 115 * u, box.left + 590 * u, box.bottom - 30 * u);
+        button(c, rf, L.t("เปิด", "Open"), 0xFFFF3B6B, pf.raidCapsules > 0, () -> {
+            invReveal = pf.openCapsule();
+            invRevealT = 0;
+            Sfx.play(Sfx.WIN);
+            pushNow();
+        });
+        rf.set(box.left + 610 * u, box.bottom - 115 * u, box.right - 30 * u, box.bottom - 30 * u);
+        button(c, rf, L.t("อัตรา", "Rates"), 0xFF6B5BD6, true, () -> showToast(skinRates()));
+        // owned items
+        y = box.bottom + 60 * u;
+        text(c, L.t("ไอเทม", "Items"), r.left + 40 * u, y, 38 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        float ix = r.left + 40 * u;
+        for (int m = 0; m < Defs.MOON_COUNT; m++) {
+            sprite(c, moonBmp(m), ix + 40 * u, y + 70 * u, 30 * u, pf.moons[m] > 0 ? 255 : 70);
+            plain(c, Defs.MOON_NAME[m] + " x" + pf.moons[m] + L.t(" (ว่าง ", " (free ") + pf.moonsFree(m) + ")", ix + 90 * u, y + 82 * u, 28 * u, 0xFFE6E0FF, Paint.Align.LEFT, 0);
+            ix += 450 * u;
+        }
+        y += 150 * u;
+        text(c, L.t("สกินของฉัน  ", "My skins  ") + pf.skins.size() + "/" + Skins.all().size(), r.left + 40 * u, y, 38 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        y += 20 * u;
+        float cell = (r.width() - 60 * u) / 6f;
+        java.util.ArrayList<Integer> list = new java.util.ArrayList<>(pf.skins);
+        RectF view = new RectF(r.left + 20 * u, y, r.right - 20 * u, r.bottom - 140 * u);
+        float contentH = (float) Math.ceil(list.size() / 6f) * (cell + 30 * u) + 10 * u;
+        beginScroll(c, 1000 + P_INV, view, contentH, 0.016f);
+        for (int k = 0; k < list.size(); k++) {
+            final int key = list.get(k);
+            int st = Skins.styleOf(key), pt = Skins.planetOf(key);
+            float x = r.left + 30 * u + (k % 6) * cell, yy = y + (k / 6) * (cell + 30 * u);
+            RectF cr = new RectF(x + 5 * u, yy + 5 * u, x + cell - 5 * u, yy + cell - 5 * u);
+            boolean on = pf.skinOn[pt] == st;
+            rarityCard(c, cr, Defs.RARITY_COLOR[Skins.TIER[st]], true, on, 18 * u);
+            sprite(c, skinBmp(pt, st), cr.centerX(), cr.centerY() - 4 * u, cell * 0.34f, 255);
+            plain(c, Defs.P_NAME[pt], cr.centerX(), cr.bottom + 24 * u, 20 * u, 0xFFC9C2E6, Paint.Align.CENTER, cell);
+            scrollBtn(cr, () -> {
+                pf.equipSkin(pt, pf.skinOn[pt] == st ? -1 : st);
+                showToast(pf.skinOn[pt] == st ? L.t("ใส่สกิน ", "Equipped ") + Skins.name(key) : L.t("ถอดสกินแล้ว", "Skin removed"));
+                pushNow();
+            });
+        }
+        if (list.isEmpty()) plain(c, L.t("ยังไม่มีสกิน", "No skins yet"), r.centerX(), y + 80 * u, 30 * u, 0xFF8A84A0, Paint.Align.CENTER, 0);
+        endScroll(c);
+        rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 30 * u);
+        button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> { popup = P_NONE; invReveal = Integer.MIN_VALUE; });
+    }
+
+    String skinRates() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < Skins.TIER_ORDER.length; i++) {
+            if (i > 0) sb.append("  ");
+            sb.append(Defs.RARITY_NAME[Skins.TIER_ORDER[i]]).append(' ').append(Skins.TIER_RATE[i]).append('%');
+        }
+        return sb.toString();
+    }
+
+    /** the Raid capsule: a red/black pod with a glowing seam */
+    void capsuleIcon(Canvas c, float x, float y, float r) {
+        float bob = (float) Math.sin(anim * 2.4) * r * 0.06f;
+        glowCircle(c, x, y + bob, r * 1.5f, 0x66FF3B6B);
+        rf2.set(x - r * 0.7f, y - r + bob, x + r * 0.7f, y + r + bob);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0xFFFFFFFF);
+        p.setShader(new LinearGradient(rf2.left, 0, rf2.right, 0, new int[]{0xFF3A0A1A, 0xFFFF3B6B, 0xFF3A0A1A}, null, Shader.TileMode.CLAMP));
+        c.drawRoundRect(rf2, r * 0.7f, r * 0.7f, p);
+        p.setShader(null);
+        p.setColor(alpha(0xFFFFE27A, (int) (180 + 70 * Math.sin(anim * 5))));
+        c.drawRect(rf2.left, y - r * 0.05f + bob, rf2.right, y + r * 0.05f + bob, p);
+        oilIcon(c, x, y - r * 0.45f + bob, r * 0.22f);
+    }
+
+    /** row of attack-type tags, centred on cx */
+    void atkChips(Canvas c, float cx, float cy, int mask, float size) {
+        java.util.ArrayList<Integer> list = new java.util.ArrayList<>();
+        for (int i = 0; i < Defs.AT_COUNT; i++) if ((mask & (1 << i)) != 0) list.add(i);
+        tp.setTypeface(bodyFont);
+        tp.setTextSize(size * 0.8f);
+        float pad = size * 0.7f, gap = size * 0.4f, total = 0;
+        float[] ws = new float[list.size()];
+        for (int k = 0; k < ws.length; k++) {
+            int i = list.get(k);
+            ws[k] = tp.measureText(L.en ? Defs.AT_NAME_EN[i] : Defs.AT_NAME_TH[i]) + pad * 2 + size * 0.9f;
+            total += ws[k] + (k > 0 ? gap : 0);
+        }
+        float x = cx - total / 2;
+        for (int k = 0; k < ws.length; k++) {
+            int i = list.get(k);
+            int col = Defs.AT_COLOR[i];
+            float bob = (float) Math.sin(anim * 2.5f + k) * size * 0.06f;
+            RectF r = new RectF(x, cy - size * 0.75f + bob, x + ws[k], cy + size * 0.75f + bob);
+            p.setShader(null);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(alpha(darken(col, 0.55f), 0xEE));
+            c.drawRoundRect(r, size * 0.75f, size * 0.75f, p);
+            sp.setPathEffect(null);
+            sp.setStrokeWidth(size * 0.09f);
+            sp.setColor(col);
+            c.drawRoundRect(r, size * 0.75f, size * 0.75f, sp);
+            atkIcon(c, r.left + pad * 0.7f + size * 0.35f, r.centerY(), size * 0.36f, i, col);
+            plain(c, L.en ? Defs.AT_NAME_EN[i] : Defs.AT_NAME_TH[i], r.left + pad * 0.7f + size * 0.9f, r.centerY() + size * 0.28f, size * 0.8f, 0xFFFFFFFF, Paint.Align.LEFT, 0);
+            x += ws[k] + gap;
+        }
+    }
+
+    /** tiny symbol for each attack type */
+    void atkIcon(Canvas c, float x, float y, float r, int type, int col) {
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(col);
+        sp.setPathEffect(null);
+        sp.setStrokeCap(Paint.Cap.ROUND);
+        sp.setStrokeWidth(r * 0.35f);
+        sp.setColor(col);
+        switch (type) {
+            case 0: // single: target dot
+                c.drawCircle(x, y, r * 0.35f, p);
+                c.drawCircle(x, y, r * 0.85f, sp);
+                break;
+            case 1: // aoe: burst
+                c.drawPath(Art.starPath(x, y, r, r * 0.45f, 8), p);
+                break;
+            case 2: // pierce: arrow
+                c.drawLine(x - r, y, x + r, y, sp);
+                c.drawLine(x + r, y, x + r * 0.35f, y - r * 0.6f, sp);
+                c.drawLine(x + r, y, x + r * 0.35f, y + r * 0.6f, sp);
+                break;
+            case 3: { // burn: flame
+                Path f = new Path();
+                f.moveTo(x, y - r);
+                f.quadTo(x + r, y, x + r * 0.5f, y + r * 0.8f);
+                f.quadTo(x, y + r * 1.1f, x - r * 0.5f, y + r * 0.8f);
+                f.quadTo(x - r, y, x, y - r);
+                f.close();
+                c.drawPath(f, p);
+                break;
+            }
+            case 4: // slow: snowflake
+                for (int k = 0; k < 3; k++) {
+                    double a = k * Math.PI / 3;
+                    float dx = (float) Math.cos(a) * r, dy = (float) Math.sin(a) * r;
+                    c.drawLine(x - dx, y - dy, x + dx, y + dy, sp);
+                }
+                break;
+            case 5: { // stun: bolt
+                Path b = new Path();
+                b.moveTo(x + r * 0.3f, y - r);
+                b.lineTo(x - r * 0.6f, y + r * 0.1f);
+                b.lineTo(x, y + r * 0.1f);
+                b.lineTo(x - r * 0.3f, y + r);
+                b.lineTo(x + r * 0.6f, y - r * 0.15f);
+                b.lineTo(x, y - r * 0.15f);
+                b.close();
+                c.drawPath(b, p);
+                break;
+            }
+            case 6: // zone: rings
+                c.drawCircle(x, y, r * 0.4f, sp);
+                c.drawCircle(x, y, r * 0.95f, sp);
+                break;
+            case 7: // produce: star
+                c.drawPath(Art.starPath(x, y, r, r * 0.45f, 5), p);
+                break;
+            case 8: // buff: up arrow
+                c.drawLine(x, y + r, x, y - r, sp);
+                c.drawLine(x, y - r, x - r * 0.6f, y - r * 0.35f, sp);
+                c.drawLine(x, y - r, x + r * 0.6f, y - r * 0.35f, sp);
+                break;
+            case 9: // wave
+                rf2.set(x - r, y - r * 0.6f, x, y + r * 0.6f);
+                c.drawArc(rf2, 180, 180, false, sp);
+                rf2.set(x, y - r * 0.6f, x + r, y + r * 0.6f);
+                c.drawArc(rf2, 0, 180, false, sp);
+                break;
+            case 11: // wall: bricks
+                rf2.set(x - r * 0.85f, y - r * 0.6f, x + r * 0.85f, y + r * 0.6f);
+                c.drawRoundRect(rf2, r * 0.15f, r * 0.15f, p);
+                sp.setStrokeWidth(r * 0.14f);
+                sp.setColor(0xFF140A2A);
+                c.drawLine(x - r * 0.85f, y, x + r * 0.85f, y, sp);
+                c.drawLine(x, y - r * 0.6f, x, y, sp);
+                c.drawLine(x - r * 0.4f, y, x - r * 0.4f, y + r * 0.6f, sp);
+                c.drawLine(x + r * 0.4f, y, x + r * 0.4f, y + r * 0.6f, sp);
+                break;
+            case 12: { // haunt: ghost
+                Path gh = new Path();
+                gh.moveTo(x - r * 0.7f, y + r * 0.8f);
+                gh.lineTo(x - r * 0.7f, y - r * 0.1f);
+                gh.quadTo(x - r * 0.7f, y - r * 0.85f, x, y - r * 0.85f);
+                gh.quadTo(x + r * 0.7f, y - r * 0.85f, x + r * 0.7f, y - r * 0.1f);
+                gh.lineTo(x + r * 0.7f, y + r * 0.8f);
+                gh.lineTo(x + r * 0.35f, y + r * 0.5f);
+                gh.lineTo(x, y + r * 0.8f);
+                gh.lineTo(x - r * 0.35f, y + r * 0.5f);
+                gh.close();
+                c.drawPath(gh, p);
+                p.setColor(0xFF140A2A);
+                c.drawCircle(x - r * 0.25f, y - r * 0.2f, r * 0.13f, p);
+                c.drawCircle(x + r * 0.25f, y - r * 0.2f, r * 0.13f, p);
+                break;
+            }
+            case 13: // nuke: skull-ish blast
+                c.drawCircle(x, y, r * 0.5f, p);
+                for (int k = 0; k < 8; k++) {
+                    double a = k * Math.PI / 4;
+                    c.drawLine(x + (float) Math.cos(a) * r * 0.6f, y + (float) Math.sin(a) * r * 0.6f, x + (float) Math.cos(a) * r * 0.95f, y + (float) Math.sin(a) * r * 0.95f, sp);
+                }
+                break;
+            case 14: // skill: crown
+                Art.crown(c, x, y + r * 0.15f, r * 1.6f);
+                break;
+            case 15: // orbit: circle with a dot on it
+                sp.setStrokeWidth(r * 0.2f);
+                c.drawCircle(x, y, r * 0.75f, sp);
+                c.drawCircle(x + (float) Math.cos(anim * 3) * r * 0.75f, y + (float) Math.sin(anim * 3) * r * 0.75f, r * 0.28f, p);
+                c.drawCircle(x, y, r * 0.2f, p);
+                break;
+            default: // rapid: three dots
+                for (int k = -1; k <= 1; k++) c.drawCircle(x + k * r * 0.7f, y, r * 0.28f, p);
+        }
     }
 
     Planet previewPlanet(int t) {
@@ -1489,100 +2400,321 @@ public final class GameView extends View {
             c.drawCircle(x, y, half * 0.8f + enchFlash * 60 * u, sp);
         }
         float bob = (float) Math.sin(anim * 2) * 8 * u;
-        sprite(c, pBmp[t], x, y + bob, half, own ? 255 : 60);
+        sprite(c, own ? pbmp(t) : pBmp[t], x, y + bob, half, own ? 255 : 60);
         if (hasMat) materialBadge(c, x - half * 0.62f, y - half * 0.55f + bob, half * 0.2f, pf.material[t]);
         if (own && pf.enchant[t] >= 0) badge(c, x + half * 0.62f, y - half * 0.55f + bob, half * 0.2f, pf.enchant[t], pf.tier[t]);
         if (!own) text(c, "?", x, y + half * 0.25f, half * 0.8f, 0xFF8A84A0);
     }
 
     // ================================================================== play menu
+    boolean galaxyOpen(int gal) { return pf.unlocked > gal * Defs.PER_GALAXY; }
+
     void drawPlayMenu(Canvas c) {
+        if (playRaid) { header(c, L.t("เล่น", "Play"), 0, pf.stars, 3, pf.oil); drawRaidMenu(c); return; }
         header(c, L.t("เล่น", "Play"));
-        // stage list anchored to bottom
-        int n = Defs.ST_NAME.length;
-        float ch = 150 * u, gap = 18 * u;
-        float listTop = navTop - 30 * u - n * (ch + gap);
-        text(c, "Stage:", 50 * u, listTop - 24 * u, 42 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
-        for (int i = 0; i < n; i++) {
-            final int s = i;
-            boolean open = i < pf.unlocked;
-            float y = listTop + i * (ch + gap);
-            RectF r = new RectF(50 * u, y, W - 50 * u, y + ch);
-            panel(c, r, open ? 0xFF2A1A5E : 0xFF221B38, 30 * u);
-            p.setStyle(Paint.Style.FILL);
-            p.setColor(open ? Defs.ST_COLOR[i] : 0xFF4A4460);
-            rf.set(r.left, r.top, r.left + 20 * u, r.bottom);
-            c.drawRoundRect(rf, 10 * u, 10 * u, p);
-            text(c, (i + 1) + ". " + (L.en ? Defs.ST_NAME_EN[i] : Defs.ST_NAME[i]), r.left + 50 * u, r.top + 65 * u, 46 * u,
-                    open ? 0xFFFFFFFF : 0xFF8A84A0, Paint.Align.LEFT, r.width() - 300 * u);
-            String sub;
-            if (!open) sub = L.t("ผ่านด่านก่อนหน้าเพื่อปลดล็อก", "Clear the previous stage to unlock");
-            else {
-                sub = Defs.ST_WAVES[i] + L.t(" เวฟ", " waves");
-                if (pf.clear[i]) sub += L.t("  •  ผ่านแล้ว", "  •  Cleared");
-                else if (pf.best[i] > 0) sub += L.t("  •  ดีที่สุด ", "  •  Best ") + pf.best[i];
-            }
-            plain(c, sub, r.left + 50 * u, r.top + 118 * u, 30 * u, 0xFFC9C2E6, Paint.Align.LEFT, r.width() - 300 * u);
-            if (open) {
-                rf.set(r.right - 220 * u, r.top + 28 * u, r.right - 30 * u, r.bottom - 28 * u);
-                button(c, rf, L.t("เริ่ม", "Start"), 0xFFFF8A2B, true, () -> startStage(s));
-                btns.add(new Btn(r, () -> startStage(s)));
-                btns.add(btns.remove(btns.size() - 2)); // keep the start button on top
-            } else text(c, L.t("ล็อก", "Locked"), r.right - 125 * u, r.centerY() + 14 * u, 38 * u, 0xFF8A84A0);
+        if (playSel < 0 || playSel >= pf.unlocked) {
+            playSel = Math.min(pf.unlocked, Defs.ST_COUNT) - 1;
+            playGal = Defs.galaxyOf(playSel);
         }
-        // mode tabs
-        float tabY = listTop - 190 * u, tw = (W - 120 * u) / 3f;
-        String[] tabs = {"Story", L.t("Challenge (เร็ว ๆ นี้)", "Challenge (soon)"), L.t("Raid (เร็ว ๆ นี้)", "Raid (soon)")};
-        for (int i = 0; i < 3; i++) {
-            final int ti = i;
-            rf.set(50 * u + i * (tw + 10 * u), tabY, 50 * u + i * (tw + 10 * u) + tw, tabY + 90 * u);
-            button(c, rf, tabs[i], i == 0 ? 0xFFFF8A2B : 0xFF3A3360, i == 0, () -> {
-                if (ti != 0) showToast(L.t("โหมดนี้เร็ว ๆ นี้", "This mode is coming soon"));
+        if (playGal < 0) playGal = Defs.galaxyOf(playSel);
+        final int gal = playGal;
+        int gcol = Defs.GAL_COLOR[gal];
+        // ---- bottom up: start button, detail card, stage grid, galaxy tabs, art
+        float sbH = 125 * u, sbY = navTop - 40 * u - sbH;
+        float dH = 300 * u, dY = sbY - 24 * u - dH;
+        float cellW = (W - 100 * u - 4 * 16 * u) / 5f, cellH = 128 * u, gapG = 16 * u;
+        float gridY = dY - 30 * u - 3 * cellH - 2 * gapG;
+        float tabH = 92 * u, tabY = gridY - 30 * u - tabH;
+        float aTop = 185 * u, aBot = tabY - 26 * u;
+        // ---- art: the galaxy's black hole spitting out enemies
+        RectF art = new RectF(40 * u, aTop, W - 40 * u, aBot);
+        blackHoleScene(c, art, gal);
+        // ---- galaxy tabs (+ Raid)
+        float tw = (W - 130 * u) / 4f;
+        modeTabRaid(c, 50 * u + 3 * (tw + 10 * u), tabY, tw, tabH);
+        for (int i = 0; i < Defs.GALAXIES; i++) {
+            final int gi = i;
+            boolean open = galaxyOpen(i);
+            rf.set(50 * u + i * (tw + 10 * u), tabY, 50 * u + i * (tw + 10 * u) + tw, tabY + tabH);
+            String nm = (L.en ? Defs.GAL_NAME[i] : Defs.GAL_NAME_TH[i]);
+            button(c, rf, nm, i == gal ? Defs.GAL_COLOR[i] : 0xFF3A3360, open, () -> {
+                playRaid = false;
+                playGal = gi;
+                int first = gi * Defs.PER_GALAXY, last = Math.min(pf.unlocked - 1, first + Defs.PER_GALAXY - 1);
+                playSel = Math.max(first, last);
+            });
+            if (!open) lockIcon(c, rf.left + 30 * u, rf.centerY(), 12 * u);
+            if (!open) btns.add(new Btn(new RectF(rf), () -> showToast(L.t("ผ่านกาแล็กซีก่อนหน้าให้ครบ 15 ด่านก่อน", "Clear all 15 stages of the previous galaxy first"))));
+        }
+        // ---- stage grid (3 x 5)
+        for (int k = 0; k < Defs.PER_GALAXY; k++) {
+            final int st = gal * Defs.PER_GALAXY + k;
+            boolean open = st < pf.unlocked;
+            float x = 50 * u + (k % 5) * (cellW + 16 * u), y = gridY + (k / 5) * (cellH + gapG);
+            // staggered pop-in when the screen opens
+            float appear = ease(Math.min(1f, Math.max(0f, (transT - k * 0.025f) / 0.3f)));
+            float sh = (1f - appear) * 30 * u;
+            RectF r = new RectF(x, y + sh, x + cellW, y + cellH + sh);
+            int dc = Defs.DIFF_COLOR[Defs.ST_DIFF[st]];
+            boolean sel = st == playSel;
+            rarityCard(c, r, open ? dc : 0xFF4A4460, open, sel, 22 * u);
+            boolean next = open && !pf.clear[st] && st == pf.unlocked - 1;
+            if (next) glowCircle(c, r.centerX(), r.centerY(), r.width() * (0.7f + 0.08f * (float) Math.sin(anim * 4)), alpha(dc, 0x44));
+            title(c, (gal + 1) + "-" + (k + 1), r.centerX(), r.centerY() + 14 * u, 40 * u, open ? 0xFFFFFFFF : 0xFF6A6488);
+            // difficulty pips
+            int pips = Defs.ST_DIFF[st] + 1;
+            for (int q = 0; q < pips; q++) {
+                p.setShader(null);
+                p.setColor(open ? dc : 0xFF4A4460);
+                c.drawCircle(r.centerX() + (q - (pips - 1) / 2f) * 14 * u, r.bottom - 20 * u, 5 * u, p);
+            }
+            if (!open) lockIcon(c, r.right - 24 * u, r.top + 26 * u, 14 * u);
+            else if (pf.clear[st]) star(c, r.right - 24 * u, r.top + 24 * u, 15 * u);
+            if (st == Defs.ST_COUNT - 1) sprite(c, pBmp[Defs.HERO], r.left + 24 * u, r.top + 24 * u, 20 * u, open ? 255 : 120);
+            if (open) btns.add(new Btn(r, () -> playSel = st));
+            else btns.add(new Btn(r, () -> showToast(L.t("ผ่านด่านก่อนหน้าเพื่อปลดล็อก", "Clear the previous stage to unlock"))));
+        }
+        // ---- selected stage details
+        final int st = playSel;
+        RectF d = new RectF(40 * u, dY, W - 40 * u, dY + dH);
+        panel(c, d, 0xEE1C1240, 34 * u);
+        int diff = Defs.ST_DIFF[st], dc = Defs.DIFF_COLOR[diff];
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(Defs.GAL_COLOR[Defs.galaxyOf(st)]);
+        rf.set(d.left, d.top + 30 * u, d.left + 14 * u, d.bottom - 30 * u);
+        c.drawRoundRect(rf, 7 * u, 7 * u, p);
+        String sn = (Defs.galaxyOf(st) + 1) + "-" + (st % Defs.PER_GALAXY + 1) + "  " + (L.en ? Defs.ST_NAME_EN[st] : Defs.ST_NAME[st]);
+        title(c, sn, d.left + 50 * u, d.top + 70 * u, 46 * u, 0xFFFFFFFF, Paint.Align.LEFT, d.width() - 360 * u);
+        pill(c, d.right - 150 * u, d.top + 55 * u, L.en ? Defs.DIFF_EN[diff] : Defs.DIFF_TH[diff], 32 * u, 0xFF140A2A, dc);
+        String l1 = Defs.ST_WAVES[st] + L.t(" เวฟ", " waves") + "   •   " + L.t("พลังศัตรู x", "Enemy power x") + String.format(Locale.US, "%.2f", Defs.ST_HP[st])
+                + "   •   " + L.t("ความเร็ว x", "Speed x") + String.format(Locale.US, "%.2f", Defs.ST_SPEED[st]);
+        plain(c, l1, d.left + 50 * u, d.top + 128 * u, 28 * u, 0xFFC9C2E6, Paint.Align.LEFT, d.width() - 80 * u);
+        String l2 = L.t("รางวัลชนะ: ", "Win reward: ") + (80 + 30 * st) + " Star";
+        if (!pf.clear[st]) l2 += L.t("  +  ครั้งแรก ", "  +  first clear ") + (2 + Defs.galaxyOf(st)) + " Millite, " + (1 + Defs.galaxyOf(st)) + " Crystal";
+        plain(c, l2, d.left + 50 * u, d.top + 178 * u, 28 * u, 0xFFFFE27A, Paint.Align.LEFT, d.width() - 80 * u);
+        String l3;
+        if (st == Defs.ST_COUNT - 1) l3 = pf.owned[Defs.HERO] ? L.t("ได้รับดาว Hero แล้ว", "Hero planet already earned")
+                : L.t("ด่านสุดท้าย! ชนะเพื่อรับดาว Hero (Exclusive)", "Final stage! Win to earn the Hero planet (Exclusive)");
+        else if (pf.clear[st]) l3 = L.t("ผ่านแล้ว ✓", "Cleared ✓");
+        else l3 = pf.best[st] > 0 ? L.t("ไปได้ไกลสุด: เวฟ ", "Best: wave ") + pf.best[st] : L.t("ยังไม่เคยผ่าน", "Not cleared yet");
+        plain(c, l3, d.left + 50 * u, d.top + 230 * u, 30 * u, st == Defs.ST_COUNT - 1 ? 0xFFFF8A5B : 0xFF9CFF7A, Paint.Align.LEFT, d.width() - 80 * u);
+        if (st == Defs.ST_COUNT - 1) sprite(c, pBmp[Defs.HERO], d.right - 90 * u, d.top + 200 * u, 60 * u + 4 * u * (float) Math.sin(anim * 3), 255);
+        // ---- start
+        rf.set(70 * u, sbY, W - 70 * u, sbY + sbH);
+        float pulse = 1f + 0.025f * (float) Math.sin(anim * 4);
+        rf.inset(-(pulse - 1) * rf.width() / 2, -(pulse - 1) * rf.height() / 2);
+        button(c, rf, L.t("เริ่มด่าน ", "Start ") + (Defs.galaxyOf(st) + 1) + "-" + (st % Defs.PER_GALAXY + 1), 0xFFFF8A2B, true, () -> startStage(playSel));
+    }
+
+    boolean playRaid;
+
+    boolean raidOpen() { return pf.clear[4]; }
+
+    void modeTabRaid(Canvas c, float x, float y, float w, float h) {
+        rf.set(x, y, x + w, y + h);
+        boolean open = raidOpen();
+        button(c, rf, "Raid", playRaid ? 0xFFFF3B6B : 0xFF5A2440, open, () -> playRaid = true);
+        if (!open) {
+            lockIcon(c, rf.left + 30 * u, rf.centerY(), 12 * u);
+            btns.add(new Btn(new RectF(rf), () -> showToast(L.t("ผ่านด่าน 1-5 เพื่อปลดล็อก Raid", "Clear stage 1-5 to unlock Raid"))));
+        }
+    }
+
+    void drawRaidMenu(Canvas c) {
+        float sbH = 125 * u, sbY = navTop - 40 * u - sbH;
+        float dH = 560 * u, dY = sbY - 24 * u - dH;
+        float tabH = 92 * u, tabY = dY - 30 * u - tabH;
+        float tw = (W - 130 * u) / 4f;
+        for (int i = 0; i < Defs.GALAXIES; i++) {
+            final int gi = i;
+            rf.set(50 * u + i * (tw + 10 * u), tabY, 50 * u + i * (tw + 10 * u) + tw, tabY + tabH);
+            button(c, rf, L.en ? Defs.GAL_NAME[i] : Defs.GAL_NAME_TH[i], 0xFF3A3360, galaxyOpen(i), () -> { playRaid = false; playGal = gi; });
+        }
+        modeTabRaid(c, 50 * u + 3 * (tw + 10 * u), tabY, tw, tabH);
+        RectF art = new RectF(40 * u, 185 * u, W - 40 * u, tabY - 26 * u);
+        raidScene(c, art);
+        RectF d = new RectF(40 * u, dY, W - 40 * u, dY + dH);
+        panel(c, d, 0xEE2A0A1E, 34 * u);
+        title(c, L.en ? Defs.ST_NAME_EN[Defs.RAID] : Defs.ST_NAME[Defs.RAID], d.left + 50 * u, d.top + 75 * u, 50 * u, 0xFFFFFFFF, Paint.Align.LEFT, d.width() - 360 * u);
+        pill(c, d.right - 150 * u, d.top + 58 * u, "RAID", 34 * u, 0xFF140A2A, 0xFFFF3B6B);
+        plain(c, Defs.RAID_WAVES + L.t(" เวฟ • ศัตรูพิเศษ Voidling (แตกตัว), Wraith (ทะลุสโลว์+ฟื้นเลือด) และบอส Titan",
+                " waves • special enemies: Voidling (splits), Wraith (ignores slow, regenerates) and the Titan boss"),
+                d.left + 50 * u, d.top + 135 * u, 28 * u, 0xFFFFD8E0, Paint.Align.LEFT, d.width() - 100 * u);
+        plain(c, L.t("รางวัล: ทุกเวฟ +1 Oil (เพิ่มทุก 10 เวฟ) • บอส +8 • มินิบอส +3 • ผ่านครบ +100 Oil, 3000 Star",
+                "Rewards: every wave +1 Oil (more every 10 waves) • boss +8 • mini boss +3 • full clear +100 Oil, 3000 Star"),
+                d.left + 50 * u, d.top + 225 * u, 28 * u, 0xFFFFC890, Paint.Align.LEFT, d.width() - 100 * u);
+        text(c, L.t("ไปได้ไกลสุด: เวฟ ", "Best: wave ") + pf.raidBest + " / " + Defs.RAID_WAVES, d.left + 50 * u, d.top + 330 * u, 36 * u, 0xFF9CFF7A, Paint.Align.LEFT, 0);
+        // progress bar
+        rf2.set(d.left + 50 * u, d.top + 360 * u, d.right - 50 * u, d.top + 384 * u);
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0x66000000);
+        c.drawRoundRect(rf2, 12 * u, 12 * u, p);
+        p.setColor(0xFFFF3B6B);
+        rf2.right = rf2.left + (rf2.width()) * Math.min(1f, pf.raidBest / (float) Defs.RAID_WAVES);
+        c.drawRoundRect(rf2, 12 * u, 12 * u, p);
+        for (int k = 0; k < 3; k++) sprite(c, eBmp[Defs.E_VOIDLING + k], d.left + 90 * u + k * 130 * u, d.top + 470 * u, (k == 2 ? 52 : 38) * u, 255);
+        rf.set(d.right - 420 * u, d.top + 420 * u, d.right - 40 * u, d.top + 520 * u);
+        button(c, rf, L.t("ร้านค้า Raid", "Raid Shop"), 0xFFE0A020, true, () -> popup = P_RSHOP);
+        rf.set(70 * u, sbY, W - 70 * u, sbY + sbH);
+        float pulse = 1f + 0.025f * (float) Math.sin(anim * 4);
+        rf.inset(-(pulse - 1) * rf.width() / 2, -(pulse - 1) * rf.height() / 2);
+        button(c, rf, L.t("เริ่ม Raid", "Start Raid"), 0xFFFF3B6B, raidOpen(), () -> startStage(Defs.RAID));
+    }
+
+    /** raid art: a red void gate with the Titan looming and voidlings swarming */
+    void raidScene(Canvas c, RectF art) {
+        panel(c, art, 0xFF12040C, 40 * u);
+        c.save();
+        c.clipRect(art.left + 6 * u, art.top + 6 * u, art.right - 6 * u, art.bottom - 6 * u);
+        float cx = art.centerX(), cy = art.centerY();
+        float R = Math.min(art.width(), art.height()) * 0.5f;
+        glowCircle(c, cx, cy, R * 1.3f, 0x55FF3B6B);
+        for (int ring = 0; ring < 5; ring++) {
+            sp.setPathEffect(null);
+            sp.setStrokeWidth((8 - ring) * u);
+            float rr = R * (0.35f + ring * 0.14f) + (float) Math.sin(anim * 2 + ring) * 6 * u;
+            sp.setColor(alpha(ring % 2 == 0 ? 0xFFFF3B6B : 0xFFFFB060, 200 - ring * 35));
+            rf2.set(cx - rr, cy - rr * 0.6f, cx + rr, cy + rr * 0.6f);
+            c.drawOval(rf2, sp);
+        }
+        blackHole(c, cx, cy, R * 0.3f);
+        sprite(c, eBmp[Defs.E_TITAN], cx, cy - R * 0.05f + (float) Math.sin(anim * 1.5) * 8 * u, R * 0.36f, 255);
+        for (int i = 0; i < 10; i++) {
+            double a = anim * 0.7 + i * Math.PI * 2 / 10;
+            float x = cx + (float) Math.cos(a) * R * 0.85f, y = cy + (float) Math.sin(a) * R * 0.5f;
+            sprite(c, eBmp[i % 3 == 0 ? Defs.E_WRAITH : Defs.E_VOIDLING], x, y, (24 + 8 * (i % 3)) * u, 230);
+        }
+        c.restore();
+        pill(c, art.centerX(), art.top + 55 * u, "RAID  •  VOID GATE", 34 * u, 0xFFFFFFFF, 0xDD5A0A20);
+    }
+
+    void drawRaidShop(Canvas c) {
+        RectF r = new RectF(50 * u, H / 2 - 620 * u, W - 50 * u, H / 2 + 620 * u);
+        popupFrame(c, r, L.t("ร้านค้า Raid", "Raid Shop"));
+        chip(c, r.centerX(), r.top + 175 * u, 3, pf.oil);
+        float y = r.top + 260 * u;
+        // capsules
+        RectF box = new RectF(r.left + 30 * u, y, r.right - 30 * u, y + 380 * u);
+        panel(c, box, 0xEE3A0A22, 28 * u);
+        capsuleIcon(c, box.left + 130 * u, box.top + 150 * u, 80 * u);
+        text(c, "Raid Capsule", box.left + 260 * u, box.top + 80 * u, 44 * u, 0xFFFFFFFF, Paint.Align.LEFT, 0);
+        plain(c, L.t("สุ่มสกินดวงดาว Common → Exclusive • เปิดในกระเป๋า (หน้าดวงดาว)", "Random planet skin, Common → Exclusive • open it in your Inventory (Planet page)"),
+                box.left + 260 * u, box.top + 130 * u, 26 * u, 0xFFFFD8E0, Paint.Align.LEFT, box.width() - 290 * u);
+        plain(c, L.t("มีอยู่ ", "You have ") + pf.raidCapsules, box.left + 260 * u, box.top + 230 * u, 30 * u, 0xFF9CFF7A, Paint.Align.LEFT, 0);
+        float bw = (box.width() - 90 * u) / 2;
+        for (int k = 0; k < 2; k++) {
+            final int n = k == 0 ? 1 : 5;
+            rf.set(box.left + 30 * u + k * (bw + 30 * u), box.bottom - 115 * u, box.left + 30 * u + k * (bw + 30 * u) + bw, box.bottom - 25 * u);
+            button(c, rf, "x" + n + "  •  " + Defs.SHOP_CAPSULE * n + " Oil", 0xFFFF3B6B, pf.oil >= Defs.SHOP_CAPSULE * n, () -> {
+                if (pf.buyCapsules(n)) { Sfx.play(Sfx.COIN); showToast(L.t("ซื้อแล้ว! เปิดได้ในกระเป๋า", "Bought! Open it in your Inventory")); pushNow(); }
             });
         }
-        // illustration
-        float aTop = 190 * u, aBot = tabY - 30 * u;
-        rf.set(50 * u, aTop, W - 50 * u, aBot);
-        RectF art = new RectF(rf);
-        panel(c, art, 0xFF0E0828, 40 * u);
+        y = box.bottom + 30 * u;
+        // Hell Moon
+        box = new RectF(r.left + 30 * u, y, r.right - 30 * u, y + 330 * u);
+        panel(c, box, 0xEE40140A, 28 * u);
+        glowCircle(c, box.left + 130 * u, box.top + 140 * u, 110 * u, 0x99FF4B2B);
+        sprite(c, hellMoonBmp(), box.left + 130 * u, box.top + 140 * u, 65 * u, 255);
+        text(c, "Hell Moon", box.left + 260 * u, box.top + 80 * u, 44 * u, 0xFFFF8A5B, Paint.Align.LEFT, 0);
+        plain(c, L.en ? Defs.MOON_DESC_EN[Defs.MOON_HELL] : Defs.MOON_DESC[Defs.MOON_HELL], box.left + 260 * u, box.top + 130 * u, 26 * u, 0xFFFFE0D0, Paint.Align.LEFT, box.width() - 290 * u);
+        plain(c, L.t("ใส่ให้ดาวผ่านปุ่ม อุปกรณ์  •  มีอยู่ ", "Equip via Equipment  •  owned ") + pf.moons[Defs.MOON_HELL], box.left + 260 * u, box.top + 200 * u, 26 * u, 0xFF9CFF7A, Paint.Align.LEFT, 0);
+        rf.set(box.left + 260 * u, box.bottom - 105 * u, box.right - 30 * u, box.bottom - 25 * u);
+        button(c, rf, L.t("ซื้อ  •  ", "Buy  •  ") + Defs.SHOP_HELLMOON + " Oil", 0xFFE0602B, pf.oil >= Defs.SHOP_HELLMOON, () -> {
+            if (pf.buyMoon(Defs.MOON_HELL)) { Sfx.play(Sfx.COIN); showToast("Hell Moon +1"); pushNow(); }
+        });
+        rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 30 * u);
+        button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
+    }
+
+    void lockIcon(Canvas c, float x, float y, float r) {
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0xFFB8B2CC);
+        rf2.set(x - r, y - r * 0.2f, x + r, y + r);
+        c.drawRoundRect(rf2, r * 0.25f, r * 0.25f, p);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(r * 0.3f);
+        sp.setColor(0xFFB8B2CC);
+        rf2.set(x - r * 0.6f, y - r * 1.0f, x + r * 0.6f, y + r * 0.2f);
+        c.drawArc(rf2, 180, 180, false, sp);
+    }
+
+    /** play-menu art: the galaxy's black hole with enemies spiralling out of it */
+    void blackHoleScene(Canvas c, RectF art, int gal) {
+        panel(c, art, 0xFF0A0620, 40 * u);
         c.save();
-        Path clip = new Path();
-        clip.addCircle(art.centerX(), art.centerY(), 1, Path.Direction.CW);
-        float gx = art.centerX(), gy = art.centerY(), gr = Math.min(art.width(), art.height()) * 0.5f;
-        glowCircle(c, gx, gy, gr * 1.1f, 0x88A43CFF);
-        glowCircle(c, gx, gy, gr * 0.55f, 0x99FFB8E0);
-        for (int arm = 0; arm < 3; arm++) {
-            for (int k = 0; k < 140; k++) {
-                float f = k / 140f;
-                double a = anim * 0.25 + arm * 2.094 + f * 4.4 + Math.sin(k * 12.9898) * 0.08;
-                float rr = gr * (0.06f + f * 0.94f) * (1f + (float) Math.sin(k * 78.233) * 0.06f);
-                float x = gx + (float) Math.cos(a) * rr, y = gy + (float) Math.sin(a) * rr * 0.5f;
-                int col = k % 4 == 0 ? 0xFFFFE6A8 : (arm == 1 ? 0xFF8FD6FF : 0xFFE6B8FF);
-                if (k % 9 == 0) glowCircle(c, x, y, (14 - f * 8) * u, alpha(col, 0x66));
-                p.setStyle(Paint.Style.FILL);
-                p.setShader(null);
-                p.setColor(alpha(col, (int) (240 * (1 - f * 0.6f))));
-                c.drawCircle(x, y, (4.2f - f * 2.4f) * u, p);
+        Path cl = new Path();
+        cl.addRoundRect(new RectF(art.left + 6 * u, art.top + 6 * u, art.right - 6 * u, art.bottom - 6 * u), 34 * u, 34 * u, Path.Direction.CW);
+        c.clipPath(cl);
+        int gc = Defs.GAL_COLOR[gal];
+        float cx = art.centerX(), cy = art.centerY() + art.height() * 0.04f;
+        float R = Math.min(art.width(), art.height()) * 0.5f;
+        // nebula backdrop
+        glowCircle(c, art.left + art.width() * 0.2f, art.top + art.height() * 0.3f, R * 0.9f, alpha(gc, 0x44));
+        glowCircle(c, art.right - art.width() * 0.15f, art.bottom - art.height() * 0.2f, R * 0.8f, 0x44FF4FD8);
+        glowCircle(c, cx, cy, R * 1.2f, alpha(gc, 0x33));
+        // background stars drifting toward the hole
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        for (int i = 0; i < 70; i++) {
+            float f = (float) ((anim * 0.05 + i * 0.6180339) % 1.0);
+            double a = i * 2.39996 + f * 1.4;
+            float rr = R * 1.6f * (1f - f);
+            float x = cx + (float) Math.cos(a) * rr, y = cy + (float) Math.sin(a) * rr * 0.62f;
+            p.setColor(alpha(i % 3 == 0 ? 0xFFFFE6A8 : 0xFFE6E0FF, (int) (60 + 180 * f)));
+            c.drawCircle(x, y, (1.2f + 2.2f * (1 - f)) * u, p);
+        }
+        // spiral arms of the accretion swirl
+        for (int arm = 0; arm < 4; arm++) {
+            for (int k = 0; k < 60; k++) {
+                float f = k / 60f;
+                double a = -anim * 0.9 + arm * Math.PI / 2 + f * 5.2;
+                float rr = R * (0.2f + f * 0.75f);
+                float x = cx + (float) Math.cos(a) * rr, y = cy + (float) Math.sin(a) * rr * 0.42f;
+                int col = arm % 2 == 0 ? lighten(gc, 0.3f) : 0xFFFFB060;
+                p.setColor(alpha(col, (int) (200 * (1 - f))));
+                c.drawCircle(x, y, (6f - f * 4.5f) * u, p);
             }
         }
-        glowCircle(c, gx, gy, 60 * u, 0xEEFFF4D0);
-        p.setColor(0xFFFFFFFF);
-        c.drawCircle(gx, gy, 12 * u, p);
+        blackHole(c, cx, cy, R * 0.32f + R * 0.015f * (float) Math.sin(anim * 2));
+        // enemies flying out of the hole toward the viewer
+        int[] kinds = {Defs.E_METEOR, Defs.E_SHOOT, Defs.E_MEGA, Defs.E_EXOMOON, Defs.E_ALTMOON, Defs.E_EXOPLANET, Defs.E_ALTPLANET, Defs.E_HELL};
+        int count = 12 + gal * 3;
+        for (int i = 0; i < count; i++) {
+            float f = (float) ((anim * 0.16 + i / (float) count) % 1.0);
+            double a = i * 2.39996 + f * 1.1 + gal;
+            float rr = R * (0.18f + f * 1.25f);
+            float x = cx + (float) Math.cos(a) * rr * 1.2f, y = cy + (float) Math.sin(a) * rr * 0.7f;
+            float sz = (16 + 72 * f * f) * u;
+            int al = (int) (255 * Math.min(1f, f * 4f) * Math.min(1f, (1f - f) * 6f));
+            int kind = kinds[(i + gal * 2) % Math.min(kinds.length, 4 + gal * 2)];
+            if (kind == Defs.E_SHOOT) {
+                // streak behind shooting stars
+                p.setColor(alpha(0xFFFFE6A8, al / 3));
+                c.drawCircle(x - (float) Math.cos(a) * sz, y - (float) Math.sin(a) * sz * 0.6f, sz * 0.5f, p);
+            }
+            sprite(c, eBmp[kind], x, y, sz, al);
+        }
         c.restore();
-        sprite(c, pBmp[Defs.EARTH], art.left + art.width() * 0.16f, art.bottom - art.height() * 0.24f, art.height() * 0.13f, 255);
-        sprite(c, pBmp[Defs.SATURN], art.right - art.width() * 0.15f, art.top + art.height() * 0.25f, art.height() * 0.16f, 255);
-        blackHole(c, art.right - art.width() * 0.2f, art.bottom - art.height() * 0.22f, art.height() * 0.07f);
-        float mx = art.left + ((anim * 0.12f) % 1f) * art.width();
-        sprite(c, eBmp[Defs.E_METEOR], mx, art.top + art.height() * 0.2f + (mx - art.left) * 0.15f, art.height() * 0.06f, 255);
+        // galaxy title ribbon
+        String gn = (L.en ? Defs.GAL_NAME[gal] : Defs.GAL_NAME_TH[gal]);
+        pill(c, art.centerX(), art.top + 55 * u, L.t("กาแล็กซี ", "Galaxy ") + (gal + 1) + "  •  " + gn, 34 * u, 0xFFFFFFFF, alpha(darken(gc, 0.45f), 0xDD));
+        int done = 0;
+        for (int k = 0; k < Defs.PER_GALAXY; k++) if (pf.clear[gal * Defs.PER_GALAXY + k]) done++;
+        pill(c, art.centerX(), art.bottom - 45 * u, L.t("ผ่านแล้ว ", "Cleared ") + done + "/" + Defs.PER_GALAXY, 28 * u, 0xFFFFE27A, 0xCC140A2A);
     }
 
     // ================================================================== banner
     void drawBanner(Canvas c) {
-        header(c, L.t("แบนเนอร์", "Banner"));
+        final boolean ex = bannerTab == 1;
+        if (ex) header(c, L.t("แบนเนอร์", "Banner"), 0, pf.stars, 3, pf.oil);
+        else header(c, L.t("แบนเนอร์", "Banner"));
         rf.set(50 * u, 190 * u, 360 * u, 275 * u);
-        button(c, rf, "Regular", 0xFFFF8A2B, true, null);
+        button(c, rf, "Regular", ex ? 0xFF3A3360 : 0xFFFF8A2B, true, () -> bannerTab = 0);
         rf.set(380 * u, 190 * u, 720 * u, 275 * u);
-        button(c, rf, L.t("Limited (เร็ว ๆ นี้)", "Limited (soon)"), 0xFF3A3360, false, () -> showToast(L.t("แบนเนอร์พิเศษเร็ว ๆ นี้", "Limited banners coming soon")));
+        button(c, rf, "Exclusive", ex ? Defs.RARITY_COLOR[Defs.EXCLUSIVE] : 0xFF3A3360, true, () -> bannerTab = 1);
         float bTop = 300 * u, bBot = navTop - 420 * u;
         RectF card = new RectF(40 * u, bTop, W - 40 * u, bBot);
         // card body: deep space + rotating god rays + galaxy
@@ -1593,7 +2725,7 @@ public final class GameView extends View {
         p.setColor(0x88000000);
         c.drawRoundRect(rf2, 44 * u, 44 * u, p);
         p.setColor(0xFFFFFFFF);
-        p.setShader(new LinearGradient(card.left, card.top, card.right, card.bottom, new int[]{0xFF2A0F5E, 0xFF5B1F8A, 0xFFB8461E}, new float[]{0f, 0.55f, 1f}, Shader.TileMode.CLAMP));
+        p.setShader(new LinearGradient(card.left, card.top, card.right, card.bottom, ex ? new int[]{0xFF2A0610, 0xFF6A0F2A, 0xFFE0A020} : new int[]{0xFF2A0F5E, 0xFF5B1F8A, 0xFFB8461E}, new float[]{0f, 0.55f, 1f}, Shader.TileMode.CLAMP));
         c.drawRoundRect(card, 44 * u, 44 * u, p);
         p.setShader(null);
         c.save();
@@ -1633,21 +2765,57 @@ public final class GameView extends View {
         }
         // featured line-up
         float bob = (float) Math.sin(anim * 1.8f) * 10 * u;
-        int[] side = {Defs.MERCURY, Defs.VENUS, Defs.URANUS, Defs.NEPTUNE, Defs.PLUTO};
+        int[] side = ex ? new int[]{Defs.GALACIA_P, Defs.SMART_SAT, Defs.COMMANDER, Defs.CYBER, Defs.SAVIOR_SAT}
+                : new int[]{Defs.MERCURY, Defs.VENUS, Defs.URANUS, Defs.NEPTUNE, Defs.PLUTO};
         float[][] pos = {{-0.33f, -0.17f, 0.1f}, {-0.36f, 0.12f, 0.12f}, {0.34f, -0.15f, 0.12f}, {0.36f, 0.14f, 0.11f}, {0f, 0.3f, 0.085f}};
         for (int i = 0; i < side.length; i++)
             sprite(c, pBmp[side[i]], cx + pos[i][0] * hh, cy + pos[i][1] * hh + bob * (i % 2 == 0 ? 1 : -1), pos[i][2] * hh / 0.72f, 255);
-        glowCircle(c, cx, cy + bob, hh * 0.3f, 0x88FFB627);
-        sprite(c, pBmp[Defs.SUN], cx, cy + bob, hh * 0.25f, 255);
+        int hero = ex ? Defs.KING : Defs.SUN;
+        glowCircle(c, cx, cy + bob, hh * 0.3f, ex ? 0x88FFD23F : 0x88FFB627);
+        sprite(c, pBmp[hero], cx, cy + bob, hh * 0.25f, 255);
+        if (ex) sprite(c, pBmp[Defs.NIGHTMARE], cx - hh * 0.2f, cy - hh * 0.32f - bob, hh * 0.09f, 255);
         // ribbon title + featured tag
         RectF rib = new RectF(card.left + 60 * u, card.top + 30 * u, card.right - 60 * u, card.top + 130 * u);
         panel(c, rib, 0xEE1A0F3D, 30 * u);
-        title(c, "REGULAR BANNER", cx, rib.centerY() + 20 * u, 56 * u, 0xFFFFD23F, Paint.Align.CENTER, rib.width() - 60 * u);
+        title(c, ex ? "EXCLUSIVE CAPSULE" : "REGULAR BANNER", cx, rib.centerY() + 20 * u, 56 * u, 0xFFFFD23F, Paint.Align.CENTER, rib.width() - 60 * u);
         RectF tag = new RectF(cx + hh * 0.12f, cy - hh * 0.3f + bob, cx + hh * 0.12f + 290 * u, cy - hh * 0.3f + 70 * u + bob);
         panel(c, tag, 0xEEFF4F8B, 35 * u);
-        title(c, "FEATURED: SUN", tag.centerX(), tag.centerY() + 12 * u, 32 * u, 0xFFFFFFFF, Paint.Align.CENTER, tag.width() - 20 * u);
-        // rate bar
+        title(c, ex ? "RAREST: KING" : "FEATURED: SUN", tag.centerX(), tag.centerY() + 12 * u, 32 * u, 0xFFFFFFFF, Paint.Align.CENTER, tag.width() - 20 * u);
         float rbL = card.left + 40 * u, rbR = card.right - 40 * u, rbY = card.bottom - 120 * u;
+        if (ex) {
+            // per-planet rates of the capsule
+            float lx = rbL, ly = rbY - 40 * u;
+            for (int k = 0; k < Defs.CAPSULE_POOL.length; k++) {
+                int t = Defs.CAPSULE_POOL[k];
+                String s1 = Defs.P_NAME[t] + " " + Defs.CAPSULE_RATE[k] + "%";
+                tp.setTextSize(24 * u);
+                float tw = tp.measureText(s1) + 60 * u;
+                if (lx + tw > rbR) { lx = rbL; ly += 56 * u; }
+                sprite(c, pBmp[t], lx + 18 * u, ly - 8 * u, 18 * u, 255);
+                plain(c, s1, lx + 42 * u, ly, 24 * u, t == Defs.KING ? Defs.RARITY_COLOR[Defs.SPECIALIST] : 0xFFFFE6F0, Paint.Align.LEFT, 0);
+                lx += tw;
+            }
+            sp.setStrokeWidth(5 * u);
+            sp.setColor(0xFFFFD23F);
+            c.drawRoundRect(card, 44 * u, 44 * u, sp);
+            ornaments(c, card, 0xFFFF3B6B, 44 * u);
+            float by = bBot + 40 * u, bw = (W - 140 * u) / 2f, bh = 150 * u;
+            rf.set(50 * u, by, 50 * u + bw, by + bh);
+            button(c, rf, null, 0xFFD0304A, pf.oil >= Defs.CAPSULE_OIL, () -> doCapsule(1));
+            title(c, L.t("สุ่ม x1", "Roll x1"), rf.centerX(), rf.top + 70 * u, 52 * u, 0xFFFFFFFF);
+            oilIcon(c, rf.centerX() - 50 * u, rf.top + 108 * u, 18 * u);
+            text(c, String.valueOf(Defs.CAPSULE_OIL), rf.centerX() - 25 * u, rf.top + 122 * u, 36 * u, 0xFFFFC890, Paint.Align.LEFT, 0);
+            rf.set(90 * u + bw, by, 90 * u + bw * 2, by + bh);
+            button(c, rf, null, 0xFFE0A020, pf.oil >= Defs.CAPSULE_OIL_10, () -> doCapsule(10));
+            title(c, L.t("สุ่ม x10", "Roll x10"), rf.centerX(), rf.top + 70 * u, 52 * u, 0xFFFFFFFF);
+            oilIcon(c, rf.centerX() - 50 * u, rf.top + 108 * u, 18 * u);
+            text(c, String.valueOf(Defs.CAPSULE_OIL_10), rf.centerX() - 25 * u, rf.top + 122 * u, 36 * u, 0xFFFFC890, Paint.Align.LEFT, 0);
+            oilIcon(c, W / 2 - 150 * u, by + bh + 62 * u, 24 * u);
+            text(c, "Crystal Oil: " + pf.oil, W / 2 - 115 * u, by + bh + 78 * u, 40 * u, 0xFFFFC890, Paint.Align.LEFT, 0);
+            plain(c, L.t("หา Crystal Oil ได้จากโหมด Raid", "Earn Crystal Oil in Raid mode"), W / 2, by + bh + 130 * u, 26 * u, 0xFFC9C2E6, Paint.Align.CENTER, 0);
+            return;
+        }
+        // rate bar
         float acc0 = rbL;
         for (int r = 0; r < Profile.PULL_RATE.length; r++) {
             float w = (rbR - rbL) * Profile.PULL_RATE[r] / 100f;
@@ -1692,9 +2860,27 @@ public final class GameView extends View {
         text(c, "Star: " + pf.stars, W / 2 - 75 * u, by + bh + 78 * u, 42 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
     }
 
+    int bannerTab;
+
+    void doCapsule(int n) {
+        int[] r = pf.pullCapsule(n);
+        if (r == null) { Sfx.play(Sfx.ERROR); showToast(L.t("Crystal Oil ไม่พอ — เล่นโหมด Raid", "Not enough Crystal Oil — play Raid")); return; }
+        Sfx.play(Sfx.GACHA);
+        for (int t : r) if (t == Defs.KING || t == Defs.NIGHTMARE) { postDelayed(() -> Sfx.play(Sfx.RARE), 600); break; }
+        gachaRes = r;
+        gachaNew = pf.lastNew;
+        gachaT = 0;
+        popup = P_GACHA;
+        pushNow();
+    }
+
     void doPull(int n) {
         int[] r = pf.pull(n);
-        if (r == null) { showToast(L.t("Star ไม่พอ", "Not enough Star")); return; }
+        if (r == null) { Sfx.play(Sfx.ERROR); showToast(L.t("Star ไม่พอ", "Not enough Star")); return; }
+        Sfx.play(Sfx.GACHA);
+        int bestR = 0;
+        for (int t : r) bestR = Math.max(bestR, Defs.P_RARITY[t]);
+        if (bestR >= Defs.LEGEND) postDelayed(() -> Sfx.play(Sfx.RARE), 600);
         gachaRes = r;
         gachaNew = pf.lastNew;
         gachaT = 0;
@@ -1732,34 +2918,11 @@ public final class GameView extends View {
     }
 
     // ================================================================== enchant
-    void updateAuto(float dt) {
-        if (!autoOn) return;
-        autoT -= dt;
-        if (autoT > 0) return;
-        autoT = 0.12f;
-        boolean mat = labTab == 1;
-        if (mat ? pf.crystals < Profile.CRYSTAL_COST : pf.millite < Profile.ROLL_COST) {
-            autoOn = false;
-            showToast(mat ? L.t("Crystal หมดแล้ว", "Out of Crystal") : L.t("Millite หมดแล้ว", "Out of Millite"));
-            return;
-        }
-        if (mat) pf.rollMaterial(enchSel);
-        else pf.rollEnchant(enchSel);
-        autoCount++;
-        enchFlash = 0.15f;
-        boolean hit = mat ? pf.material[enchSel] == autoTarget
-                : pf.enchant[enchSel] == autoTarget && pf.tier[enchSel] == Defs.EN_TIERS[autoTarget];
-        if (hit) {
-            autoOn = false;
-            enchFlash = 0.8f;
-            String got = mat ? matName(autoTarget) : enchName(pf.enchant[enchSel], pf.tier[enchSel]);
-            showToast(L.t("ได้แล้ว! ", "Got it! ") + got + L.t(" (สุ่ม ", " (") + autoCount + L.t(" ครั้ง)", " rolls)"));
-        }
-    }
+    void updateAuto(float dt) { }
 
     void drawEnchant(Canvas c) {
         boolean mat = labTab == 1;
-        header(c, "Lab", 1, pf.millite, 2, pf.crystals);
+        header(c, mat ? "Lab" : "Factory", 1, pf.millite, 2, pf.crystals);
         if (!pf.owned[enchSel]) enchSel = Defs.EARTH;
         // tabs
         float tw = (W - 120 * u) / 2f;
@@ -1781,15 +2944,18 @@ public final class GameView extends View {
         rf.set(50 * u, by, 50 * u + bw, by + bh);
         button(c, rf, L.t("สุ่ม", "Roll") + " (1)", mat ? 0xFF33A8D0 : 0xFFB86BFF, !autoOn && can, () -> {
             boolean ok = labTab == 1 ? pf.rollMaterial(enchSel) : pf.rollEnchant(enchSel);
-            if (ok) enchFlash = 0.5f;
-            else showToast(labTab == 1 ? L.t("Crystal ไม่พอ (ได้จากบอส)", "Not enough Crystal (from bosses)")
+            if (ok) {
+                enchFlash = 0.5f;
+                int got = labTab == 1 ? Defs.MAT_RARITY[pf.material[enchSel]] : Defs.EN_RARITY[pf.enchant[enchSel]];
+                Sfx.play(got >= Defs.LEGEND ? Sfx.RARE : Sfx.ROLL);
+            } else {
+                Sfx.play(Sfx.ERROR);
+                showToast(labTab == 1 ? L.t("Crystal ไม่พอ (ได้จากบอส)", "Not enough Crystal (from bosses)")
                     : L.t("Millite ไม่พอ (ได้จากบอส)", "Not enough Millite (from bosses)"));
+            }
         });
         rf.set(70 * u + bw, by, 70 * u + bw * 2, by + bh);
-        button(c, rf, autoOn ? L.t("หยุด", "Stop") : L.t("สุ่มอัตโนมัติ", "Auto roll"), autoOn ? 0xFFFF6B5B : 0xFF4F8BFF, true, () -> {
-            if (autoOn) autoOn = false;
-            else popup = P_AUTO;
-        });
+        button(c, rf, L.t("สุ่มหลายครั้ง", "Bulk roll"), 0xFF4F8BFF, true, this::openBulk);
         rf.set(90 * u + bw * 2, by, 90 * u + bw * 3, by + bh);
         button(c, rf, "Index", 0xFF33C6A6, true, () -> popup = P_INDEX);
         // owned planet picker
@@ -1813,6 +2979,8 @@ public final class GameView extends View {
         float aTop = 310 * u, aBot = pTop - 70 * u;
         float half = Math.min(270 * u, (aBot - aTop - 300 * u) * 0.42f);
         float cy = aTop + (aBot - aTop - 230 * u) / 2f;
+        if (mat) labScene(c, aTop, cy, half);
+        else factoryScene(c, aTop, cy, half);
         labMachine(c, W / 2, cy, half, mat);
         bigPlanet(c, enchSel, W / 2, cy, half, true);
         float ny = cy + half * 1.4f;
@@ -1847,6 +3015,177 @@ public final class GameView extends View {
 
     String matName(int m) {
         return m < 0 ? "-" : (L.en ? Defs.MAT_NAME[m] : Defs.MAT_NAME_TH[m] + " (" + Defs.MAT_NAME[m] + ")");
+    }
+
+    /** Factory backdrop: turning gears, a conveyor belt, smokestacks and hazard stripes */
+    void factoryScene(Canvas c, float top, float cy, float half) {
+        float floorY = cy + half * 1.25f;
+        // smokestacks with puffs
+        for (int s = 0; s < 2; s++) {
+            float sx = s == 0 ? 95 * u : W - 95 * u, sw = 70 * u;
+            p.setShader(null);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(0xFF2A2350);
+            c.drawRect(sx - sw / 2, top + 120 * u, sx + sw / 2, floorY, p);
+            p.setColor(0xFF3A3170);
+            c.drawRect(sx - sw / 2 - 8 * u, top + 110 * u, sx + sw / 2 + 8 * u, top + 140 * u, p);
+            for (int k = 0; k < 4; k++) {
+                float f = (float) ((anim * 0.35 + k * 0.25 + s * 0.12) % 1.0);
+                float py = top + 100 * u - f * 220 * u, px = sx + (float) Math.sin(f * 5 + s) * 20 * u;
+                p.setColor(alpha(0xFFB8B2CC, (int) (120 * (1 - f))));
+                c.drawCircle(px, py, (16 + 30 * f) * u, p);
+            }
+            // stripes
+            for (int k = 0; k < 4; k++) {
+                p.setColor(k % 2 == 0 ? 0xFFFFD23F : 0xFF140A2A);
+                c.drawRect(sx - sw / 2, floorY - (k + 1) * 18 * u, sx + sw / 2, floorY - k * 18 * u, p);
+            }
+        }
+        // gears turning on both sides of the machine
+        gear(c, W / 2 - half * 1.55f, cy - half * 0.55f, half * 0.38f, anim * 40, 0xFF6B5BD6);
+        gear(c, W / 2 - half * 1.25f, cy + half * 0.1f, half * 0.24f, -anim * 64, 0xFFB86BFF);
+        gear(c, W / 2 + half * 1.5f, cy - half * 0.35f, half * 0.32f, -anim * 48, 0xFF6B5BD6);
+        gear(c, W / 2 + half * 1.3f, cy + half * 0.3f, half * 0.2f, anim * 78, 0xFFE0A020);
+        // conveyor belt under the machine
+        RectF belt = new RectF(60 * u, floorY - 10 * u, W - 60 * u, floorY + 40 * u);
+        p.setColor(0xFF1C1640);
+        c.drawRoundRect(belt, 25 * u, 25 * u, p);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(5 * u);
+        sp.setColor(0xFF4A3D8F);
+        c.drawRoundRect(belt, 25 * u, 25 * u, sp);
+        float step = 46 * u, off = (anim * 120 * u) % step;
+        sp.setStrokeWidth(4 * u);
+        sp.setColor(0xFF6B5BD6);
+        for (float x = belt.left + 20 * u + off; x < belt.right - 20 * u; x += step) c.drawLine(x, belt.top + 8 * u, x - 12 * u, belt.bottom - 8 * u, sp);
+        for (int k = 0; k < 2; k++) {
+            float wx = k == 0 ? belt.left + 25 * u : belt.right - 25 * u;
+            gear(c, wx, belt.centerY(), 22 * u, anim * 200, 0xFF8F80D0);
+        }
+        // crates riding the belt
+        for (int k = 0; k < 3; k++) {
+            float f = (float) ((anim * 0.12 + k / 3.0) % 1.0);
+            float bx = belt.left + 60 * u + f * (belt.width() - 120 * u);
+            if (Math.abs(bx - W / 2) < half * 0.9f) continue;
+            rf2.set(bx - 22 * u, belt.top - 40 * u, bx + 22 * u, belt.top - 2 * u);
+            p.setColor(0xFFB86BFF);
+            c.drawRoundRect(rf2, 6 * u, 6 * u, p);
+            sp.setStrokeWidth(3 * u);
+            sp.setColor(0xFF2A1A5E);
+            c.drawRoundRect(rf2, 6 * u, 6 * u, sp);
+            milliteIcon(c, bx, rf2.centerY(), 10 * u);
+        }
+    }
+
+    void gear(Canvas c, float x, float y, float r, float rot, int col) {
+        c.save();
+        c.rotate(rot, x, y);
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(col);
+        int teeth = Math.max(8, (int) (r / (6 * u)));
+        for (int k = 0; k < teeth; k++) {
+            c.save();
+            c.rotate(k * 360f / teeth, x, y);
+            c.drawRect(x - r * 0.14f, y - r * 1.18f, x + r * 0.14f, y - r * 0.8f, p);
+            c.restore();
+        }
+        c.drawCircle(x, y, r * 0.92f, p);
+        p.setColor(darken(col, 0.45f));
+        c.drawCircle(x, y, r * 0.38f, p);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(Math.max(2f, r * 0.08f));
+        sp.setColor(darken(col, 0.6f));
+        c.drawCircle(x, y, r * 0.92f, sp);
+        for (int k = 0; k < 4; k++) {
+            c.save();
+            c.rotate(k * 90 + 45, x, y);
+            c.drawLine(x, y - r * 0.4f, x, y - r * 0.75f, sp);
+            c.restore();
+        }
+        c.restore();
+    }
+
+    /** Lab backdrop: glass shelves with bubbling flasks, test tubes and orbiting atoms */
+    void labScene(Canvas c, float top, float cy, float half) {
+        float shelfY = cy + half * 1.2f;
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0x6633A8D0);
+        c.drawRect(50 * u, shelfY, W - 50 * u, shelfY + 12 * u, p);
+        // flasks left and right
+        flask(c, W / 2 - half * 1.5f, shelfY, half * 0.42f, 0xFF4DFF8A, 0);
+        flask(c, W / 2 + half * 1.5f, shelfY, half * 0.36f, 0xFFFF4FD8, 1);
+        // test tube rack
+        for (int k = 0; k < 4; k++) {
+            float tx = (k < 2 ? W / 2 - half * 1.05f : W / 2 + half * 0.9f) + (k % 2) * 34 * u;
+            int lc = new int[]{0xFF7DD3FF, 0xFFFFD23F, 0xFFB86BFF, 0xFF4DFF8A}[k];
+            float th = half * 0.55f, lvl = 0.55f + 0.1f * (float) Math.sin(anim * 1.5f + k);
+            rf2.set(tx - 12 * u, shelfY - th, tx + 12 * u, shelfY);
+            p.setColor(alpha(lc, 0xCC));
+            c.drawRect(tx - 10 * u, shelfY - th * lvl, tx + 10 * u, shelfY - 6 * u, p);
+            sp.setPathEffect(null);
+            sp.setStrokeWidth(3 * u);
+            sp.setColor(0xAAE6F6FF);
+            c.drawRoundRect(rf2, 12 * u, 12 * u, sp);
+        }
+        // atoms orbiting above
+        for (int s = 0; s < 2; s++) {
+            float ax = s == 0 ? W / 2 - half * 1.45f : W / 2 + half * 1.45f, ay = top + 120 * u;
+            for (int k = 0; k < 3; k++) {
+                c.save();
+                c.rotate(k * 60 + anim * 10 * (s == 0 ? 1 : -1), ax, ay);
+                sp.setStrokeWidth(2.5f * u);
+                sp.setColor(0x887DD3FF);
+                rf2.set(ax - 60 * u, ay - 20 * u, ax + 60 * u, ay + 20 * u);
+                c.drawOval(rf2, sp);
+                double a = anim * 3 + k * 2;
+                p.setColor(0xFFB8F6FF);
+                c.drawCircle(ax + (float) Math.cos(a) * 60 * u, ay + (float) Math.sin(a) * 20 * u, 6 * u, p);
+                c.restore();
+            }
+            glowCircle(c, ax, ay, 22 * u, 0xFFFFD23F);
+        }
+    }
+
+    void flask(Canvas c, float x, float base, float r, int liquid, int seed) {
+        Path f = new Path();
+        float neck = r * 0.3f;
+        f.moveTo(x - neck, base - r * 2.2f);
+        f.lineTo(x - neck, base - r * 1.3f);
+        f.lineTo(x - r, base - r * 0.15f);
+        f.quadTo(x - r, base, x - r * 0.8f, base);
+        f.lineTo(x + r * 0.8f, base);
+        f.quadTo(x + r, base, x + r, base - r * 0.15f);
+        f.lineTo(x + neck, base - r * 1.3f);
+        f.lineTo(x + neck, base - r * 2.2f);
+        f.close();
+        c.save();
+        c.clipPath(f);
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(alpha(liquid, 0xCC));
+        float lvl = base - r * (0.75f + 0.05f * (float) Math.sin(anim * 2 + seed));
+        c.drawRect(x - r * 1.2f, lvl, x + r * 1.2f, base, p);
+        // bubbles rising
+        for (int k = 0; k < 6; k++) {
+            float t = (float) ((anim * 0.6 + k / 6.0 + seed * 0.3) % 1.0);
+            float bx = x + (float) Math.sin(k * 2.3 + t * 6) * r * 0.5f, by = base - t * r * 0.8f;
+            p.setColor(alpha(0xFFFFFFFF, (int) (180 * (1 - t))));
+            c.drawCircle(bx, by, (3 + 4 * t) * u, p);
+        }
+        c.restore();
+        glowCircle(c, x, base - r * 0.4f, r * 1.2f, alpha(liquid, 0x33));
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(4 * u);
+        sp.setColor(0xCCE6F6FF);
+        c.drawPath(f, sp);
+        // vapour from the mouth
+        for (int k = 0; k < 3; k++) {
+            float t = (float) ((anim * 0.4 + k / 3.0 + seed * 0.2) % 1.0);
+            p.setColor(alpha(liquid, (int) (110 * (1 - t))));
+            c.drawCircle(x + (float) Math.sin(t * 7 + k) * 10 * u, base - r * 2.3f - t * r, (6 + 14 * t) * u, p);
+        }
     }
 
     /** factory machine (enchant) or lab flask ring (material) drawn behind the selected planet */
@@ -1946,28 +3285,240 @@ public final class GameView extends View {
         button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
     }
 
-    void drawAutoPick(Canvas c) {
+    int bulkMax() {
         boolean mat = labTab == 1;
-        RectF r = new RectF(40 * u, 130 * u, W - 40 * u, H - 130 * u);
-        popupFrame(c, r, L.t("สุ่มจนกว่าจะได้...", "Roll until you get..."));
+        return mat ? pf.crystals / Profile.CRYSTAL_COST : pf.millite / Profile.ROLL_COST;
+    }
+
+    void openBulk() {
+        if (!bulkInit) {
+            // sensible default filter: keep Legend and better
+            for (int i = 0; i < Defs.EN_COUNT; i++) keepEn[i] = Defs.EN_RARITY[i] >= Defs.LEGEND;
+            for (int i = 0; i < Defs.MAT_COUNT; i++) keepMat[i] = Defs.MAT_RARITY[i] >= Defs.LEGEND;
+            bulkInit = true;
+        }
+        int max = bulkMax();
+        if (max <= 0) {
+            showToast(labTab == 1 ? L.t("Crystal ไม่พอ (ได้จากบอส)", "Not enough Crystal (from bosses)")
+                    : L.t("Millite ไม่พอ (ได้จากบอส)", "Not enough Millite (from bosses)"));
+            return;
+        }
+        bulkCount = max;
+        popup = P_AUTO;
+    }
+
+    boolean bulkHit(boolean mat, int t) {
+        if (mat) return pf.material[t] >= 0 && keepMat[pf.material[t]];
+        int e = pf.enchant[t];
+        return e >= 0 && keepEn[e] && (Defs.EN_TIERS[e] == 0 || pf.tier[t] >= keepTier[e] + 1);
+    }
+
+    int keptCount(boolean mat) {
+        int n = 0;
+        if (mat) { for (boolean b : keepMat) if (b) n++; }
+        else for (boolean b : keepEn) if (b) n++;
+        return n;
+    }
+
+    /** ask first, then roll up to bulkCount times in one go, stopping at the first result the filter keeps */
+    void confirmBulk() {
+        final boolean mat = labTab == 1;
+        final int n = Math.min(bulkCount, bulkMax());
+        if (n <= 0) { showToast(L.t("จำนวนไม่พอ", "Not enough to roll")); return; }
+        String cur = mat ? "Crystal" : "Millite";
+        int kept = keptCount(mat);
+        String msg = L.t("ใช้ ", "Use up to ") + n + " " + cur + L.t(" สุ่ม ", " to roll ") + Defs.P_NAME[enchSel] + L.t(" สูงสุด ", " up to ") + n + L.t(" ครั้ง", " times") + "\n";
+        if (kept == 0) msg += L.t("ไม่ได้เลือกตัวที่จะเก็บ จะสุ่มครบทุกครั้งและได้ผลครั้งสุดท้าย", "Nothing is selected to keep: every roll is used and the last result stays");
+        else {
+            msg += L.t("จะหยุดทันทีเมื่อได้ 1 ใน ", "Stops as soon as you get one of the ") + kept + L.t(" แบบที่เลือกไว้", " selected results");
+            if (bulkRevert) msg += "\n" + L.t("ถ้าไม่ได้เลย จะคืนของเดิมให้ (แต่ใช้ " + cur + " ไปแล้ว)", "If none hit, your current one is kept (the " + cur + " is still spent)");
+        }
+        msg += "\n\n" + L.t("คงเหลือหลังสุ่ม (ถ้าใช้ครบ): ", "Left afterwards (if all used): ") + (bulkMax() - n) + " " + cur;
+        Dialogs.confirm(ctx, L.t("ยืนยันการสุ่ม ", "Confirm ") + n + L.t(" ครั้ง?", " rolls?"), msg, L.t("สุ่มเลย", "Roll"), () -> runBulk(mat, n));
+    }
+
+    void runBulk(boolean mat, int n) {
+        int t = enchSel;
+        int oE = pf.enchant[t], oT = pf.tier[t], oM = pf.material[t];
+        java.util.Arrays.fill(resByRarity, 0);
+        resRolls = 0;
+        resHit = false;
+        resReverted = false;
+        resMat = mat;
+        boolean filter = keptCount(mat) > 0;
+        for (int i = 0; i < n; i++) {
+            boolean ok = mat ? pf.rollMaterial(t, false) : pf.rollEnchant(t, false);
+            if (!ok) break;
+            resRolls++;
+            resByRarity[mat ? Defs.MAT_RARITY[pf.material[t]] : Defs.EN_RARITY[pf.enchant[t]]]++;
+            if (filter && bulkHit(mat, t)) { resHit = true; break; }
+        }
+        resSpent = resRolls * (mat ? Profile.CRYSTAL_COST : Profile.ROLL_COST);
+        if (filter && !resHit && bulkRevert) {
+            pf.enchant[t] = oE;
+            pf.tier[t] = oT;
+            pf.material[t] = oM;
+            resReverted = true;
+        }
+        resGot = mat ? pf.material[t] : pf.enchant[t];
+        resTier = pf.tier[t];
+        pf.save();
+        enchFlash = resHit ? 0.9f : 0.4f;
+        popup = P_BULKRES;
+        Sfx.play(resHit ? Sfx.RARE : Sfx.OK);
+        popT = 0;
+    }
+
+    void drawAutoPick(Canvas c) {
+        final boolean mat = labTab == 1;
+        RectF r = new RectF(30 * u, 110 * u, W - 30 * u, H - 110 * u);
+        popupFrame(c, r, L.t("สุ่มหลายครั้ง", "Bulk roll"));
+        plain(c, L.t("ติ๊กตัวที่อยากได้ — สุ่มจะหยุดทันทีเมื่อได้ตัวที่ติ๊ก", "Tick what you want — rolling stops as soon as you get one"),
+                r.centerX(), r.top + 150 * u, 30 * u, 0xFFC9C2E6, Paint.Align.CENTER, r.width() - 60 * u);
         int n = mat ? Defs.MAT_COUNT : Defs.EN_COUNT;
-        float top = r.top + 140 * u, rh = Math.min(115 * u, (r.height() - 290 * u) / n);
+        float listTop = r.top + 185 * u, listBot = r.bottom - 470 * u;
+        float rh = Math.min(100 * u, (listBot - listTop) / n);
         for (int i = 0; i < n; i++) {
             final int e = i;
             int rar = mat ? Defs.MAT_RARITY[i] : Defs.EN_RARITY[i];
-            rf.set(r.left + 40 * u, top + i * rh + 5 * u, r.right - 40 * u, top + (i + 1) * rh - 5 * u);
-            String label = (mat ? matName(i) : Defs.EN_NAME[i] + tierSuffixMax(i)) + "  (" + Defs.RARITY_NAME[rar] + ")";
-            int col = darken(rar == Defs.GALAXY ? 0xFF33C0E0 : Defs.RARITY_COLOR[rar], rar == Defs.COMMON ? 0.55f : 0.25f);
-            button(c, rf, label, col, true, () -> {
-                autoTarget = e;
-                autoCount = 0;
-                autoT = 0;
-                autoOn = true;
-                popup = P_NONE;
-            });
+            int rc = rar == Defs.GALAXY ? hsv(anim * 90) : Defs.RARITY_COLOR[rar];
+            boolean on = mat ? keepMat[i] : keepEn[i];
+            float y = listTop + i * rh;
+            RectF row = new RectF(r.left + 30 * u, y + 4 * u, r.right - 30 * u, y + rh - 4 * u);
+            p.setShader(null);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(on ? alpha(rc, 0x40) : 0x33000000);
+            c.drawRoundRect(row, 18 * u, 18 * u, p);
+            if (on) {
+                sp.setPathEffect(null);
+                sp.setStrokeWidth(3 * u);
+                sp.setColor(alpha(rc, 0xCC));
+                c.drawRoundRect(row, 18 * u, 18 * u, sp);
+            }
+            // checkbox
+            float bx = row.left + 45 * u, by = row.centerY(), bs = Math.min(26 * u, rh * 0.3f);
+            rf2.set(bx - bs, by - bs, bx + bs, by + bs);
+            p.setColor(on ? 0xFF33C6A6 : 0xFF241A4E);
+            c.drawRoundRect(rf2, 8 * u, 8 * u, p);
+            sp.setStrokeWidth(3 * u);
+            sp.setColor(on ? 0xFFB8FFE8 : 0xFF6A6488);
+            c.drawRoundRect(rf2, 8 * u, 8 * u, sp);
+            if (on) {
+                sp.setStrokeWidth(5 * u);
+                sp.setColor(0xFFFFFFFF);
+                c.drawLine(bx - bs * 0.5f, by, bx - bs * 0.1f, by + bs * 0.45f, sp);
+                c.drawLine(bx - bs * 0.1f, by + bs * 0.45f, bx + bs * 0.55f, by - bs * 0.45f, sp);
+            }
+            if (mat) materialBadge(c, row.left + 115 * u, by, rh * 0.3f, i);
+            else badge(c, row.left + 115 * u, by, rh * 0.3f, i, 0);
+            String nm = mat ? matName(i) : Defs.EN_NAME[i];
+            text(c, nm, row.left + 165 * u, by + rh * 0.12f, Math.min(34 * u, rh * 0.36f), on ? 0xFFFFFFFF : 0xFFC9C2E6, Paint.Align.LEFT, row.width() - 470 * u);
+            float ch = mat ? Defs.MAT_CHANCE[i] : Defs.EN_CHANCE[i];
+            plain(c, String.format(Locale.US, "%s %.2f%%", Defs.RARITY_NAME[rar], ch), row.right - 30 * u, by + rh * 0.1f, Math.min(26 * u, rh * 0.28f), rc, Paint.Align.RIGHT, 0);
+            btns.add(new Btn(new RectF(row), () -> {
+                if (mat) keepMat[e] = !keepMat[e];
+                else keepEn[e] = !keepEn[e];
+            }));
+            if (!mat && Defs.EN_TIERS[i] > 0) {
+                // minimum tier chip, tap to cycle
+                String[] tn = {"I+", "II+", "III"};
+                RectF chip = new RectF(row.right - 340 * u, row.top + rh * 0.16f, row.right - 230 * u, row.bottom - rh * 0.16f);
+                button(c, chip, tn[Math.min(keepTier[i], Defs.EN_TIERS[i] - 1)], 0xFF6B5BD6, true,
+                        () -> keepTier[e] = (keepTier[e] + 1) % Defs.EN_TIERS[e]);
+            }
         }
-        rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 30 * u);
+        // quick filters
+        float qy = listBot + 20 * u, qw = (r.width() - 100 * u) / 3f;
+        rf.set(r.left + 30 * u, qy, r.left + 30 * u + qw, qy + 80 * u);
+        button(c, rf, "Legend+", 0xFFE0A020, true, () -> setKeep(mat, Defs.LEGEND));
+        rf.set(r.left + 50 * u + qw, qy, r.left + 50 * u + qw * 2, qy + 80 * u);
+        button(c, rf, "Epic+", 0xFFB86BFF, true, () -> setKeep(mat, Defs.EPIC));
+        rf.set(r.left + 70 * u + qw * 2, qy, r.left + 70 * u + qw * 3, qy + 80 * u);
+        button(c, rf, L.t("ล้าง", "Clear"), 0xFF4A4562, true, () -> setKeep(mat, 99));
+        // count stepper
+        int max = bulkMax();
+        bulkCount = Math.max(Math.min(1, max), Math.min(bulkCount, max));
+        float sy = qy + 110 * u, sw = 110 * u;
+        int[] steps = {-10, -1, 1, 10};
+        String[] sl = {"-10", "-1", "+1", "+10"};
+        for (int i = 0; i < 4; i++) {
+            final int d = steps[i];
+            float x = i < 2 ? r.left + 30 * u + i * (sw + 12 * u) : r.right - 30 * u - (4 - i) * (sw + 12 * u) + 12 * u;
+            rf.set(x, sy, x + sw, sy + 90 * u);
+            button(c, rf, sl[i], 0xFF3A3360, true, () -> bulkCount = Math.max(1, Math.min(bulkMax(), bulkCount + d)));
+        }
+        RectF cnt = new RectF(r.left + 30 * u + 2 * (sw + 12 * u), sy, r.right - 30 * u - 2 * (sw + 12 * u), sy + 90 * u);
+        panel(c, cnt, 0xFF140A33, 24 * u);
+        title(c, bulkCount + "", cnt.centerX(), cnt.centerY() + 6 * u, 46 * u, 0xFFFFFFFF);
+        plain(c, L.t("ครั้ง (มีพอ ", "rolls (max ") + max + ")", cnt.centerX(), cnt.bottom - 8 * u, 22 * u, 0xFFB8B2CC, Paint.Align.CENTER, 0);
+        btns.add(new Btn(new RectF(cnt), () -> Dialogs.ask(ctx, L.t("จำนวนครั้ง", "How many rolls"), L.t("มีพอสุ่มได้ ", "You can roll up to ") + bulkMax() + L.t(" ครั้ง", " times"),
+                new String[]{L.t("จำนวน", "Rolls")}, new int[]{Dialogs.NUMBER}, new String[]{String.valueOf(bulkCount)}, "OK", v -> {
+                    try {
+                        int k = Integer.parseInt(v[0].trim());
+                        if (k < 1 || k > bulkMax()) return L.t("ใส่ได้ 1 ถึง ", "Use 1 to ") + bulkMax();
+                        bulkCount = k;
+                        return null;
+                    } catch (NumberFormatException ex) {
+                        return L.t("ใส่ตัวเลขเท่านั้น", "Numbers only");
+                    }
+                })));
+        // revert toggle
+        float ty = sy + 115 * u;
+        rf.set(r.left + 30 * u, ty, r.right - 30 * u, ty + 80 * u);
+        button(c, rf, L.t("ถ้าไม่ได้ตัวที่ติ๊ก ให้คงของเดิมไว้: ", "Keep my current one if nothing hits: ") + (bulkRevert ? L.t("เปิด", "ON") : L.t("ปิด", "OFF")),
+                bulkRevert ? 0xFF2E9A6A : 0xFF4A4562, true, () -> bulkRevert = !bulkRevert);
+        // actions
+        float ay = r.bottom - 120 * u, aw = (r.width() - 100 * u) / 2f;
+        rf.set(r.left + 30 * u, ay, r.left + 30 * u + aw, ay + 95 * u);
         button(c, rf, L.t("ยกเลิก", "Cancel"), 0xFF6B5BD6, true, () -> popup = P_NONE);
+        rf.set(r.right - 30 * u - aw, ay, r.right - 30 * u, ay + 95 * u);
+        button(c, rf, L.t("สุ่ม ", "Roll ") + bulkCount + L.t(" ครั้ง", "x"), mat ? 0xFF33A8D0 : 0xFFB86BFF, max > 0, this::confirmBulk);
+    }
+
+    void setKeep(boolean mat, int minRarity) {
+        if (mat) for (int i = 0; i < Defs.MAT_COUNT; i++) keepMat[i] = Defs.MAT_RARITY[i] >= minRarity;
+        else {
+            for (int i = 0; i < Defs.EN_COUNT; i++) keepEn[i] = Defs.EN_RARITY[i] >= minRarity;
+            java.util.Arrays.fill(keepTier, 0);
+        }
+    }
+
+    void drawBulkResult(Canvas c) {
+        boolean mat = resMat;
+        RectF r = new RectF(70 * u, H / 2 - 560 * u, W - 70 * u, H / 2 + 560 * u);
+        popupFrame(c, r, resHit ? L.t("ได้แล้ว!", "Got it!") : L.t("ผลการสุ่ม", "Roll results"));
+        float cy = r.top + 330 * u;
+        float pop = Math.min(1f, popT * 3f);
+        float k = pop < 1 ? 0.6f + 0.55f * (float) Math.sin(pop * Math.PI * 0.8) : 1f;
+        if (resHit) for (int i = 0; i < 10; i++) {
+            double a = anim * 0.6 + i * Math.PI / 5;
+            float rr = 170 * u + (float) Math.sin(anim * 3 + i) * 15 * u;
+            star(c, r.centerX() + (float) Math.cos(a) * rr, cy + (float) Math.sin(a) * rr, 14 * u);
+        }
+        if (resGot >= 0) {
+            int rar = mat ? Defs.MAT_RARITY[resGot] : Defs.EN_RARITY[resGot];
+            int rc = rar == Defs.GALAXY ? hsv(anim * 90) : Defs.RARITY_COLOR[rar];
+            glowCircle(c, r.centerX(), cy, 190 * u * k, alpha(rc, 0x77));
+            if (mat) materialBadge(c, r.centerX(), cy, 95 * u * k, resGot);
+            else badge(c, r.centerX(), cy, 95 * u * k, resGot, resTier);
+            title(c, mat ? matName(resGot) : enchName(resGot, resTier), r.centerX(), cy + 170 * u, 52 * u, rc, Paint.Align.CENTER, r.width() - 60 * u);
+            plain(c, Defs.RARITY_NAME[rar], r.centerX(), cy + 215 * u, 30 * u, 0xFFC9C2E6, Paint.Align.CENTER, 0);
+        } else plain(c, "-", r.centerX(), cy, 40 * u, 0xFF8A84A0, Paint.Align.CENTER, 0);
+        String cur = mat ? "Crystal" : "Millite";
+        String line = L.t("สุ่มไป ", "Rolled ") + resRolls + L.t(" ครั้ง • ใช้ ", " times • spent ") + resSpent + " " + cur;
+        plain(c, line, r.centerX(), cy + 285 * u, 32 * u, 0xFFFFFFFF, Paint.Align.CENTER, r.width() - 60 * u);
+        if (resReverted) plain(c, L.t("ไม่ได้ตัวที่เลือก — คืนของเดิมให้แล้ว", "No match - your previous one was kept"), r.centerX(), cy + 330 * u, 28 * u, 0xFFFFB8C8, Paint.Align.CENTER, r.width() - 60 * u);
+        // what came out, by rarity
+        float by = cy + 380 * u, bw = (r.width() - 80 * u) / 6f;
+        for (int i = 0; i < 6; i++) {
+            float x = r.left + 40 * u + i * bw;
+            RectF b = new RectF(x + 5 * u, by, x + bw - 5 * u, by + 120 * u);
+            rarityCard(c, b, Defs.RARITY_COLOR[i], resByRarity[i] > 0, false, 18 * u);
+            title(c, String.valueOf(resByRarity[i]), b.centerX(), b.top + 62 * u, 40 * u, resByRarity[i] > 0 ? 0xFFFFFFFF : 0xFF6A6488);
+            plain(c, Defs.RARITY_NAME[i], b.centerX(), b.bottom - 18 * u, 20 * u, Defs.RARITY_COLOR[i], Paint.Align.CENTER, b.width() - 6 * u);
+        }
+        rf.set(r.centerX() - 220 * u, r.bottom - 130 * u, r.centerX() + 220 * u, r.bottom - 35 * u);
+        button(c, rf, "OK", 0xFF33C6A6, true, () -> popup = P_NONE);
     }
 
     // ================================================================== lobby popups
@@ -1988,7 +3539,7 @@ public final class GameView extends View {
         c.drawLine(rf.left + 18 * u, rf.bottom - 18 * u, rf.right - 18 * u, rf.top + 18 * u, sp);
         btns.add(new Btn(new RectF(r.centerX() - 92 * u, r.top + 138 * u, r.centerX() + 92 * u, r.top + 322 * u), () -> popup = P_AVATAR));
         title(c, user, r.centerX(), r.top + 380 * u, 56 * u, 0xFFFFFFFF, Paint.Align.CENTER, r.width() - 80 * u);
-        if (isAdmin()) plain(c, "ADMIN", r.centerX(), r.top + 425 * u, 30 * u, 0xFFFF8AB8, Paint.Align.CENTER, 0);
+        if (cloud.myRole() > 0) plain(c, Roles.NAME[cloud.myRole()].toUpperCase(Locale.US), r.centerX(), r.top + 425 * u, 30 * u, Roles.COLOR[cloud.myRole()], Paint.Align.CENTER, 0);
         int cleared = 0;
         for (boolean b : pf.clear) if (b) cleared++;
         String[] lines = {
@@ -2017,24 +3568,67 @@ public final class GameView extends View {
     }
 
     void drawAvatarPick(Canvas c) {
-        RectF r = new RectF(60 * u, H / 2 - 520 * u, W - 60 * u, H / 2 + 520 * u);
+        RectF r = new RectF(60 * u, H / 2 - 620 * u, W - 60 * u, H / 2 + 620 * u);
         popupFrame(c, r, L.t("เลือกไอคอนโปรไฟล์", "Choose a profile icon"));
-        float cell = (r.width() - 80 * u) / 4f, top = r.top + 160 * u;
+        // gallery photo
+        float gy = r.top + 150 * u;
+        rf.set(r.left + 40 * u, gy, r.right - 40 * u, gy + 120 * u);
+        button(c, rf, null, 0xFF2E9A6A, photoPicker != null, () -> { if (photoPicker != null) photoPicker.run(); });
+        boolean hasPhoto = photoBmp(pf.photo) != null;
+        if (hasPhoto) avatarOf(c, rf.left + 75 * u, rf.centerY(), 44 * u, -1, pf.photo);
+        else {
+            // little picture icon
+            p.setShader(null);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(0xFFE6FFF4);
+            rf2.set(rf.left + 35 * u, rf.centerY() - 32 * u, rf.left + 115 * u, rf.centerY() + 32 * u);
+            c.drawRoundRect(rf2, 8 * u, 8 * u, p);
+            p.setColor(0xFF2E9A6A);
+            Path m = new Path();
+            m.moveTo(rf2.left + 8 * u, rf2.bottom - 8 * u);
+            m.lineTo(rf2.left + 30 * u, rf2.top + 22 * u);
+            m.lineTo(rf2.left + 48 * u, rf2.bottom - 20 * u);
+            m.lineTo(rf2.left + 60 * u, rf2.top + 34 * u);
+            m.lineTo(rf2.right - 8 * u, rf2.bottom - 8 * u);
+            m.close();
+            c.drawPath(m, p);
+            c.drawCircle(rf2.right - 18 * u, rf2.top + 16 * u, 7 * u, p);
+        }
+        title(c, L.t("เลือกรูปจากแกลเลอรี", "Pick from gallery"), rf.centerX() + 40 * u, rf.centerY() + 16 * u, 44 * u, 0xFFFFFFFF, Paint.Align.CENTER, rf.width() - 200 * u);
+        if (hasPhoto) {
+            final RectF pr = new RectF(rf);
+            if (pf.avatar == -1) {
+                sp.setStrokeWidth(8 * u);
+                sp.setColor(alpha(0xFFFFD23F, (int) (150 + 80 * Math.sin(anim * 5))));
+                c.drawRoundRect(pr, 34 * u, 34 * u, sp);
+            }
+            rf.set(r.left + 40 * u, gy + 135 * u, r.right - 40 * u, gy + 215 * u);
+            button(c, rf, pf.avatar == -1 ? L.t("✓ กำลังใช้รูปนี้", "✓ Using this photo") : L.t("ใช้รูปเดิม", "Use my photo"), 0xFF4F8BFF, true,
+                    () -> { pf.avatar = -1; pf.save(); pushNow(); popup = P_PLAYER; });
+        }
+        float cell = (r.width() - 80 * u) / 4f, top = gy + (hasPhoto ? 290 : 200) * u;
+        plain(c, L.t("หรือเลือกไอคอน", "or choose an icon"), r.centerX(), top - 20 * u, 30 * u, 0xFFC9C2E6, Paint.Align.CENTER, 0);
         for (int i = 0; i < AVATARS; i++) {
             final int id = i;
             float x = r.left + 40 * u + (i % 4) * cell, y = top + (i / 4) * cell;
             RectF cr = new RectF(x + 10 * u, y + 10 * u, x + cell - 10 * u, y + cell - 10 * u);
             rarityCard(c, cr, 0xFF8A6BFF, true, pf.avatar == i, 30 * u);
             avatar(c, cr.centerX(), cr.centerY(), cell * 0.32f, i);
-            btns.add(new Btn(cr, () -> { pf.avatar = id; pf.save(); popup = P_PLAYER; }));
+            btns.add(new Btn(cr, () -> { pf.avatar = id; pf.save(); pushNow(); popup = P_PLAYER; }));
         }
-        rf.set(r.centerX() - 200 * u, r.bottom - 130 * u, r.centerX() + 200 * u, r.bottom - 40 * u);
+        rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 35 * u);
         button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_PLAYER);
     }
 
     void drawSettings(Canvas c) {
-        RectF r = new RectF(80 * u, H / 2 - 380 * u, W - 80 * u, H / 2 + 380 * u);
+        RectF r = new RectF(80 * u, H / 2 - 450 * u, W - 80 * u, H / 2 + 450 * u);
         popupFrame(c, r, L.t("ตั้งค่า", "Settings"));
+        rf.set(r.left + 60 * u, r.top + 540 * u, r.right - 60 * u, r.top + 640 * u);
+        button(c, rf, L.t("เสียงเอฟเฟกต์: ", "Sound effects: ") + (Sfx.enabled ? L.t("เปิด", "ON") : L.t("ปิด", "OFF")), Sfx.enabled ? 0xFF2E9A6A : 0xFF3A3360, true, () -> {
+            Sfx.enabled = !Sfx.enabled;
+            acc.setSfx(Sfx.enabled);
+            Sfx.play(Sfx.OK);
+        });
         text(c, "ภาษา / Language", r.centerX(), r.top + 210 * u, 42 * u, 0xFFFFFFFF);
         float bw = (r.width() - 180 * u) / 2f;
         rf.set(r.left + 60 * u, r.top + 260 * u, r.left + 60 * u + bw, r.top + 370 * u);
@@ -2043,7 +3637,7 @@ public final class GameView extends View {
         button(c, rf, "English", L.en ? 0xFFFF8A2B : 0xFF3A3360, true, () -> { L.en = true; acc.setLang(true); });
         rf.set(r.left + 60 * u, r.top + 410 * u, r.right - 60 * u, r.top + 510 * u);
         button(c, rf, L.t("เปลี่ยนรหัสผ่าน", "Change password"), 0xFF4F8BFF, true, () -> { popup = P_NONE; askChangePassword(); });
-        plain(c, L.t("บัญชี: ", "Account: ") + user + "  •  Stella TD " + VERSION, r.centerX(), r.top + 570 * u, 28 * u, 0x99FFFFFF, Paint.Align.CENTER, r.width() - 60 * u);
+        plain(c, L.t("บัญชี: ", "Account: ") + user + "  •  Stella TD " + VERSION, r.centerX(), r.top + 700 * u, 28 * u, 0x99FFFFFF, Paint.Align.CENTER, r.width() - 60 * u);
         rf.set(r.centerX() - 200 * u, r.bottom - 130 * u, r.centerX() + 200 * u, r.bottom - 40 * u);
         button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
     }
@@ -2423,38 +4017,102 @@ public final class GameView extends View {
 
 
     // ================================================================== login
-    void drawLogin(Canvas c) {
-        // hero: galaxy, sun, orbiting planets, black hole and a meteor shower
-        float cy = H * 0.27f;
-        c.save();
-        c.translate(W / 2, cy);
-        c.rotate(-20);
-        c.scale(1f, 0.55f);
-        c.rotate(anim * 5);
-        sprite(c, gBmp, 0, 0, W * 0.75f, 150);
-        c.restore();
-        glowCircle(c, W / 2, cy, 420 * u, 0x55FF9A3C);
-        sp.setPathEffect(null);
-        sp.setStrokeWidth(3 * u);
-        for (int i = 0; i < 3; i++) {
-            float rr = (260 + i * 110) * u;
-            sp.setColor(0x33FFFFFF);
-            c.drawOval(new RectF(W / 2 - rr, cy - rr * 0.42f, W / 2 + rr, cy + rr * 0.42f), sp);
-        }
-        int[] orb = {Defs.EARTH, Defs.SATURN, Defs.NEPTUNE, Defs.MARS, Defs.URANUS, Defs.JUPITER};
-        for (int pass = 0; pass < 2; pass++) {
-            if (pass == 1) sprite(c, pBmp[Defs.SUN], W / 2, cy, 230 * u, 255);
-            for (int i = 0; i < orb.length; i++) {
-                int ring = i % 3;
-                double a = anim * (0.5 - ring * 0.1) + i * 1.9;
-                float rr = (260 + ring * 110) * u;
-                boolean front = Math.sin(a) > 0;
-                if ((pass == 1) != front) continue;
-                float s = (0.8f + 0.2f * (float) Math.sin(a)) * (62 + ring * 14) * u;
-                sprite(c, pBmp[orb[i]], W / 2 + (float) Math.cos(a) * rr, cy + (float) Math.sin(a) * rr * 0.42f, s, 255);
+    /** animated cover: the whole solar system orbiting inside a spiral galaxy */
+    void solarCover(Canvas c, float cx, float cy) {
+        // painted nebula behind everything, drifting and breathing slowly
+        if (nebulaBmp != null) {
+            float k = 1.08f + 0.03f * (float) Math.sin(anim * 0.25f);
+            float ox = (float) Math.sin(anim * 0.07f) * 30 * u, oy = (float) Math.cos(anim * 0.05f) * 40 * u;
+            Paint np = new Paint(Paint.FILTER_BITMAP_FLAG);
+            c.drawBitmap(nebulaBmp, null, new RectF(W / 2 - W * k / 2 + ox, H / 2 - H * k / 2 + oy, W / 2 + W * k / 2 + ox, H / 2 + H * k / 2 + oy), np);
+            // twinkling stars on top of the painting
+            p.setShader(null);
+            p.setStyle(Paint.Style.FILL);
+            for (int i = 0; i < 60; i++) {
+                float sx = (i * 173.1f) % W, sy = (i * 287.9f) % H;
+                float tw = (float) Math.max(0, Math.sin(anim * (1.2f + (i % 4) * 0.5f) + i));
+                if (tw < 0.3f) continue;
+                p.setColor(alpha(0xFFFFFFFF, (int) (220 * tw)));
+                c.drawPath(Art.starPath(sx, sy, (4 + (i % 3) * 3) * u * tw, 1.2f * u, 4), p);
             }
         }
-        blackHole(c, W * 0.86f, H * 0.08f, 46 * u);
+        // god rays from the sun
+        c.save();
+        c.rotate(anim * 3, cx, cy);
+        for (int k = 0; k < 10; k++) {
+            Path ray = new Path();
+            double a0 = k * Math.PI / 5, a1 = a0 + 0.09;
+            float rr = (700 + 120 * (float) Math.sin(anim * 0.8 + k)) * u;
+            ray.moveTo(cx, cy);
+            ray.lineTo(cx + (float) Math.cos(a0) * rr, cy + (float) Math.sin(a0) * rr);
+            ray.lineTo(cx + (float) Math.cos(a1) * rr, cy + (float) Math.sin(a1) * rr);
+            ray.close();
+            p.setShader(new RadialGradient(cx, cy, rr, 0x33FFD890, 0x00FFD890, Shader.TileMode.CLAMP));
+            c.drawPath(ray, p);
+        }
+        p.setShader(null);
+        c.restore();
+        // milky-way band and the turning galaxy behind everything
+        c.save();
+        c.translate(cx, cy);
+        c.rotate(-22);
+        c.scale(1f, 0.5f);
+        c.rotate(anim * 4);
+        sprite(c, gBmp, 0, 0, W * 0.95f, 170);
+        c.restore();
+        glowCircle(c, cx - 330 * u, cy - 260 * u, 330 * u, 0x335B8CFF);
+        glowCircle(c, cx + 360 * u, cy + 200 * u, 360 * u, 0x33E05BD8);
+        glowCircle(c, cx, cy, 470 * u, 0x44FF9A3C);
+        int[] orb = {Defs.MERCURY, Defs.VENUS, Defs.EARTH, Defs.MARS, Defs.JUPITER, Defs.SATURN, Defs.URANUS, Defs.NEPTUNE, Defs.PLUTO};
+        float tiltK = 0.36f;
+        // orbit lines with a soft glow
+        sp.setPathEffect(null);
+        for (int i = 0; i < orb.length; i++) {
+            float rr = (150 + i * 44) * u;
+            RectF o = new RectF(cx - rr, cy - rr * tiltK, cx + rr, cy + rr * tiltK);
+            sp.setStrokeWidth(7 * u);
+            sp.setColor(0x14FFFFFF);
+            c.drawOval(o, sp);
+            sp.setStrokeWidth(2 * u);
+            sp.setColor(0x40FFFFFF);
+            c.drawOval(o, sp);
+        }
+        // planets behind the sun first, then the sun, then those in front
+        for (int pass = 0; pass < 2; pass++) {
+            if (pass == 1) {
+                // sun with turning corona rays
+                for (int k = 0; k < 12; k++) {
+                    double a = anim * 0.3 + k * Math.PI / 6;
+                    float l = (150 + 25 * (float) Math.sin(anim * 2 + k)) * u;
+                    sp.setStrokeWidth(10 * u);
+                    sp.setColor(0x33FFC860);
+                    c.drawLine(cx + (float) Math.cos(a) * 95 * u, cy + (float) Math.sin(a) * 95 * u,
+                            cx + (float) Math.cos(a) * l, cy + (float) Math.sin(a) * l, sp);
+                }
+                sprite(c, pBmp[Defs.SUN], cx, cy, (150 + 4 * (float) Math.sin(anim * 2)) * u, 255);
+            }
+            for (int i = 0; i < orb.length; i++) {
+                float rr = (150 + i * 44) * u;
+                double speed = 0.9 / Math.pow(1 + i, 0.75);
+                double a = anim * speed + i * 2.3;
+                boolean front = Math.sin(a) > 0;
+                if ((pass == 1) != front) continue;
+                float depth = 0.82f + 0.18f * (float) Math.sin(a);
+                float x = cx + (float) Math.cos(a) * rr, y = cy + (float) Math.sin(a) * rr * tiltK;
+                // glowing trail along the orbit
+                p.setShader(null);
+                p.setStyle(Paint.Style.FILL);
+                for (int k = 1; k <= 10; k++) {
+                    double ta = a - k * 0.05;
+                    p.setColor(alpha(0xFFBFD8FF, (int) (90 * (1 - k / 11f) * depth)));
+                    c.drawCircle(cx + (float) Math.cos(ta) * rr, cy + (float) Math.sin(ta) * rr * tiltK, (5 - k * 0.35f) * u, p);
+                }
+                float sz = (i == 4 ? 60 : i == 5 ? 66 : i >= 6 ? 44 : 34 + i * 3) * u * depth;
+                sprite(c, pBmp[orb[i]], x, y, sz, 255);
+            }
+        }
+        // a black hole far away and shooting stars
+        blackHole(c, W * 0.86f, H * 0.075f, 40 * u);
         for (int i = 0; i < 4; i++) {
             float t = (float) ((anim * 0.22 + i * 0.27) % 1.0);
             float mx = W * (1.1f - t * 1.3f) + i * 60 * u, my = H * (0.02f + t * 0.3f) + i * 40 * u;
@@ -2470,6 +4128,11 @@ public final class GameView extends View {
             p.setShader(null);
             glowCircle(c, mx, my, 14 * u, 0xFFFFF4D0);
         }
+    }
+
+    void drawLogin(Canvas c) {
+        if (consoleApp) { drawConsoleLogin(c); return; }
+        solarCover(c, W / 2, H * 0.265f);
         // glass card
         RectF card = new RectF(60 * u, H * 0.5f, W - 60 * u, H * 0.5f + 760 * u);
         panel(c, card, 0xE0241452, 48 * u);
@@ -2522,14 +4185,14 @@ public final class GameView extends View {
             if (p0.uid.equals(cloud.uid)) {
                 me = true;
                 Cloud.Player q = new Cloud.Player();
-                q.uid = p0.uid; q.name = user; q.avatar = pf.avatar; q.wins = pf.wins; q.stars = pf.stars; q.playSec = pf.playSec;
+                q.uid = p0.uid; q.name = user; q.avatar = pf.avatar; q.photo = pf.photo; q.role = cloud.myRole(); q.lastSeen = p0.lastSeen; q.wins = pf.wins; q.stars = pf.stars; q.playSec = pf.playSec;
                 q.planets = pf.ownedCount(); q.banned = p0.banned;
                 out.add(q);
             } else out.add(p0);
         }
         if (!me && pf != null) {
             Cloud.Player q = new Cloud.Player();
-            q.uid = cloud.uid; q.name = user; q.avatar = pf.avatar; q.wins = pf.wins; q.stars = pf.stars; q.playSec = pf.playSec; q.planets = pf.ownedCount();
+            q.uid = cloud.uid; q.name = user; q.avatar = pf.avatar; q.photo = pf.photo; q.role = cloud.myRole(); q.wins = pf.wins; q.stars = pf.stars; q.playSec = pf.playSec; q.planets = pf.ownedCount();
             out.add(q);
         }
         return out;
@@ -2573,7 +4236,7 @@ public final class GameView extends View {
                 sp.setStrokeWidth(6 * u);
                 sp.setColor(medal[rank]);
                 c.drawCircle(col.centerX(), cy, 56 * u, sp);
-                avatar(c, col.centerX(), cy, 46 * u, a.avatar);
+                avatarOf(c, col.centerX(), cy, 46 * u, a.avatar, a.photo);
                 if (rank == 0) trophy(c, col.centerX(), cy - 95 * u, 30 * u);
                 text(c, a.name, col.centerX(), col.top - 20 * u, 34 * u, a.uid.equals(cloud.uid) ? 0xFFFFD23F : 0xFFFFFFFF, Paint.Align.CENTER, pw);
             }
@@ -2591,7 +4254,7 @@ public final class GameView extends View {
             p.setColor(mc);
             c.drawCircle(r.left + 60 * u, r.centerY(), 30 * u, p);
             text(c, String.valueOf(i + 1), r.left + 60 * u, r.centerY() + 13 * u, 36 * u, 0xFF140A2A);
-            avatar(c, r.left + 135 * u, r.centerY(), 30 * u, a.avatar);
+            avatarOf(c, r.left + 135 * u, r.centerY(), 30 * u, a.avatar, a.photo);
             text(c, a.name + (mine ? L.t("  (คุณ)", "  (you)") : ""), r.left + 185 * u, r.centerY() + 14 * u, 38 * u, 0xFFFFFFFF, Paint.Align.LEFT, 430 * u);
             int v = statOf(a, tab);
             String vs = tab == 2 ? fmtTime(v) : String.valueOf(v);
@@ -2645,7 +4308,7 @@ public final class GameView extends View {
     /** load the selected player's save for editing (my own save is edited directly) */
     void selectAdmin(String id) {
         adminSel = id;
-        if (id.equals(cloud.uid)) { adminProf = pf; adminProfUid = id; return; }
+        if (id.equals(cloud.uid) && !consoleApp) { adminProf = pf; adminProfUid = id; return; }
         adminProf = null;
         adminLoading = true;
         cloud.fetchProfile(id, (q, err) -> {
@@ -2658,9 +4321,10 @@ public final class GameView extends View {
     /** save an edited player back to the cloud */
     void commitAdmin(String msg) {
         if (adminProf == null) return;
-        if (adminProfUid.equals(cloud.uid)) { pf.save(); pushNow(); showToast(msg); return; }
+        if (!Roles.canEdit(cloud.myRole())) { showToast(L.t("ต้องเป็น Admin ขึ้นไป", "Admin rank or higher needed")); return; }
+        if (adminProfUid.equals(cloud.uid) && !consoleApp) { pf.save(); pushNow(); cloud.logAsync("edit self: " + msg); showToast(msg); return; }
         adminProf.saveTime = System.currentTimeMillis();
-        cloud.upload(adminProfUid, nameOf(adminProfUid), adminProf, (ok, err) -> {
+        cloud.upload(adminProfUid, nameOf(adminProfUid), adminProf, "edit " + nameOf(adminProfUid) + ": " + msg, (ok, err) -> {
             showToast(err != null ? err : msg);
             refreshPlayers();
         });
@@ -2703,28 +4367,97 @@ public final class GameView extends View {
                 });
     }
 
+    /** admin: give a planet and set its level, enchant and material */
     void drawGivePlanet(Canvas c) {
-        RectF r = new RectF(40 * u, H / 2 - 560 * u, W - 40 * u, H / 2 + 560 * u);
-        popupFrame(c, r, L.t("ให้ดวงดาวกับ ", "Give a planet to ") + nameOf(adminSel));
+        RectF r = new RectF(30 * u, 120 * u, W - 30 * u, H - 120 * u);
+        popupFrame(c, r, L.t("ดวงดาวของ ", "Planets of ") + nameOf(adminSel));
         final Profile q = adminProf;
         if (q == null) { popup = P_NONE; return; }
-        float cell = (r.width() - 80 * u) / 3f, top = r.top + 150 * u;
-        float rowH = Math.min(cell * 0.8f, (r.height() - 300 * u) / 4f);
+        int cols = 5;
+        float cell = (r.width() - 80 * u) / cols, top = r.top + 140 * u, rowH = cell * 0.95f;
         for (int i = 0; i < Defs.P_COUNT; i++) {
             final int t = i;
-            float x = r.left + 40 * u + (i % 3) * cell, y = top + (i / 3) * rowH;
-            RectF cr = new RectF(x + 8 * u, y + 8 * u, x + cell - 8 * u, y + rowH - 8 * u);
-            rarityCard(c, cr, Defs.RARITY_COLOR[Defs.P_RARITY[i]], true, false, 24 * u);
-            sprite(c, pBmp[i], cr.centerX(), cr.centerY() - 22 * u, Math.min(cell * 0.26f, rowH * 0.34f), 255);
-            text(c, Defs.P_NAME[i], cr.centerX(), cr.bottom - 22 * u, 30 * u, 0xFFFFFFFF, Paint.Align.CENTER, cr.width() - 10 * u);
-            if (q.owned[i]) plain(c, "x" + (q.copies[i] + 1), cr.right - 14 * u, cr.top + 38 * u, 26 * u, 0xFF7CFF8A, Paint.Align.RIGHT, 0);
-            btns.add(new Btn(cr, () -> {
-                q.givePlanet(t);
-                commitAdmin(Defs.P_NAME[t] + " -> " + nameOf(adminSel));
-            }));
+            float x = r.left + 40 * u + (i % cols) * cell, y = top + (i / cols) * rowH;
+            RectF cr = new RectF(x + 6 * u, y + 6 * u, x + cell - 6 * u, y + rowH - 6 * u);
+            rarityCard(c, cr, Defs.RARITY_COLOR[Defs.P_RARITY[i]], q.owned[i], givePick == i, 22 * u);
+            sprite(c, pBmp[i], cr.centerX(), cr.centerY() - 16 * u, cell * 0.25f, q.owned[i] ? 255 : 110);
+            plain(c, Defs.P_NAME[i], cr.centerX(), cr.bottom - 16 * u, 24 * u, 0xFFFFFFFF, Paint.Align.CENTER, cr.width() - 8 * u);
+            if (q.owned[i]) plain(c, "Lv" + q.level[i], cr.right - 10 * u, cr.top + 30 * u, 22 * u, 0xFF7CFF8A, Paint.Align.RIGHT, 0);
+            btns.add(new Btn(cr, () -> givePick = t));
         }
-        rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 30 * u);
-        button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
+        float ey = top + ((Defs.P_COUNT + cols - 1) / cols) * rowH + 20 * u;
+        final int t = givePick;
+        if (t < 0) {
+            plain(c, L.t("แตะดวงดาวที่ต้องการให้หรือแก้ไข", "Tap a planet to give or edit it"), r.centerX(), ey + 80 * u, 32 * u, 0xFFC9C2E6, Paint.Align.CENTER, 0);
+        } else {
+            RectF ed = new RectF(r.left + 30 * u, ey, r.right - 30 * u, r.bottom - 150 * u);
+            panel(c, ed, 0xEE140A33, 30 * u);
+            sprite(c, pBmp[t], ed.left + 90 * u, ed.top + 90 * u, 60 * u, 255);
+            title(c, Defs.P_NAME[t], ed.left + 175 * u, ed.top + 80 * u, 44 * u, Defs.RARITY_COLOR[Defs.P_RARITY[t]], Paint.Align.LEFT, 0);
+            plain(c, q.owned[t] ? L.t("มีแล้ว • ซ้ำ ", "Owned • copies ") + q.copies[t] : L.t("ยังไม่มี", "Not owned"),
+                    ed.left + 175 * u, ed.top + 125 * u, 26 * u, q.owned[t] ? 0xFF7CFF8A : 0xFFFF8A8A, Paint.Align.LEFT, 0);
+            float bw = (ed.width() - 90 * u) / 2f, y = ed.top + 170 * u, bh = 80 * u;
+            rf.set(ed.left + 30 * u, y, ed.left + 30 * u + bw, y + bh);
+            button(c, rf, q.owned[t] ? L.t("+1 ชิ้นซ้ำ", "+1 copy") : L.t("ให้ดาวนี้", "Give it"), 0xFF33C6A6, true, () -> { q.givePlanet(t); giveDirty = true; });
+            rf.set(ed.right - 30 * u - bw, y, ed.right - 30 * u, y + bh);
+            button(c, rf, L.t("เอาออก", "Remove"), 0xFFFF6B5B, q.owned[t], () -> {
+                q.owned[t] = false;
+                q.copies[t] = 0;
+                for (int k = 0; k < q.deck.length; k++) if (q.deck[k] == t) q.deck[k] = -1;
+                giveDirty = true;
+            });
+            y += bh + 24 * u;
+            // level
+            editorRow(c, ed, y, "Level", "Lv " + q.level[t], q.owned[t], () -> { q.level[t] = Math.max(1, q.level[t] - 1); giveDirty = true; },
+                    () -> { q.level[t] = Math.min(Profile.MAX_LV, q.level[t] + 1); giveDirty = true; });
+            y += 100 * u;
+            // enchant (none + all enchants)
+            int e = q.enchant[t];
+            editorRow(c, ed, y, "Enchant", e < 0 ? L.t("ไม่มี", "none") : enchName(e, q.tier[t]), q.owned[t],
+                    () -> { setEnchant(q, t, q.enchant[t] < 0 ? Defs.EN_COUNT - 1 : q.enchant[t] - 1); giveDirty = true; },
+                    () -> { setEnchant(q, t, q.enchant[t] + 1 >= Defs.EN_COUNT ? -1 : q.enchant[t] + 1); giveDirty = true; });
+            if (e >= 0) badge(c, ed.left + 255 * u, y + 40 * u, 26 * u, e, q.tier[t]);
+            y += 100 * u;
+            if (e >= 0 && Defs.EN_TIERS[e] > 0) {
+                editorRow(c, ed, y, "Tier", "I II III".split(" ")[Math.max(0, q.tier[t] - 1)], true,
+                        () -> { q.tier[t] = Math.max(1, q.tier[t] - 1); giveDirty = true; },
+                        () -> { q.tier[t] = Math.min(Defs.EN_TIERS[q.enchant[t]], q.tier[t] + 1); giveDirty = true; });
+                y += 100 * u;
+            }
+            // material
+            int m = q.material[t];
+            editorRow(c, ed, y, "Material", m < 0 ? L.t("ไม่มี", "none") : matName(m), q.owned[t],
+                    () -> { q.material[t] = q.material[t] < 0 ? Defs.MAT_COUNT - 1 : q.material[t] - 1; giveDirty = true; },
+                    () -> { q.material[t] = q.material[t] + 1 >= Defs.MAT_COUNT ? -1 : q.material[t] + 1; giveDirty = true; });
+            if (m >= 0) materialBadge(c, ed.left + 255 * u, y + 40 * u, 26 * u, m);
+        }
+        float bw = (r.width() - 100 * u) / 2f;
+        rf.set(r.left + 30 * u, r.bottom - 125 * u, r.left + 30 * u + bw, r.bottom - 35 * u);
+        button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> {
+            popup = P_NONE;
+            if (giveDirty) { giveDirty = false; selectAdmin(adminSel); showToast(L.t("ไม่ได้บันทึก", "Not saved")); }
+        });
+        rf.set(r.right - 30 * u - bw, r.bottom - 125 * u, r.right - 30 * u, r.bottom - 35 * u);
+        button(c, rf, L.t("บันทึก", "Save"), 0xFF2E9A6A, giveDirty, () -> {
+            giveDirty = false;
+            q.save();
+            commitAdmin(givePick >= 0 ? Defs.P_NAME[givePick] + L.t(" อัปเดตแล้ว", " updated") : L.t("บันทึกแล้ว", "Saved"));
+        });
+    }
+
+    static void setEnchant(Profile q, int t, int e) {
+        q.enchant[t] = e;
+        q.tier[t] = e >= 0 && Defs.EN_TIERS[e] > 0 ? Defs.EN_TIERS[e] : 0;
+    }
+
+    /** label  [<]  value  [>] */
+    void editorRow(Canvas c, RectF ed, float y, String label, String value, boolean enabled, Runnable minus, Runnable plus) {
+        plain(c, label, ed.left + 40 * u, y + 52 * u, 30 * u, 0xFFC9C2E6, Paint.Align.LEFT, 0);
+        rf.set(ed.left + 300 * u, y, ed.left + 400 * u, y + 80 * u);
+        button(c, rf, "<", 0xFF4A3D8F, enabled, minus);
+        rf.set(ed.right - 130 * u, y, ed.right - 30 * u, y + 80 * u);
+        button(c, rf, ">", 0xFF4A3D8F, enabled, plus);
+        text(c, value, (ed.left + 400 * u + ed.right - 130 * u) / 2, y + 54 * u, 34 * u, enabled ? 0xFFFFFFFF : 0xFF6A6488, Paint.Align.CENTER, ed.right - ed.left - 560 * u);
     }
 
     void drawConsole(Canvas c) {
@@ -2781,46 +4514,194 @@ public final class GameView extends View {
         String line = raw == null ? "" : raw.trim();
         if (line.startsWith("/")) line = line.substring(1);
         if (line.isEmpty()) return;
-        if (!retried) log("> " + line);
+        if (!retried) { log("> " + line); lastCommand = line; }
         final String[] a = line.split("\\s+");
         final String cmd = a[0].toLowerCase(Locale.US);
+        final int my = cloud.myRole();
+        if (my < Roles.STAFF) { log("! " + L.t("ต้องมียศทีมงาน", "staff rank required")); return; }
         switch (cmd) {
             case "help":
-                log("list  •  refresh  •  info <user>");
-                log("give <user> <star|millite|crystal|wins> <n>");
-                log("set <user> <star|millite|crystal|wins> <n>");
-                log("planet <user> <name|all>  •  maxlevel <user>");
-                log("unlock <user>  •  ban/unban <user>  •  reset <user>");
-                log("infsp on|off  •  clear");
+                log("# staff:  list [text] • online • whois <u> • info <u> • staff • logs [n] • server • refresh • clear");
+                log("# mod:    ban <u> [hours|perm] [reason] • tempban <u> <hours> [reason] • unban <u> • kick <u>");
+                log("# admin:  give|take|set <u> <star|millite|crystal|oil|wins|bosskills> <n>");
+                log("#         skin <u> <style> <planet|all> • unskin <u> <style> <planet|all>   (styles: golden graveyard white aurora red elite shinypurple shiny madness king anniv)");
+                log("#         item <u> <capsule|hellmoon> <n>   (n can be negative)");
+                log("#         planet <u> <name|all> • unplanet <u> <name> • level <u> <name|all> <1-10>");
+                log("#         enchant <u> <planet> <enchant|none> [tier] • material <u> <planet> <material|none>");
+                log("#         unlock <u> [stage] • maxlevel <u> • reset <u> • wipe <u>");
+                log("#         giveall <star|millite|crystal> <n>");
+                log("# dev:    maintenance on|off • broadcast <msg>|clear • minver <n>" + (consoleApp ? "" : " • infsp on|off"));
+                log("# console: role <u> <owner|dev|admin|mod|staff|none>   (ranks come only from Stella Console)");
+                log("# ranks:  owner > dev > admin > mod > staff   (you: " + (cloud.isConsoleOwner() ? "CONSOLE" : Roles.NAME[my]) + ")");
                 return;
             case "clear": consoleLog.clear(); return;
             case "refresh": refreshPlayers(); log("refreshing player list..."); return;
             case "list": {
-                if (players.isEmpty()) { log("! " + L.t("ยังไม่มีรายชื่อ พิมพ์ refresh ก่อน", "no list yet, run refresh first")); refreshPlayers(); return; }
+                if (players.isEmpty()) { refreshPlayers(() -> runCommand(lineOf(a), true)); return; }
+                String f = a.length > 1 ? Accounts.norm(a[1]) : "";
                 StringBuilder b = new StringBuilder();
-                for (Cloud.Player x : players) b.append(x.name).append(x.banned ? "(ban) " : " ");
+                int n = 0;
+                for (Cloud.Player x : players) {
+                    if (!f.isEmpty() && !Accounts.norm(x.name).contains(f)) continue;
+                    n++;
+                    b.append(x.name).append(x.role > 0 ? "[" + Roles.NAME[x.role] + "]" : "").append(x.banned ? "(ban)" : "").append(onlineNow(x) ? "*" : "").append("  ");
+                }
+                log(n + " players  (* = online):");
                 log(b.toString().trim());
                 return;
             }
+            case "online": {
+                if (players.isEmpty()) { refreshPlayers(() -> runCommand(lineOf(a), true)); return; }
+                StringBuilder b = new StringBuilder();
+                int n = 0;
+                for (Cloud.Player x : players) if (onlineNow(x)) { n++; b.append(x.name).append("  "); }
+                log("online now: " + n + (consoleApp ? "" : "  •  ping " + pingMs + " ms"));
+                if (n > 0) log(b.toString().trim());
+                return;
+            }
+            case "staff": {
+                if (players.isEmpty()) { refreshPlayers(() -> runCommand(lineOf(a), true)); return; }
+                for (int r = Roles.OWNER; r >= Roles.STAFF; r--) {
+                    StringBuilder b = new StringBuilder();
+                    for (Cloud.Player x : players) if (x.role == r) b.append(x.name).append("  ");
+                    if (b.length() > 0) log(Roles.NAME[r] + ": " + b.toString().trim());
+                }
+                return;
+            }
+            case "logs": {
+                int n = 10;
+                try { if (a.length > 1) n = Math.max(1, Math.min(50, Integer.parseInt(a[1]))); } catch (NumberFormatException ignored) { }
+                java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("d/M HH:mm", Locale.US);
+                cloud.logs(n, (list, err) -> {
+                    if (err != null) { log("! " + err); return; }
+                    if (list.isEmpty()) log("(no logs)");
+                    for (int i = list.size() - 1; i >= 0; i--) log(f.format(new java.util.Date(list.get(i).t)) + "  " + list.get(i).by + ": " + list.get(i).msg);
+                });
+                return;
+            }
+            case "server":
+                cloud.server((s, err) -> {
+                    if (err != null) { log("! " + err); return; }
+                    serverInfo = s;
+                    log("server: " + (s.maintenance ? "MAINTENANCE" : "open") + " • online " + s.online + " • minver " + s.minVersion + " • broadcast: " + (s.broadcast == null ? "-" : s.broadcast));
+                });
+                return;
+            case "maintenance":
+                if (!need(Roles.DEV)) return;
+                if (a.length < 2) { log("! maintenance on|off"); return; }
+                cloud.setMaintenance(a[1].equalsIgnoreCase("on"), (ok, err) -> log(err != null ? "! " + err : "ok: maintenance " + a[1].toLowerCase(Locale.US)));
+                return;
+            case "broadcast": {
+                if (!need(Roles.DEV)) return;
+                if (a.length < 2) { log("! broadcast <message> | broadcast clear"); return; }
+                final String msg = a[1].equalsIgnoreCase("clear") ? null : line.substring(line.indexOf(' ') + 1).trim();
+                cloud.setBroadcast(msg, (ok, err) -> log(err != null ? "! " + err : "ok: broadcast " + (msg == null ? "cleared" : "sent")));
+                return;
+            }
+            case "minver": {
+                if (!need(Roles.DEV)) return;
+                if (a.length < 2) { log("! minver <versionCode>   (this game = " + VERSION_CODE + ")"); return; }
+                final int mv;
+                try { mv = Integer.parseInt(a[1]); } catch (NumberFormatException e) { log("! number"); return; }
+                cloud.setMinVersion(mv, (ok, err) -> log(err != null ? "! " + err : "ok: min version = " + mv));
+                return;
+            }
             case "infsp":
+                if (!need(Roles.ADMIN)) return;
                 acc.setInfiniteSP(a.length > 1 && a[1].equalsIgnoreCase("on"));
                 log("infinite SP = " + acc.infiniteSP());
                 return;
+            case "giveall": {
+                if (!need(Roles.ADMIN)) return;
+                if (a.length < 3) { log("! giveall <star|millite|crystal> <n>"); return; }
+                if (players.isEmpty()) { refreshPlayers(() -> runCommand(lineOf(a), true)); return; }
+                final String field = a[1].toLowerCase(Locale.US);
+                final int n;
+                try { n = Integer.parseInt(a[2]); } catch (NumberFormatException e) { log("! number"); return; }
+                if (!field.equals("star") && !field.equals("millite") && !field.equals("crystal")) { log("! star | millite | crystal"); return; }
+                log("giving " + n + " " + field + " to " + players.size() + " players...");
+                cloud.logAsync("giveall " + field + " " + n);
+                for (Cloud.Player x : new java.util.ArrayList<>(players)) {
+                    final Cloud.Player tx = x;
+                    cloud.fetchProfile(tx.uid, (q, err) -> {
+                        if (err != null || q == null) return;
+                        if (field.equals("star")) q.stars += n;
+                        else if (field.equals("millite")) q.millite += n;
+                        else q.crystals += n;
+                        q.saveTime = System.currentTimeMillis();
+                        cloud.upload(tx.uid, tx.name, q, (ok, e2) -> { if (e2 != null) log("! " + tx.name + ": " + e2); });
+                    });
+                }
+                return;
+            }
             default: break;
         }
-        if (a.length < 2) { log("! " + L.t("ต้องระบุชื่อไอดี", "username required")); return; }
-        final Cloud.Player target = Accounts.norm(a[1]).equals(Accounts.norm(user)) ? playerById(cloud.uid) : playerByName(a[1]);
-        final String tid = Accounts.norm(a[1]).equals(Accounts.norm(user)) ? cloud.uid : (target == null ? null : target.uid);
+        if (a.length < 2) { log("! " + L.t("ต้องระบุชื่อไอดี (พิมพ์ help)", "username required (type help)")); return; }
+        boolean meTarget = Accounts.norm(a[1]).equals(Accounts.norm(user));
+        final Cloud.Player target = meTarget ? playerById(cloud.uid) : playerByName(a[1]);
+        final String tid = meTarget ? cloud.uid : (target == null ? null : target.uid);
         if (tid == null && !retried) { final String again = line; refreshPlayers(() -> runCommand(again, true)); return; }
-        if (tid == null) { log("! " + L.t("ไม่พบไอดี ", "no such player ") + a[1] + L.t(" (ลอง refresh)", " (try refresh)")); return; }
+        if (tid == null) { log("! " + L.t("ไม่พบไอดี ", "no such player ") + a[1]); return; }
         final String tname = nameOf(tid);
-        if (cmd.equals("ban") || cmd.equals("unban")) {
-            if (Accounts.norm(tname).equals(Cloud.ADMIN)) { log("! admin can't be banned"); return; }
-            boolean ban = cmd.equals("ban");
-            cloud.setBan(tid, ban, (ok, err) -> { log(err != null ? "! " + err : "ok: " + (ban ? "banned " : "unbanned ") + tname); refreshPlayers(); });
-            return;
+        final int trole = meTarget ? my : target == null ? 0 : target.role;
+        boolean protectedTarget = !meTarget && trole >= my && my < Roles.OWNER;
+        switch (cmd) {
+            case "whois": {
+                Cloud.Player x = target;
+                if (x == null) { log("whois " + tname + ": (you)"); return; }
+                java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("d MMM HH:mm", Locale.US);
+                log("whois " + x.name + "  uid " + x.uid);
+                log("  rank " + Roles.NAME[x.role] + " • " + (onlineNow(x) ? "online" : x.lastSeen > 0 ? "seen " + f.format(new java.util.Date(x.lastSeen)) : "offline")
+                        + " • " + (x.banned ? "BANNED" + (x.banReason == null || x.banReason.isEmpty() ? "" : " (" + x.banReason + ")") + (x.banUntil > 0 ? " until " + f.format(new java.util.Date(x.banUntil)) : " permanent") : "not banned"));
+                log("  " + x.stars + " Star • " + x.wins + " wins • " + x.planets + " planets • played " + fmtTime(x.playSec));
+                return;
+            }
+            case "ban":
+            case "tempban": {
+                if (!need(Roles.MOD)) return;
+                if (meTarget || protectedTarget) { log("! " + L.t("แบนคนนี้ไม่ได้ (ยศเท่ากันหรือสูงกว่า)", "can't ban this player (same or higher rank)")); return; }
+                int hours = 0, from = 2;
+                if (a.length > 2 && !a[2].equalsIgnoreCase("perm")) {
+                    try { hours = Integer.parseInt(a[2].replace("h", "")); from = 3; } catch (NumberFormatException ignored) { }
+                } else if (a.length > 2) from = 3;
+                if (cmd.equals("tempban") && hours <= 0) { log("! tempban <user> <hours> [reason]"); return; }
+                StringBuilder why = new StringBuilder();
+                for (int i = from; i < a.length; i++) why.append(i > from ? " " : "").append(a[i]);
+                final int h = hours;
+                cloud.setBan(tid, tname, true, why.toString(), h, (ok, err) -> { log(err != null ? "! " + err : "ok: banned " + tname + (h > 0 ? " for " + h + "h" : " permanently")); refreshPlayers(); });
+                return;
+            }
+            case "unban":
+                if (!need(Roles.MOD)) return;
+                cloud.setBan(tid, tname, false, null, 0, (ok, err) -> { log(err != null ? "! " + err : "ok: unbanned " + tname); refreshPlayers(); });
+                return;
+            case "kick":
+                if (!need(Roles.MOD)) return;
+                if (meTarget || protectedTarget) { log("! " + L.t("เตะคนนี้ไม่ได้", "can't kick this player")); return; }
+                cloud.kick(tid, tname, (ok, err) -> log(err != null ? "! " + err : "ok: kicked " + tname));
+                return;
+            case "role": {
+                if (!cloud.isConsoleOwner()) { log("! " + L.t("ให้ยศได้จาก Stella Console เท่านั้น", "ranks can only be given from Stella Console")); return; }
+                if (a.length < 3) { log("! role <user> <owner|dev|admin|mod|staff|none>"); return; }
+                int to = a[2].equalsIgnoreCase("none") || a[2].equalsIgnoreCase("player") ? Roles.NONE : Roles.of(a[2]);
+                if (to == Roles.NONE && !a[2].equalsIgnoreCase("none") && !a[2].equalsIgnoreCase("player")) { log("! unknown rank " + a[2]); return; }
+                if (meTarget) { log("! " + L.t("เปลี่ยนยศตัวเองไม่ได้", "you can't change your own rank")); return; }
+                final int fto = to;
+                cloud.setRole(tid, tname, to, (ok, err) -> { log(err != null ? "! " + err : "ok: " + tname + " = " + Roles.NAME[fto]); refreshPlayers(); });
+                return;
+            }
+            case "wipe":
+                if (!need(Roles.ADMIN)) return;
+                if (meTarget || protectedTarget) { log("! " + L.t("ลบคนนี้ไม่ได้", "can't wipe this player")); return; }
+                cloud.wipe(tid, (ok, err) -> { log(err != null ? "! " + err : "ok: wiped " + tname); refreshPlayers(); });
+                return;
+            default: break;
         }
-        // everything else edits the player's save: fetch -> change -> upload
+        // everything else reads (info) or edits the player's save: fetch -> change -> upload
+        final boolean editing = !cmd.equals("info");
+        if (editing && !need(Roles.ADMIN)) return;
+        if (editing && protectedTarget) { log("! " + L.t("แก้ข้อมูลคนที่ยศเท่ากันหรือสูงกว่าไม่ได้", "can't edit a player of the same or higher rank")); return; }
+        final String fline = line;
         Cloud.Cb<Profile> apply = (q, err) -> {
             if (err != null) { log("! " + err); return; }
             String res;
@@ -2832,45 +4713,159 @@ public final class GameView extends View {
             if (res == null) return;
             log(res);
             if (res.startsWith("ok")) {
-                if (tid.equals(cloud.uid)) { pf.save(); pushNow(); }
-                else cloud.upload(tid, tname, q, (ok2, err2) -> { if (err2 != null) log("! " + err2); });
+                if (tid.equals(cloud.uid) && !consoleApp) { pf.save(); pushNow(); cloud.logAsync(fline); }
+                else {
+                    q.saveTime = System.currentTimeMillis();
+                    cloud.upload(tid, tname, q, fline, (ok2, err2) -> { if (err2 != null) log("! " + err2); });
+                }
                 if (tid.equals(adminProfUid) && !tid.equals(cloud.uid)) adminProf = q;
             }
         };
-        if (tid.equals(cloud.uid)) apply.done(pf, null);
+        if (tid.equals(cloud.uid) && !consoleApp) apply.done(pf, null);
         else cloud.fetchProfile(tid, apply);
+    }
+
+    static String lineOf(String[] a) { return String.join(" ", a); }
+
+    /** rank gate for console commands */
+    boolean need(int rank) {
+        if (cloud.myRole() >= rank) return true;
+        log("! " + L.t("ต้องเป็น ", "needs ") + Roles.NAME[rank] + L.t(" ขึ้นไป", " or higher"));
+        return false;
+    }
+
+    static int planetByName(String nm) {
+        for (int i = 0; i < Defs.P_COUNT; i++) if (Defs.P_NAME[i].equalsIgnoreCase(nm)) return i;
+        return -1;
     }
 
     /** @return the log line ("ok..." when the save changed and must be uploaded) */
     String applyCommand(String cmd, String[] a, Profile q) {
-        String n = q == null ? "?" : "";
         switch (cmd) {
             case "info":
-                return "info: " + q.stars + " Star, " + q.millite + " Mil, " + q.crystals + " Cry, " + q.wins + " wins, " + q.ownedCount() + "/12 planets";
+                return "info: " + q.stars + " Star, " + q.millite + " Mil, " + q.crystals + " Cry, " + q.oil + " Oil, " + q.skins.size() + " skins, " + q.wins + " wins, " + q.bossKills + " boss kills, "
+                        + q.ownedCount() + "/" + Defs.P_COUNT + " planets, stage " + q.unlocked + "/" + Defs.ST_COUNT;
             case "give":
+            case "take":
             case "set": {
                 String what = a[2].toLowerCase(Locale.US);
                 int v = Integer.parseInt(a[3]);
-                boolean add = cmd.equals("give");
+                if (v < 0 || v > 99999999) return "! 0 .. 99,999,999";
+                int sign = cmd.equals("take") ? -1 : 1;
+                boolean set = cmd.equals("set");
                 switch (what) {
-                    case "star": q.stars = Math.max(0, add ? q.stars + v : v); return "ok: star = " + q.stars;
-                    case "millite": q.millite = Math.max(0, add ? q.millite + v : v); return "ok: millite = " + q.millite;
-                    case "crystal": q.crystals = Math.max(0, add ? q.crystals + v : v); return "ok: crystal = " + q.crystals;
-                    case "wins": q.wins = Math.max(0, add ? q.wins + v : v); return "ok: wins = " + q.wins;
-                    default: return "! star | millite | crystal | wins";
+                    case "star": case "stars": q.stars = Math.max(0, set ? v : q.stars + sign * v); return "ok: star = " + q.stars;
+                    case "millite": q.millite = Math.max(0, set ? v : q.millite + sign * v); return "ok: millite = " + q.millite;
+                    case "crystal": case "crystals": q.crystals = Math.max(0, set ? v : q.crystals + sign * v); return "ok: crystal = " + q.crystals;
+                    case "wins": q.wins = Math.max(0, set ? v : q.wins + sign * v); return "ok: wins = " + q.wins;
+                    case "oil": q.oil = Math.max(0, set ? v : q.oil + sign * v); return "ok: crystal oil = " + q.oil;
+                    case "bosskills": q.bossKills = Math.max(0, set ? v : q.bossKills + sign * v); return "ok: boss kills = " + q.bossKills;
+                    default: return "! star | millite | crystal | oil | wins | bosskills";
                 }
             }
             case "planet": {
-                String nm = a[2].toLowerCase(Locale.US);
-                if (nm.equals("all")) { q.unlockAllPlanets(); return "ok: all planets"; }
-                for (int i = 0; i < Defs.P_COUNT; i++)
-                    if (Defs.P_NAME[i].toLowerCase(Locale.US).equals(nm)) { q.givePlanet(i); return "ok: +" + Defs.P_NAME[i]; }
-                return "! " + L.t("ไม่พบดวงดาว ", "unknown planet ") + a[2];
+                int t = planetByName(a[2]);
+                if (t < 0) return "! " + L.t("ไม่พบดวงดาว ", "unknown planet ") + a[2];
+                q.givePlanet(t);
+                return "ok: +" + Defs.P_NAME[t];
+            }
+            case "unplanet": {
+                int t = planetByName(a[2]);
+                if (t < 0) return "! " + L.t("ไม่พบดวงดาว ", "unknown planet ") + a[2];
+                q.owned[t] = false;
+                q.copies[t] = 0;
+                for (int i = 0; i < q.deck.length; i++) if (q.deck[i] == t) q.deck[i] = -1;
+                q.save();
+                return "ok: -" + Defs.P_NAME[t];
+            }
+            case "level": {
+                int lv = Integer.parseInt(a[3]);
+                if (lv < 1 || lv > Profile.MAX_LV) return "! level 1.." + Profile.MAX_LV;
+                if (a[2].equalsIgnoreCase("all")) {
+                    for (int i = 0; i < Defs.P_COUNT; i++) if (q.owned[i]) q.level[i] = lv;
+                    q.save();
+                    return "ok: every owned planet Lv " + lv;
+                }
+                int t = planetByName(a[2]);
+                if (t < 0) return "! " + L.t("ไม่พบดวงดาว ", "unknown planet ") + a[2];
+                if (!q.owned[t]) return "! " + L.t("ยังไม่มีดาวนี้ (ใช้ planet ก่อน)", "doesn't own it (use planet first)");
+                q.level[t] = lv;
+                q.save();
+                return "ok: " + Defs.P_NAME[t] + " Lv " + lv;
+            }
+            case "enchant": {
+                int t = planetByName(a[2]);
+                if (t < 0) return "! " + L.t("ไม่พบดวงดาว ", "unknown planet ") + a[2];
+                if (a[3].equalsIgnoreCase("none")) { q.enchant[t] = -1; q.tier[t] = 0; q.save(); return "ok: " + Defs.P_NAME[t] + " enchant removed"; }
+                int e = -1;
+                for (int i = 0; i < Defs.EN_COUNT; i++) if (Defs.EN_NAME[i].replace(" ", "").equalsIgnoreCase(a[3])) e = i;
+                if (e < 0) return "! enchant: Strong Reach Moving Lightning Storm Technology Midas Electro CrystalRain Moon Galacia Lava Megalonia Gianttic Galaxia";
+                q.enchant[t] = e;
+                q.tier[t] = Defs.EN_TIERS[e] > 0 ? Math.max(1, Math.min(Defs.EN_TIERS[e], a.length > 4 ? Integer.parseInt(a[4]) : Defs.EN_TIERS[e])) : 0;
+                q.save();
+                return "ok: " + Defs.P_NAME[t] + " enchant = " + enchName(e, q.tier[t]);
+            }
+            case "material": {
+                int t = planetByName(a[2]);
+                if (t < 0) return "! " + L.t("ไม่พบดวงดาว ", "unknown planet ") + a[2];
+                if (a[3].equalsIgnoreCase("none")) { q.material[t] = -1; q.save(); return "ok: " + Defs.P_NAME[t] + " material removed"; }
+                int m = -1;
+                for (int i = 0; i < Defs.MAT_COUNT; i++) if (Defs.MAT_NAME[i].equalsIgnoreCase(a[3])) m = i;
+                if (m < 0) {
+                    StringBuilder b = new StringBuilder("! material:");
+                    for (String nm : Defs.MAT_NAME) b.append(' ').append(nm);
+                    return b.toString();
+                }
+                q.material[t] = m;
+                q.save();
+                return "ok: " + Defs.P_NAME[t] + " material = " + Defs.MAT_NAME[m];
+            }
+            case "unlock": {
+                if (a.length > 2) {
+                    int st = Integer.parseInt(a[2]);
+                    if (st < 1 || st > Defs.ST_COUNT) return "! stage 1.." + Defs.ST_COUNT;
+                    q.unlocked = Math.max(q.unlocked, st);
+                    q.save();
+                    return "ok: unlocked up to stage " + st;
+                }
+                q.unlockAllStages();
+                return "ok: stages unlocked";
+            }
+            case "skin":
+            case "unskin": {
+                int st = -1;
+                for (int i = 0; i < Skins.STYLES; i++) if (Skins.NAME[i].replace(" ", "").equalsIgnoreCase(a[2]) || (i == Skins.ANNIV && a[2].equalsIgnoreCase("anniv"))) st = i;
+                if (st < 0) return "! style: golden graveyard white aurora red elite shinypurple shiny madness king anniv";
+                boolean all = a[3].equalsIgnoreCase("all");
+                int t = all ? -1 : planetByName(a[3]);
+                if (!all && t < 0) return "! " + L.t("ไม่พบดวงดาว ", "unknown planet ") + a[3];
+                if (!all && !Skins.fits(st, t)) return "! " + Skins.NAME[st] + L.t(" ใช้กับ ", " doesn't fit ") + Defs.P_NAME[t] + L.t(" ไม่ได้", "");
+                int n = 0;
+                for (int k = 0; k < Defs.P_COUNT; k++) {
+                    if ((!all && k != t) || !Skins.fits(st, k)) continue;
+                    int key = Skins.key(st, k);
+                    if (cmd.equals("skin")) { if (q.skins.add(key)) n++; }
+                    else if (q.skins.remove(key)) { n++; if (q.skinOn[k] == st) q.skinOn[k] = -1; }
+                }
+                q.save();
+                return "ok: " + (cmd.equals("skin") ? "+" : "-") + n + " " + Skins.NAME[st] + " skin(s)";
+            }
+            case "item": {
+                int v = Integer.parseInt(a[3]);
+                if (Math.abs(v) > 9999) return "! -9999 .. 9999";
+                String what = a[2].toLowerCase(Locale.US);
+                if (what.startsWith("capsule")) { q.raidCapsules = Math.max(0, q.raidCapsules + v); q.save(); return "ok: raid capsules = " + q.raidCapsules; }
+                if (what.equals("hellmoon")) {
+                    q.moons[Defs.MOON_HELL] = Math.max(0, q.moons[Defs.MOON_HELL] + v);
+                    for (int k = Defs.P_COUNT - 1; k >= 0 && q.moonsFree(Defs.MOON_HELL) < 0; k--) if (q.moonOn[k] == Defs.MOON_HELL) q.moonOn[k] = -1;
+                    q.save();
+                    return "ok: hell moons = " + q.moons[Defs.MOON_HELL];
+                }
+                return "! capsule | hellmoon";
             }
             case "maxlevel": q.maxAllPlanets(); return "ok: all planets Lv 10";
-            case "unlock": q.unlockAllStages(); return "ok: stages unlocked";
             case "reset": q.reset(); return "ok: progress reset";
-            default: return "! " + L.t("ไม่รู้จักคำสั่ง พิมพ์ help", "unknown command, type help") + n;
+            default: return "! " + L.t("ไม่รู้จักคำสั่ง พิมพ์ help", "unknown command, type help");
         }
     }
 
@@ -2879,67 +4874,150 @@ public final class GameView extends View {
         showToast(msg);
     }
 
-    void drawAdmin(Canvas c) {
-        if (!isAdmin()) { screen = S_LOBBY; return; }
-        header(c, "Admin Panel");
-        if (adminSel == null) selectAdmin(cloud.uid);
+    boolean staffScreen(int s) { return s == S_ADMIN || s == S_TERM || s == S_STAFF || s == S_SERVER || s == S_LOGS; }
+
+    /** header + tab row shared by every staff screen */
+    void staffTop(Canvas c, String title) {
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0xFFFFFFFF);
+        p.setShader(new LinearGradient(0, 0, 0, 300 * u, 0xF0090420, 0x00090420, Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, W, 300 * u, p);
+        p.setShader(null);
+        rf.set(30 * u, 50 * u, 150 * u, 150 * u);
+        if (consoleApp) {
+            button(c, rf, null, 0xFF6B5BD6, true, () -> Dialogs.confirm(ctx, L.t("ออกจากระบบ", "Log out"),
+                    L.t("ออกจาก Stella Console ใช่ไหม?", "Log out of Stella Console?"), L.t("ออก", "Log out"), this::logout));
+            sp.setPathEffect(null);
+            sp.setStrokeWidth(9 * u);
+            sp.setColor(0xFFFFFFFF);
+            float bx = rf.centerX(), by = rf.centerY();
+            rf2.set(bx - 24 * u, by - 24 * u, bx + 24 * u, by + 24 * u);
+            c.drawArc(rf2, -60, 300, false, sp);
+            c.drawLine(bx, by - 30 * u, bx, by - 4 * u, sp);
+        } else {
+            button(c, rf, null, 0xFF6B5BD6, true, () -> go(S_LOBBY));
+            sp.setPathEffect(null);
+            sp.setStrokeWidth(11 * u);
+            sp.setColor(0xFFFFFFFF);
+            float bx = rf.centerX(), by = rf.centerY();
+            c.drawLine(bx + 10 * u, by - 22 * u, bx - 14 * u, by, sp);
+            c.drawLine(bx - 14 * u, by, bx + 10 * u, by + 22 * u, sp);
+        }
+        title(c, title, 180 * u, 125 * u, 56 * u, 0xFFFFD23F, Paint.Align.LEFT, W - 560 * u);
+        int r = cloud.myRole();
+        pill(c, W - 200 * u, 75 * u, cloud.isConsoleOwner() ? "CONSOLE" : Roles.NAME[r], 30 * u, 0xFF140A2A, cloud.isConsoleOwner() ? 0xFF7CFF8A : Roles.COLOR[r]);
+        plain(c, user, W - 200 * u, 140 * u, 28 * u, 0xFFE6E0FF, Paint.Align.CENTER, 300 * u);
+        String[] tabs = {L.t("ผู้เล่น", "Players"), L.t("คอนโซล", "Console"), L.t("ทีมงาน", "Staff"), L.t("เซิร์ฟ", "Server"), "Log"};
+        int[] scr = {S_ADMIN, S_TERM, S_STAFF, S_SERVER, S_LOGS};
+        float tw = (W - 60 * u - 4 * 10 * u) / 5f;
+        for (int i = 0; i < 5; i++) {
+            final int s = scr[i];
+            rf.set(30 * u + i * (tw + 10 * u), 185 * u, 30 * u + i * (tw + 10 * u) + tw, 265 * u);
+            button(c, rf, tabs[i], screen == s ? 0xFFFF8A2B : 0xFF2A2350, true, () -> {
+                go(s);
+                if (s == S_SERVER) refreshServer();
+                if (s == S_LOGS) refreshLogs();
+                if (s == S_STAFF || s == S_ADMIN) refreshPlayers();
+            });
+        }
+    }
+
+    java.util.List<Cloud.Player> adminList() {
         java.util.List<Cloud.Player> list = rankList();
-        java.util.Collections.sort(list, (x, y) -> x.name.compareToIgnoreCase(y.name));
-        float y = 190 * u;
+        if (!adminFilter.isEmpty()) {
+            String f = Accounts.norm(adminFilter);
+            java.util.Iterator<Cloud.Player> it = list.iterator();
+            while (it.hasNext()) if (!Accounts.norm(it.next().name).contains(f)) it.remove();
+        }
+        java.util.Collections.sort(list, (x, y) -> y.role != x.role ? y.role - x.role : x.name.compareToIgnoreCase(y.name));
+        return list;
+    }
+
+    boolean onlineNow(Cloud.Player p0) {
+        return p0.uid.equals(cloud.uid) ? !consoleApp : p0.lastSeen > 0 && Math.abs(System.currentTimeMillis() - p0.lastSeen) < 60000;
+    }
+
+    void drawAdmin(Canvas c) {
+        if (!isAdmin()) { screen = consoleApp ? S_ADMIN : S_LOBBY; return; }
+        staffTop(c, L.t("ผู้เล่น", "Players"));
+        if (adminSel == null) selectAdmin(cloud.uid);
+        final int my = cloud.myRole();
+        java.util.List<Cloud.Player> list = adminList();
+        float y = 290 * u;
         int per = 4, pages = Math.max(1, (list.size() + per - 1) / per);
         adminPage = Math.max(0, Math.min(adminPage, pages - 1));
-        text(c, L.t("ผู้เล่นออนไลน์ ", "Online players ") + "(" + list.size() + ")", 50 * u, y + 45 * u, 40 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
-        rf.set(W - 450 * u, y, W - 300 * u, y + 70 * u);
+        rf.set(40 * u, y, 360 * u, y + 76 * u);
+        button(c, rf, adminFilter.isEmpty() ? L.t("ค้นหา...", "Search...") : "\u2315 " + adminFilter, 0xFF241A4E, true, () ->
+                Dialogs.ask(ctx, L.t("ค้นหาผู้เล่น", "Find a player"), L.t("พิมพ์บางส่วนของชื่อ (เว้นว่าง = ทั้งหมด)", "Part of a name (empty = everyone)"),
+                        new String[]{L.t("ชื่อ", "Name")}, new int[]{Dialogs.TEXT}, new String[]{adminFilter}, "OK", v -> { adminFilter = v[0].trim(); adminPage = 0; return null; }));
+        plain(c, list.size() + L.t(" คน", " players"), 380 * u, y + 50 * u, 30 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        rf.set(W - 470 * u, y, W - 300 * u, y + 76 * u);
         button(c, rf, L.t("รีเฟรช", "Refresh"), 0xFF33A8D0, !playersLoading, this::refreshPlayers);
-        rf.set(W - 290 * u, y, W - 180 * u, y + 70 * u);
+        rf.set(W - 290 * u, y, W - 190 * u, y + 76 * u);
         button(c, rf, "<", 0xFF4A3D8F, adminPage > 0, () -> adminPage--);
-        plain(c, (adminPage + 1) + "/" + pages, W - 140 * u, y + 47 * u, 30 * u, 0xFFE6E0FF, Paint.Align.CENTER, 0);
-        rf.set(W - 100 * u, y, W - 40 * u, y + 70 * u);
+        plain(c, (adminPage + 1) + "/" + pages, W - 140 * u, y + 50 * u, 28 * u, 0xFFE6E0FF, Paint.Align.CENTER, 0);
+        rf.set(W - 100 * u, y, W - 40 * u, y + 76 * u);
         button(c, rf, ">", 0xFF4A3D8F, adminPage < pages - 1, () -> adminPage++);
-        y += 90 * u;
+        y += 96 * u;
         for (int i = adminPage * per; i < Math.min(list.size(), (adminPage + 1) * per); i++) {
             final Cloud.Player a = list.get(i);
             boolean mine = a.uid.equals(cloud.uid);
             RectF r = new RectF(40 * u, y, W - 40 * u, y + 100 * u);
             panel(c, r, a.uid.equals(adminSel) ? 0xFF4A3D8F : 0xFF241A4E, 24 * u);
-            avatar(c, r.left + 55 * u, r.centerY(), 30 * u, a.avatar);
-            text(c, a.name + (mine ? L.t("  (คุณ)", "  (you)") : ""), r.left + 100 * u, r.top + 62 * u, 38 * u, 0xFFFFFFFF, Paint.Align.LEFT, 380 * u);
-            float tx = r.left + 500 * u;
-            if (Accounts.norm(a.name).equals(Cloud.ADMIN)) { plain(c, "ADMIN", tx, r.top + 60 * u, 26 * u, 0xFFFF8AB8, Paint.Align.LEFT, 0); tx += 100 * u; }
-            if (a.banned) plain(c, "BANNED", tx, r.top + 60 * u, 26 * u, 0xFFFF6B5B, Paint.Align.LEFT, 0);
-            plain(c, a.stars + " Star • " + a.wins + " W", r.right - 30 * u, r.top + 60 * u, 26 * u, 0xFFFFD23F, Paint.Align.RIGHT, 0);
+            avatarOf(c, r.left + 55 * u, r.centerY(), 30 * u, a.avatar, a.photo);
+            if (onlineNow(a)) {
+                p.setShader(null);
+                p.setColor(0xFF4DFF8A);
+                c.drawCircle(r.left + 78 * u, r.centerY() + 22 * u, 9 * u, p);
+            }
+            text(c, a.name + (mine ? L.t("  (คุณ)", "  (you)") : ""), r.left + 100 * u, r.top + 62 * u, 36 * u, 0xFFFFFFFF, Paint.Align.LEFT, 330 * u);
+            float tx = r.left + 450 * u;
+            if (a.role > 0) { pill(c, tx + 60 * u, r.centerY(), Roles.NAME[a.role], 24 * u, 0xFF140A2A, Roles.COLOR[a.role]); tx += 135 * u; }
+            if (a.banned) pill(c, tx + 60 * u, r.centerY(), "BANNED", 24 * u, 0xFFFFFFFF, 0xFFD0304A);
+            plain(c, a.stars + " Star • " + a.wins + " W", r.right - 30 * u, r.top + 60 * u, 24 * u, 0xFFFFD23F, Paint.Align.RIGHT, 0);
             btns.add(new Btn(r, () -> selectAdmin(a.uid)));
             y += 112 * u;
         }
-        y = 190 * u + 90 * u + per * 112 * u + 10 * u;
+        y = 290 * u + 96 * u + per * 112 * u + 10 * u;
         final String t = adminSel;
         final Profile q = adminProf;
         final boolean self = t != null && t.equals(cloud.uid);
         final Cloud.Player tp0 = playerById(t);
         final boolean banned = tp0 != null && tp0.banned;
-        text(c, L.t("จัดการ: ", "Manage: ") + nameOf(t), 50 * u, y + 40 * u, 42 * u, 0xFFFFFFFF, Paint.Align.LEFT, W - 100 * u);
-        if (q != null) plain(c, q.stars + " Star  •  " + q.millite + " Millite  •  " + q.crystals + " Crystal  •  " + q.ownedCount() + "/12",
-                W - 50 * u, y + 40 * u, 28 * u, 0xFFB8F6FF, Paint.Align.RIGHT, 0);
-        else if (adminLoading) plain(c, L.t("กำลังโหลด...", "Loading..."), W - 50 * u, y + 40 * u, 28 * u, 0xFFB8F6FF, Paint.Align.RIGHT, 0);
-        y += 70 * u;
-        float bw = (W - 110 * u) / 2f, bh = 96 * u, gap = 18 * u;
+        final int trole = self ? my : tp0 == null ? 0 : tp0.role;
+        final boolean above = !self && trole >= my && my < Roles.OWNER; // can't act on equal or higher ranks
+        text(c, L.t("จัดการ: ", "Manage: ") + nameOf(t), 50 * u, y + 40 * u, 40 * u, 0xFFFFFFFF, Paint.Align.LEFT, W - 640 * u);
+        if (q != null) plain(c, q.stars + " Star • " + q.millite + " Mil • " + q.crystals + " Cry • " + q.ownedCount() + "/" + Defs.P_COUNT,
+                W - 50 * u, y + 40 * u, 26 * u, 0xFFB8F6FF, Paint.Align.RIGHT, 0);
+        else if (adminLoading) plain(c, L.t("กำลังโหลด...", "Loading..."), W - 50 * u, y + 40 * u, 26 * u, 0xFFB8F6FF, Paint.Align.RIGHT, 0);
+        if (tp0 != null && tp0.banned && tp0.banReason != null && !tp0.banReason.isEmpty())
+            plain(c, L.t("เหตุผลแบน: ", "Ban reason: ") + tp0.banReason, 50 * u, y + 80 * u, 24 * u, 0xFFFF8A8A, Paint.Align.LEFT, W - 100 * u);
+        y += 95 * u;
+        float bw = (W - 110 * u) / 2f, bh = 90 * u, gap = 14 * u;
+        boolean edit = q != null && Roles.canEdit(my) && !above;
+        boolean mod = t != null && Roles.canBan(my) && !self && !above;
         String[] labels = {L.t("ตั้ง Star", "Set Star"), L.t("ตั้ง Millite", "Set Millite"), L.t("ตั้ง Crystal", "Set Crystal"),
-                L.t("ให้ดวงดาว", "Give planet"), banned ? L.t("ปลดแบน", "Unban") : L.t("แบนบัญชี", "Ban account"),
-                L.t("Lv 10 ทุกดวง", "All planets Lv 10"), L.t("ปลดล็อกทุกด่าน", "Unlock all stages"), L.t("ปลดล็อกดาวทั้งหมด", "Unlock all planets"),
+                L.t("ให้ / แก้ดวงดาว", "Give / edit planet"), banned ? L.t("ปลดแบน", "Unban") : L.t("แบน...", "Ban..."), L.t("เตะออก", "Kick"),
+                L.t("ยศ: ", "Rank: ") + Roles.NAME[trole], L.t("Lv 10 ทุกดวง", "All planets Lv 10"), L.t("ปลดล็อกทุกด่าน", "Unlock all stages"),
+                L.t("ตั้ง Wins", "Set wins"), L.t("ตั้ง Crystal Oil", "Set Crystal Oil"), L.t("ให้สกิน / ไอเทม", "Give skin / item"),
                 L.t("รีเซ็ตความคืบหน้า", "Reset progress"), L.t("ลบข้อมูลผู้เล่น", "Delete player data")};
-        int[] colors = {0xFFE0A020, 0xFFB86BFF, 0xFF33A8D0, 0xFF33C6A6, 0xFFFF6B5B, 0xFF4F8BFF, 0xFF33C6A6, 0xFF33C6A6, 0xFFFF6B5B, 0xFFD0304A};
+        int[] colors = {0xFFE0A020, 0xFFB86BFF, 0xFF33A8D0, 0xFF33C6A6, 0xFFFF6B5B, 0xFFFF8A2B, Roles.COLOR[trole], 0xFF4F8BFF, 0xFF33C6A6, 0xFF33C6A6,
+                0xFFFF9A3B, 0xFFFF3B6B, 0xFFFF6B5B, 0xFFD0304A};
+        boolean canRank = t != null && !self && cloud.isConsoleOwner();
+        boolean[] en = {edit, edit, edit, edit, mod, mod && onlineNow(tp0 == null ? new Cloud.Player() : tp0) || mod, canRank, edit, edit, edit, edit, edit, edit, edit && !self};
         Runnable[] acts = {
                 () -> setAmount("Star", q.stars, v -> q.stars = v),
                 () -> setAmount("Millite", q.millite, v -> q.millite = v),
                 () -> setAmount("Crystal", q.crystals, v -> q.crystals = v),
-                () -> popup = P_GIVE,
-                () -> cloud.setBan(t, !banned, (ok, err) -> {
-                    showToast(err != null ? err : nameOf(t) + (banned ? L.t(" ถูกปลดแบนแล้ว", " unbanned") : L.t(" ถูกแบนแล้ว", " banned")));
-                    refreshPlayers();
-                }),
+                () -> { givePick = -1; popup = P_GIVE; },
+                () -> { if (banned) unbanPlayer(t); else askBan(t); },
+                () -> cloud.kick(t, nameOf(t), (ok, err) -> showToast(err != null ? err : nameOf(t) + L.t(" ถูกเตะออกแล้ว", " was kicked"))),
+                () -> { roleTarget = t; popup = P_ROLE; },
                 () -> { q.maxAllPlanets(); commitAdmin(L.t("Lv 10 ทุกดวงแล้ว", "All planets Lv 10")); },
                 () -> { q.unlockAllStages(); commitAdmin(L.t("ปลดล็อกทุกด่านแล้ว", "All stages unlocked")); },
-                () -> { q.unlockAllPlanets(); commitAdmin(L.t("ปลดล็อกดาวทั้งหมดแล้ว", "All planets unlocked")); },
+                () -> setAmount("Wins", q.wins, v -> q.wins = v),
+                () -> setAmount("Crystal Oil", q.oil, v -> q.oil = v),
+                () -> popup = P_ITEMS,
                 () -> Dialogs.confirm(ctx, L.t("รีเซ็ตความคืบหน้า", "Reset progress"),
                         L.t("ลบความคืบหน้าทั้งหมดของ ", "Erase all progress of ") + nameOf(t) + L.t(" ใช่ไหม? ย้อนกลับไม่ได้", "? This can't be undone."),
                         L.t("รีเซ็ต", "Reset"), () -> { q.reset(); commitAdmin(L.t("รีเซ็ตแล้ว", "Progress reset")); }),
@@ -2953,17 +5031,481 @@ public final class GameView extends View {
         for (int i = 0; i < labels.length; i++) {
             float x = 40 * u + (i % 2) * (bw + 30 * u), yy = y + (i / 2) * (bh + gap);
             rf.set(x, yy, x + bw, yy + bh);
-            boolean en = q != null && !((i == 4 || i == 9) && self);
-            button(c, rf, labels[i], colors[i], en, acts[i]);
+            button(c, rf, labels[i], colors[i], en[i], acts[i]);
         }
-        y += 5 * (bh + gap) + 20 * u;
-        text(c, L.t("เครื่องมือแอดมิน", "Admin tools"), 50 * u, y + 40 * u, 42 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
-        y += 70 * u;
-        boolean inf = acc.infiniteSP();
+        y += ((labels.length + 1) / 2) * (bh + gap) + 10 * u;
+        if (!Roles.canEdit(my)) plain(c, L.t("ยศ ", "Rank ") + Roles.NAME[my] + L.t(" ดูข้อมูลได้", " can view") + (Roles.canBan(my) ? L.t(" + แบน/เตะ", " + ban/kick") : ""),
+                W / 2, y + 30 * u, 28 * u, 0xFF9C94C8, Paint.Align.CENTER, 0);
+        else if (!consoleApp) {
+            boolean inf = acc.infiniteSP();
+            rf.set(40 * u, y, W - 40 * u, y + 85 * u);
+            button(c, rf, L.t("SP ไม่จำกัด (ตอนเล่นเอง): ", "Infinite SP (when I play): ") + (inf ? "ON" : "OFF"), inf ? 0xFFFF8A2B : 0xFF3A3360, true, () -> acc.setInfiniteSP(!acc.infiniteSP()));
+        }
+    }
+
+    int giveStyle, giveSkinPlanet = -1;
+
+    /** staff: give skins (one planet or every planet the style fits) and items to the selected player */
+    void drawGiveItems(Canvas c) {
+        final Profile q = adminProf;
+        if (q == null || !isAdmin() || !Roles.canEdit(cloud.myRole())) { popup = P_NONE; return; }
+        RectF r = new RectF(30 * u, 110 * u, W - 30 * u, H - 110 * u);
+        popupFrame(c, r, L.t("ให้สกิน / ไอเทม: ", "Give skin / item: ") + nameOf(adminSel));
+        float y = r.top + 150 * u;
+        text(c, L.t("สกิน (สไตล์)", "Skin style"), r.left + 40 * u, y + 30 * u, 34 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        y += 50 * u;
+        float cw = (r.width() - 80 * u - 3 * 12 * u) / 4f, chh = 70 * u;
+        for (int s = 0; s < Skins.STYLES; s++) {
+            final int ss = s;
+            float x = r.left + 40 * u + (s % 4) * (cw + 12 * u), yy = y + (s / 4) * (chh + 12 * u);
+            rf.set(x, yy, x + cw, yy + chh);
+            button(c, rf, s == Skins.ANNIV ? "1st Anniv" : L.en ? Skins.NAME[s] : Skins.NAME_TH[s], giveStyle == s ? Defs.RARITY_COLOR[Skins.TIER[s]] : 0xFF3A3360, true, () -> {
+                giveStyle = ss;
+                if (giveSkinPlanet >= 0 && !Skins.fits(ss, giveSkinPlanet)) giveSkinPlanet = -1;
+            });
+        }
+        y += 3 * (chh + 12 * u) + 20 * u;
+        text(c, L.t("ดวงดาว", "Planet"), r.left + 40 * u, y + 30 * u, 34 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        y += 50 * u;
+        float cell = (r.width() - 80 * u) / 7f;
+        for (int k = -1; k < Defs.P_COUNT; k++) {
+            final int pt = k;
+            int slot = k + 1;
+            float x = r.left + 40 * u + (slot % 7) * cell, yy = y + (slot / 7) * cell;
+            RectF cr = new RectF(x + 4 * u, yy + 4 * u, x + cell - 4 * u, yy + cell - 4 * u);
+            boolean fits = k < 0 || Skins.fits(giveStyle, k);
+            rarityCard(c, cr, k < 0 ? 0xFFFF3B6B : Defs.RARITY_COLOR[Defs.P_RARITY[k]], fits, giveSkinPlanet == k, 16 * u);
+            if (k < 0) text(c, L.t("ทุกดวง", "All"), cr.centerX(), cr.centerY() + 10 * u, 26 * u, 0xFFFFFFFF, Paint.Align.CENTER, cell);
+            else {
+                sprite(c, skinBmp(k, fits ? giveStyle : -1), cr.centerX(), cr.centerY(), cell * 0.34f, fits ? 255 : 50);
+                if (q.skins.contains(Skins.key(giveStyle, k))) star(c, cr.right - 14 * u, cr.top + 14 * u, 10 * u);
+            }
+            if (fits) btns.add(new Btn(cr, () -> giveSkinPlanet = pt));
+        }
+        y += 3 * cell + 20 * u;
+        float bw = (r.width() - 110 * u) / 2f, bh = 86 * u;
+        rf.set(r.left + 40 * u, y, r.left + 40 * u + bw, y + bh);
+        button(c, rf, L.t("ให้สกิน", "Give skin"), 0xFF33C6A6, true, () -> {
+            int n = 0;
+            for (int k = 0; k < Defs.P_COUNT; k++)
+                if ((giveSkinPlanet < 0 || giveSkinPlanet == k) && Skins.fits(giveStyle, k) && q.skins.add(Skins.key(giveStyle, k))) n++;
+            commitAdmin(L.t("ให้สกิน ", "Gave ") + n + L.t(" ชิ้น", " skin(s)"));
+        });
+        rf.set(r.left + 70 * u + bw, y, r.left + 70 * u + bw * 2, y + bh);
+        button(c, rf, L.t("ลบสกิน", "Remove skin"), 0xFFFF6B5B, true, () -> {
+            int n = 0;
+            for (int k = 0; k < Defs.P_COUNT; k++)
+                if ((giveSkinPlanet < 0 || giveSkinPlanet == k) && q.skins.remove(Skins.key(giveStyle, k))) {
+                    n++;
+                    if (q.skinOn[k] == giveStyle) q.skinOn[k] = -1;
+                }
+            commitAdmin(L.t("ลบสกิน ", "Removed ") + n + L.t(" ชิ้น", " skin(s)"));
+        });
+        y += bh + 40 * u;
+        text(c, L.t("ไอเทม", "Items"), r.left + 40 * u, y + 30 * u, 34 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        y += 60 * u;
+        // Raid capsules
+        capsuleIcon(c, r.left + 80 * u, y + 40 * u, 32 * u);
+        text(c, "Raid Capsule  " + q.raidCapsules, r.left + 130 * u, y + 52 * u, 32 * u, 0xFFFFFFFF, Paint.Align.LEFT, 0);
+        rf.set(r.right - 300 * u, y, r.right - 40 * u, y + 80 * u);
+        button(c, rf, L.t("ตั้งจำนวน", "Set"), 0xFFFF3B6B, true, () -> setAmount("Raid Capsule", q.raidCapsules, v -> q.raidCapsules = v));
+        y += 100 * u;
+        for (int m = 0; m < Defs.MOON_COUNT; m++) {
+            final int mm = m;
+            sprite(c, moonBmp(m), r.left + 80 * u, y + 40 * u, 26 * u, 255);
+            text(c, Defs.MOON_NAME[m] + "  " + q.moons[m], r.left + 130 * u, y + 52 * u, 32 * u, 0xFFFFFFFF, Paint.Align.LEFT, 0);
+            rf.set(r.right - 300 * u, y, r.right - 40 * u, y + 80 * u);
+            button(c, rf, L.t("ตั้งจำนวน", "Set"), 0xFFE0602B, true, () -> setAmount(Defs.MOON_NAME[mm], q.moons[mm], v -> {
+                q.moons[mm] = v;
+                // unequip extras when the count drops
+                for (int k = Defs.P_COUNT - 1; k >= 0 && q.moonsFree(mm) < 0; k--) if (q.moonOn[k] == mm) q.moonOn[k] = -1;
+            }));
+            y += 100 * u;
+        }
+        rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 30 * u);
+        button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
+    }
+
+    void askBan(String t) {
+        Dialogs.ask(ctx, L.t("แบน ", "Ban ") + nameOf(t), L.t("ชั่วโมง: 0 = ถาวร", "Hours: 0 = permanent"),
+                new String[]{L.t("เหตุผล", "Reason"), L.t("จำนวนชั่วโมง", "Hours")}, new int[]{Dialogs.TEXT, Dialogs.NUMBER},
+                new String[]{"", "0"}, L.t("แบน", "Ban"), v -> {
+                    int h;
+                    try { h = Integer.parseInt(v[1].trim().isEmpty() ? "0" : v[1].trim()); } catch (NumberFormatException e) { return L.t("ชั่วโมงต้องเป็นตัวเลข", "Hours must be a number"); }
+                    if (h < 0 || h > 87600) return L.t("ใส่ 0 ถึง 87600", "Use 0 to 87600");
+                    cloud.setBan(t, nameOf(t), true, v[0].trim(), h, (ok, err) -> {
+                        showToast(err != null ? err : nameOf(t) + L.t(" ถูกแบนแล้ว", " banned"));
+                        refreshPlayers();
+                    });
+                    return null;
+                });
+    }
+
+    void unbanPlayer(String t) {
+        cloud.setBan(t, nameOf(t), false, null, 0, (ok, err) -> {
+            showToast(err != null ? err : nameOf(t) + L.t(" ถูกปลดแบนแล้ว", " unbanned"));
+            refreshPlayers();
+        });
+    }
+
+    /** pick a rank for roleTarget */
+    void drawRolePick(Canvas c) {
+        final String t = roleTarget;
+        if (t == null) { popup = P_NONE; return; }
+        Cloud.Player tp0 = playerById(t);
+        final int from = tp0 == null ? 0 : tp0.role, my = cloud.myRole();
+        RectF r = new RectF(80 * u, H / 2 - 600 * u, W - 80 * u, H / 2 + 600 * u);
+        popupFrame(c, r, L.t("ยศของ ", "Rank of ") + nameOf(t));
+        String[] what = {L.t("ผู้เล่นทั่วไป", "Regular player"), L.t("ดูผู้เล่น โปรไฟล์ และ Log", "View players, profiles and logs"),
+                L.t("+ แบน / ปลดแบน / เตะ", "+ ban / unban / kick"), L.t("+ แก้ข้อมูลผู้เล่นและดวงดาว", "+ edit players and planets"),
+                L.t("+ ตั้งค่าเซิร์ฟเวอร์", "+ server settings"), L.t("ทำได้ทุกอย่าง (ยกเว้นให้ยศ)", "Everything except giving ranks")};
+        float y = r.top + 150 * u, rh = 140 * u;
+        for (int k = 0; k <= Roles.OWNER; k++) {
+            final int to = k;
+            boolean ok = Roles.canAssign(cloud.isConsoleOwner()) && to != from;
+            RectF b = new RectF(r.left + 40 * u, y, r.right - 40 * u, y + rh - 16 * u);
+            rarityCard(c, b, Roles.COLOR[k], ok || k == from, k == from, 26 * u);
+            title(c, Roles.NAME[k], b.left + 40 * u, b.top + 62 * u, 42 * u, ok || k == from ? Roles.COLOR[k] : 0xFF6A6488, Paint.Align.LEFT, 0);
+            plain(c, what[k], b.left + 40 * u, b.top + 104 * u, 26 * u, 0xFFC9C2E6, Paint.Align.LEFT, b.width() - 80 * u);
+            if (k == from) plain(c, L.t("ปัจจุบัน", "current"), b.right - 30 * u, b.top + 62 * u, 26 * u, 0xFFFFD23F, Paint.Align.RIGHT, 0);
+            if (ok) btns.add(new Btn(b, () -> Dialogs.confirm(ctx, L.t("เปลี่ยนยศ", "Change rank"),
+                    nameOf(t) + ": " + Roles.NAME[from] + " -> " + Roles.NAME[to], L.t("ยืนยัน", "Confirm"),
+                    () -> cloud.setRole(t, nameOf(t), to, (ok2, err) -> {
+                        showToast(err != null ? err : nameOf(t) + " = " + Roles.NAME[to]);
+                        popup = P_NONE;
+                        refreshPlayers();
+                    }))));
+            y += rh;
+        }
+        rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 35 * u);
+        button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
+    }
+
+    // ------------------------------------------------------------------ console screen
+    void drawTerm(Canvas c) {
+        if (!isAdmin()) { screen = consoleApp ? S_ADMIN : S_LOBBY; return; }
+        staffTop(c, L.t("คอนโซล", "Console"));
+        float bottom = H - 60 * u;
+        RectF box = new RectF(40 * u, 290 * u, W - 40 * u, bottom - 330 * u);
+        p.setStyle(Paint.Style.FILL);
+        p.setShader(null);
+        p.setColor(0xF005020F);
+        c.drawRoundRect(box, 24 * u, 24 * u, p);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(3 * u);
+        sp.setColor(0xFF2E9A6A);
+        c.drawRoundRect(box, 24 * u, 24 * u, sp);
+        // faint scanlines for a terminal feel
+        p.setColor(0x0A7CFF8A);
+        for (float yy = box.top + 10 * u; yy < box.bottom; yy += 8 * u) c.drawRect(box.left + 6 * u, yy, box.right - 6 * u, yy + 2 * u, p);
+        float lh = 44 * u;
+        int maxLines = (int) ((box.height() - 40 * u) / lh);
+        int start = Math.max(0, consoleLog.size() - maxLines);
+        float y = box.top + 50 * u;
+        if (consoleLog.isEmpty()) plain(c, L.t("พิมพ์ help เพื่อดูคำสั่งทั้งหมด", "Type help to list every command"), box.left + 24 * u, y, 30 * u, 0xFF7CFF8A, Paint.Align.LEFT, box.width() - 48 * u);
+        for (int i = start; i < consoleLog.size(); i++) {
+            String line = consoleLog.get(i);
+            int col = line.startsWith(">") ? 0xFFFFE27A : line.startsWith("!") ? 0xFFFF8A8A : line.startsWith("#") ? 0xFF7DD3FF : 0xFF9CFFB8;
+            plain(c, line, box.left + 24 * u, y, 27 * u, col, Paint.Align.LEFT, box.width() - 48 * u);
+            y += lh;
+        }
+        if (((int) (anim * 2)) % 2 == 0) plain(c, "_", box.left + 24 * u, y, 30 * u, 0xFF7CFF8A, Paint.Align.LEFT, 0);
+        // quick commands
+        String[] quick = {"help", "list", "online", "staff", "logs 15", "server"};
+        float qw = (W - 80 * u - 5 * 10 * u) / 6f, qy = bottom - 310 * u;
+        for (int i = 0; i < quick.length; i++) {
+            final String qc = quick[i];
+            rf.set(40 * u + i * (qw + 10 * u), qy, 40 * u + i * (qw + 10 * u) + qw, qy + 80 * u);
+            button(c, rf, qc, 0xFF2A2350, true, () -> runCommand(qc));
+        }
+        float bw = (W - 110 * u) / 2f;
+        rf.set(40 * u, bottom - 200 * u, 40 * u + bw, bottom - 80 * u);
+        button(c, rf, L.t("พิมพ์คำสั่ง", "Type command"), 0xFF2E9A6A, true, this::askCommand);
+        rf.set(70 * u + bw, bottom - 200 * u, W - 40 * u, bottom - 80 * u);
+        button(c, rf, L.t("รันซ้ำ", "Run again"), 0xFF4F8BFF, lastCommand != null, () -> { if (lastCommand != null) runCommand(lastCommand); });
+    }
+
+    // ------------------------------------------------------------------ staff list
+    void drawStaff(Canvas c) {
+        if (!isAdmin()) { screen = consoleApp ? S_ADMIN : S_LOBBY; return; }
+        staffTop(c, L.t("ทีมงาน", "Staff"));
+        java.util.List<Cloud.Player> list = new java.util.ArrayList<>();
+        for (Cloud.Player x : rankList()) if (x.role > 0) list.add(x);
+        java.util.Collections.sort(list, (x, y2) -> y2.role != x.role ? y2.role - x.role : x.name.compareToIgnoreCase(y2.name));
+        float y = 300 * u;
+        final int my = cloud.myRole();
+        rf.set(40 * u, y, W - 40 * u, y + 95 * u);
+        button(c, rf, cloud.isConsoleOwner() ? L.t("+ มอบยศให้ผู้เล่น", "+ Give a player a rank") : L.t("มอบยศได้จาก Stella Console เท่านั้น", "Ranks are given only from Stella Console"),
+                0xFF33C6A6, cloud.isConsoleOwner(), () ->
+                Dialogs.ask(ctx, L.t("มอบยศ", "Give rank"), L.t("ชื่อไอดีของผู้เล่น", "The player's username"), new String[]{L.t("ชื่อ", "Name")},
+                        new int[]{Dialogs.TEXT}, null, "OK", v -> {
+                            Cloud.Player x = playerByName(v[0]);
+                            if (x == null) return L.t("ไม่พบผู้เล่นนี้ (ลองรีเฟรช)", "No such player (try refresh)");
+                            roleTarget = x.uid;
+                            popup = P_ROLE;
+                            return null;
+                        }));
+        y += 120 * u;
+        for (Cloud.Player x : list) {
+            final Cloud.Player a = x;
+            RectF r = new RectF(40 * u, y, W - 40 * u, y + 110 * u);
+            panel(c, r, 0xFF241A4E, 24 * u);
+            p.setShader(null);
+            p.setColor(Roles.COLOR[a.role]);
+            rf2.set(r.left, r.top + 18 * u, r.left + 12 * u, r.bottom - 18 * u);
+            c.drawRoundRect(rf2, 6 * u, 6 * u, p);
+            avatarOf(c, r.left + 70 * u, r.centerY(), 34 * u, a.avatar, a.photo);
+            text(c, a.name, r.left + 125 * u, r.top + 66 * u, 38 * u, 0xFFFFFFFF, Paint.Align.LEFT, 380 * u);
+            pill(c, r.right - 330 * u, r.centerY(), Roles.NAME[a.role], 28 * u, 0xFF140A2A, Roles.COLOR[a.role]);
+            boolean can = cloud.isConsoleOwner() && !a.uid.equals(cloud.uid);
+            rf.set(r.right - 200 * u, r.top + 18 * u, r.right - 24 * u, r.bottom - 18 * u);
+            button(c, rf, L.t("เปลี่ยน", "Change"), 0xFF6B5BD6, can, () -> { roleTarget = a.uid; popup = P_ROLE; });
+            y += 124 * u;
+            if (y > H - 520 * u) break;
+        }
+        // what each rank can do
+        float ly = H - 470 * u;
+        RectF lg = new RectF(40 * u, ly, W - 40 * u, H - 50 * u);
+        panel(c, lg, 0xEE1C1240, 30 * u);
+        String[] can = {"", L.t("ดูผู้เล่น / โปรไฟล์ / Log", "view players / profiles / logs"), L.t("+ แบน ปลดแบน เตะ", "+ ban, unban, kick"),
+                L.t("+ แก้ข้อมูลผู้เล่น, แก้ดวงดาว, ลบ", "+ edit players and planets, wipe"), L.t("+ ตั้งค่าเซิร์ฟเวอร์", "+ server settings"),
+                L.t("ทำได้ทุกอย่าง (ยกเว้นให้ยศ)", "everything (except giving ranks)")};
+        for (int k = Roles.OWNER; k >= Roles.STAFF; k--) {
+            float yy = ly + 60 * u + (Roles.OWNER - k) * 76 * u;
+            pill(c, lg.left + 110 * u, yy - 10 * u, Roles.NAME[k], 26 * u, 0xFF140A2A, Roles.COLOR[k]);
+            plain(c, can[k], lg.left + 210 * u, yy, 27 * u, 0xFFE6E0FF, Paint.Align.LEFT, lg.width() - 240 * u);
+        }
+    }
+
+    // ------------------------------------------------------------------ server settings
+    void refreshServer() {
+        if (serverLoading) return;
+        serverLoading = true;
+        cloud.server((s, err) -> {
+            serverLoading = false;
+            if (err != null) { showToast(err); return; }
+            serverInfo = s;
+        });
+    }
+
+    void drawServer(Canvas c) {
+        if (!isAdmin()) { screen = consoleApp ? S_ADMIN : S_LOBBY; return; }
+        staffTop(c, L.t("เซิร์ฟเวอร์", "Server"));
+        if (serverInfo == null && !serverLoading) refreshServer();
+        final Cloud.Server s = serverInfo;
+        final boolean dev = Roles.canServer(cloud.myRole());
+        float y = 300 * u;
+        RectF st = new RectF(40 * u, y, W - 40 * u, y + 260 * u);
+        panel(c, st, 0xEE1C1240, 34 * u);
+        boolean maint = s != null && s.maintenance;
+        int sc = maint ? 0xFFFFB627 : 0xFF4DFF8A;
+        float pulse = 0.5f + 0.5f * (float) Math.sin(anim * 4);
+        p.setShader(null);
+        p.setColor(alpha(sc, (int) (80 + 100 * pulse)));
+        c.drawCircle(st.left + 80 * u, st.top + 90 * u, 30 * u, p);
+        p.setColor(sc);
+        c.drawCircle(st.left + 80 * u, st.top + 90 * u, 16 * u, p);
+        title(c, s == null ? L.t("กำลังโหลด...", "Loading...") : maint ? L.t("ปิดปรับปรุง", "Maintenance") : L.t("ออนไลน์", "Online"),
+                st.left + 140 * u, st.top + 108 * u, 52 * u, sc, Paint.Align.LEFT, 0);
+        if (s != null) {
+            plain(c, L.t("ผู้เล่นออนไลน์: ", "Players online: ") + s.online + "   •   " + L.t("เวอร์ชันต่ำสุด: ", "Min version: ") + (s.minVersion <= 0 ? L.t("ไม่บังคับ", "none") : String.valueOf(s.minVersion))
+                    + "   •   " + L.t("เกมนี้: ", "This build: ") + VERSION_CODE, st.left + 50 * u, st.top + 175 * u, 28 * u, 0xFFE6E0FF, Paint.Align.LEFT, st.width() - 100 * u);
+            plain(c, L.t("ประกาศ: ", "Broadcast: ") + (s.broadcast == null ? "-" : s.broadcast), st.left + 50 * u, st.top + 225 * u, 28 * u, 0xFFB8F6FF, Paint.Align.LEFT, st.width() - 100 * u);
+        }
+        y += 290 * u;
+        float bh = 110 * u;
+        rf.set(40 * u, y, W - 40 * u, y + bh);
+        button(c, rf, maint ? L.t("เปิดเซิร์ฟเวอร์ (ปิดโหมดปรับปรุง)", "Open the server (end maintenance)") : L.t("ปิดปรับปรุงเซิร์ฟเวอร์", "Start maintenance"),
+                maint ? 0xFF2E9A6A : 0xFFE0A020, dev && s != null, () -> Dialogs.confirm(ctx, L.t("โหมดปรับปรุง", "Maintenance"),
+                        maint ? L.t("ให้ผู้เล่นกลับเข้าเกมได้ใช่ไหม?", "Let players back in?") : L.t("ผู้เล่นทั่วไปจะเข้าเกมไม่ได้ (ทีมงานยังเข้าได้) ใช่ไหม?", "Regular players will be locked out (staff can still play). Continue?"),
+                        L.t("ยืนยัน", "Confirm"), () -> cloud.setMaintenance(!maint, (ok, err) -> { showToast(err != null ? err : "OK"); refreshServer(); })));
+        y += bh + 20 * u;
+        rf.set(40 * u, y, W - 40 * u, y + bh);
+        button(c, rf, L.t("ส่งประกาศถึงผู้เล่นทุกคน", "Send a broadcast to everyone"), 0xFF4F8BFF, dev, () ->
+                Dialogs.ask(ctx, L.t("ประกาศ", "Broadcast"), L.t("ขึ้นเป็นแถบด้านบนของเกมผู้เล่นทุกคน (24 ชม.)", "Shows as a banner in every player's game (24 h)"),
+                        new String[]{L.t("ข้อความ", "Message")}, new int[]{Dialogs.TEXT}, null, L.t("ส่ง", "Send"), v -> {
+                            if (v[0].trim().isEmpty()) return L.t("พิมพ์ข้อความก่อน", "Type a message first");
+                            cloud.setBroadcast(v[0].trim(), (ok, err) -> { showToast(err != null ? err : L.t("ส่งประกาศแล้ว", "Broadcast sent")); refreshServer(); });
+                            return null;
+                        }));
+        y += bh + 20 * u;
+        float bw = (W - 110 * u) / 2f;
         rf.set(40 * u, y, 40 * u + bw, y + bh);
-        button(c, rf, L.t("SP ไม่จำกัด: ", "Infinite SP: ") + (inf ? "ON" : "OFF"), inf ? 0xFFFF8A2B : 0xFF3A3360, true, () -> acc.setInfiniteSP(!acc.infiniteSP()));
-        rf.set(70 * u + bw, y, 70 * u + bw * 2, y + bh);
-        button(c, rf, L.t("คอนโซลคำสั่ง", "Command console"), 0xFF2E9A6A, true, () -> popup = P_CONSOLE);
+        button(c, rf, L.t("ลบประกาศ", "Clear broadcast"), 0xFF6B5BD6, dev && s != null && s.broadcast != null,
+                () -> cloud.setBroadcast(null, (ok, err) -> { showToast(err != null ? err : "OK"); refreshServer(); }));
+        rf.set(70 * u + bw, y, W - 40 * u, y + bh);
+        button(c, rf, L.t("บังคับอัปเดต...", "Force update..."), 0xFFB86BFF, dev, () ->
+                Dialogs.ask(ctx, L.t("เวอร์ชันต่ำสุด", "Minimum version"), L.t("versionCode ที่ต่ำกว่านี้เล่นไม่ได้ (0 = ไม่บังคับ) • เกมนี้ = ", "Older versionCodes can't play (0 = off) • this build = ") + VERSION_CODE,
+                        new String[]{"versionCode"}, new int[]{Dialogs.NUMBER}, new String[]{s == null ? "0" : String.valueOf(s.minVersion)}, "OK", v -> {
+                            try {
+                                int mv = Integer.parseInt(v[0].trim());
+                                cloud.setMinVersion(mv, (ok, err) -> { showToast(err != null ? err : "min version = " + mv); refreshServer(); });
+                                return null;
+                            } catch (NumberFormatException e) { return L.t("ใส่ตัวเลข", "Numbers only"); }
+                        }));
+        y += bh + 20 * u;
+        rf.set(40 * u, y, W - 40 * u, y + bh);
+        button(c, rf, L.t("รีเฟรช", "Refresh"), 0xFF33A8D0, !serverLoading, this::refreshServer);
+        if (!dev) plain(c, L.t("ต้องเป็น Dev หรือ Owner ถึงจะเปลี่ยนการตั้งค่าได้", "Dev or Owner rank is needed to change these"), W / 2, y + bh + 70 * u, 28 * u, 0xFF9C94C8, Paint.Align.CENTER, 0);
+    }
+
+    // ------------------------------------------------------------------ audit log
+    void refreshLogs() {
+        if (logsLoading) return;
+        logsLoading = true;
+        cloud.logs(60, (list, err) -> {
+            logsLoading = false;
+            if (err != null) { showToast(err); return; }
+            logLines = list;
+        });
+    }
+
+    void drawLogs(Canvas c) {
+        if (!isAdmin()) { screen = consoleApp ? S_ADMIN : S_LOBBY; return; }
+        staffTop(c, "Log");
+        if (logLines.isEmpty() && !logsLoading && transT < 0.05f) refreshLogs();
+        float y = 300 * u;
+        rf.set(W - 260 * u, y, W - 40 * u, y + 76 * u);
+        button(c, rf, L.t("รีเฟรช", "Refresh"), 0xFF33A8D0, !logsLoading, this::refreshLogs);
+        plain(c, L.t("ทุกการกระทำของทีมงาน (ล่าสุดก่อน)", "Every staff action (newest first)"), 50 * u, y + 50 * u, 28 * u, 0xFFC9C2E6, Paint.Align.LEFT, 0);
+        y += 100 * u;
+        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("d MMM HH:mm", Locale.US);
+        if (logLines.isEmpty()) plain(c, logsLoading ? L.t("กำลังโหลด...", "Loading...") : L.t("ยังไม่มี Log", "No log entries yet"), W / 2, y + 80 * u, 32 * u, 0xFF9C94C8, Paint.Align.CENTER, 0);
+        for (Cloud.LogLine l : logLines) {
+            RectF r = new RectF(40 * u, y, W - 40 * u, y + 96 * u);
+            panel(c, r, 0xCC1C1240, 20 * u);
+            plain(c, f.format(new java.util.Date(l.t)), r.left + 24 * u, r.top + 40 * u, 24 * u, 0xFF9C94C8, Paint.Align.LEFT, 0);
+            plain(c, l.by, r.left + 24 * u, r.top + 78 * u, 26 * u, 0xFFFFD23F, Paint.Align.LEFT, 200 * u);
+            plain(c, l.msg, r.left + 240 * u, r.top + 60 * u, 28 * u, 0xFFFFFFFF, Paint.Align.LEFT, r.width() - 270 * u);
+            y += 106 * u;
+            if (y > H - 120 * u) break;
+        }
+    }
+
+    // ------------------------------------------------------------------ broadcast banner / ticker
+    void drawBroadcast(Canvas c) {
+        float k = Math.min(1f, Math.min(bcShowT, 9f - bcShowT) * 3f);
+        float top = -170 * u + k * 230 * u;
+        RectF r = new RectF(40 * u, top, W - 40 * u, top + 150 * u);
+        panel(c, r, 0xF0281048, 34 * u);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(4 * u);
+        sp.setColor(0xFFFFD23F);
+        c.drawRoundRect(r, 34 * u, 34 * u, sp);
+        megaphone(c, r.left + 80 * u, r.centerY(), 36 * u);
+        plain(c, L.t("ประกาศจากทีมงาน", "Announcement"), r.left + 150 * u, r.top + 55 * u, 26 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        plain(c, bcMsg, r.left + 150 * u, r.top + 108 * u, 32 * u, 0xFFFFFFFF, Paint.Align.LEFT, r.width() - 190 * u);
+        btns.add(new Btn(r, () -> bcShowT = 0.3f));
+    }
+
+    void ticker(Canvas c, float y) {
+        RectF r = new RectF(60 * u, y - 30 * u, W - 60 * u, y + 30 * u);
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0xAA281048);
+        c.drawRoundRect(r, 30 * u, 30 * u, p);
+        megaphone(c, r.left + 40 * u, y, 16 * u);
+        c.save();
+        c.clipRect(r.left + 75 * u, r.top, r.right - 20 * u, r.bottom);
+        tp.setTextSize(28 * u);
+        tp.setTypeface(bodyFont);
+        float w = tp.measureText(bcMsg) + 200 * u;
+        float span = r.width() - 95 * u;
+        float off = (anim * 110 * u) % (w + span);
+        plain(c, bcMsg, r.right - 20 * u - off, y + 10 * u, 28 * u, 0xFFFFE27A, Paint.Align.LEFT, 0);
+        c.restore();
+        btns.add(new Btn(r, () -> bcShowT = 9f));
+    }
+
+    void megaphone(Canvas c, float x, float y, float r) {
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0xFFFFD23F);
+        Path m = new Path();
+        m.moveTo(x - r * 0.9f, y - r * 0.35f);
+        m.lineTo(x + r * 0.6f, y - r);
+        m.lineTo(x + r * 0.6f, y + r);
+        m.lineTo(x - r * 0.9f, y + r * 0.35f);
+        m.close();
+        c.drawPath(m, p);
+        sp.setPathEffect(null);
+        sp.setStrokeCap(Paint.Cap.ROUND);
+        sp.setStrokeWidth(r * 0.18f);
+        sp.setColor(0xFFFFD23F);
+        rf2.set(x + r * 0.3f, y - r * 0.9f, x + r * 1.3f, y + r * 0.9f);
+        c.drawArc(rf2, -50, 100, false, sp);
+    }
+
+    void wrench(Canvas c, float x, float y, float r) {
+        c.save();
+        c.rotate(-40 + 8 * (float) Math.sin(anim * 3), x, y);
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0xFFFFE27A);
+        rf2.set(x - r * 0.16f, y - r * 0.2f, x + r * 0.16f, y + r);
+        c.drawRoundRect(rf2, r * 0.1f, r * 0.1f, p);
+        c.drawCircle(x, y - r * 0.45f, r * 0.42f, p);
+        p.setColor(0xFF1C1240);
+        rf2.set(x - r * 0.14f, y - r * 0.95f, x + r * 0.14f, y - r * 0.45f);
+        c.drawRect(rf2, p);
+        c.restore();
+    }
+
+    /** create the console account once (fails if it already exists, so nobody can take it over later) */
+    void askConsoleSetup() {
+        Dialogs.ask(ctx, L.t("ตั้งรหัส Console ครั้งแรก", "First-time console setup"),
+                L.t("สร้างบัญชี \"console\" ได้ครั้งเดียว ใครสร้างก่อนคนนั้นได้เป็นเจ้าของ จึงควรทำทันทีหลังตั้งค่า Firebase", "The \"console\" account can be created only once - whoever creates it first owns it, so do it right after setting up Firebase"),
+                new String[]{L.t("รหัสผ่านใหม่ (6 ตัวขึ้นไป)", "New password (6+)"), L.t("ยืนยันรหัสผ่าน", "Confirm password")},
+                new int[]{Dialogs.PASSWORD, Dialogs.PASSWORD}, null, L.t("สร้าง", "Create"), v -> {
+                    if (v[0].length() < 6) return L.t("รหัสผ่านต้องยาวอย่างน้อย 6 ตัว", "Password must be at least 6 characters");
+                    if (!v[0].equals(v[1])) return L.t("รหัสผ่านทั้งสองช่องไม่ตรงกัน", "Passwords do not match");
+                    setBusy(L.t("กำลังสร้างบัญชี Console...", "Creating the console account..."));
+                    cloud.signUp(Cloud.CONSOLE_USER, v[0], (id, err) -> {
+                        setBusy(null);
+                        if (err != null) {
+                            showToast(err.equals(L.t("ชื่อนี้ถูกใช้ไปแล้ว", "This name is already taken"))
+                                    ? L.t("มีบัญชี Console อยู่แล้ว ใช้ปุ่มเข้าสู่ระบบ", "The console account already exists - use Log in") : err);
+                            return;
+                        }
+                        cloud.logAsync("console account created");
+                        startSession(false);
+                        showToast(L.t("สร้างบัญชี Console แล้ว!", "Console account created!"));
+                    });
+                    return null;
+                });
+    }
+
+    /** login screen of the Stella Console app */
+    void drawConsoleLogin(Canvas c) {
+        glowCircle(c, W / 2, H * 0.3f, 420 * u, 0x332E9A6A);
+        // a terminal window with a blinking prompt
+        RectF term = new RectF(90 * u, H * 0.16f, W - 90 * u, H * 0.42f);
+        panel(c, term, 0xF005020F, 34 * u);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(4 * u);
+        sp.setColor(0xFF2E9A6A);
+        c.drawRoundRect(term, 34 * u, 34 * u, sp);
+        int[] dots = {0xFFFF5B5B, 0xFFFFD23F, 0xFF4DFF8A};
+        for (int i = 0; i < 3; i++) { p.setColor(dots[i]); c.drawCircle(term.left + (50 + i * 40) * u, term.top + 45 * u, 12 * u, p); }
+        String[] lines = {"$ stella-console --connect", "> firebase: " + (Cloud.configured() ? "ready" : "NOT CONFIGURED"), "> waiting for staff login"};
+        for (int i = 0; i < lines.length; i++)
+            plain(c, lines[i], term.left + 50 * u, term.top + (130 + i * 60) * u, 32 * u, i == 0 ? 0xFFFFE27A : 0xFF9CFFB8, Paint.Align.LEFT, term.width() - 100 * u);
+        if (((int) (anim * 2)) % 2 == 0) plain(c, "_", term.left + 50 * u, term.top + 310 * u, 34 * u, 0xFF7CFF8A, Paint.Align.LEFT, 0);
+        RectF card = new RectF(70 * u, H * 0.47f, W - 70 * u, H * 0.47f + 620 * u);
+        panel(c, card, 0xEE1C1240, 44 * u);
+        title(c, "Stella Console", W / 2, card.top + 130 * u, 84 * u, 0xFF7CFF8A);
+        plain(c, L.t("สำหรับทีมงาน: Owner • Dev • Admin • Mod • Staff", "For staff: Owner • Dev • Admin • Mod • Staff"), W / 2, card.top + 200 * u, 30 * u, 0xFFE6E0FF, Paint.Align.CENTER, card.width() - 60 * u);
+        rf.set(card.left + 60 * u, card.top + 260 * u, card.right - 60 * u, card.top + 390 * u);
+        button(c, rf, L.t("เข้าสู่ระบบ Console", "Console log in"), 0xFF2E9A6A, true, () -> askLogin(Cloud.CONSOLE_USER));
+        float bw = (card.width() - 160 * u) / 2;
+        rf.set(card.left + 60 * u, card.top + 440 * u, card.left + 60 * u + bw, card.top + 530 * u);
+        button(c, rf, "ไทย", L.en ? 0xFF3A3360 : 0xFF33C6A6, true, () -> { L.en = false; acc.setLang(false); });
+        rf.set(card.right - 60 * u - bw, card.top + 440 * u, card.right - 60 * u, card.top + 530 * u);
+        button(c, rf, "English", L.en ? 0xFF33C6A6 : 0xFF3A3360, true, () -> { L.en = true; acc.setLang(true); });
+        rf.set(card.left + 60 * u, card.bottom + 40 * u, card.right - 60 * u, card.bottom + 140 * u);
+        button(c, rf, L.t("ตั้งรหัสบัญชี Console ครั้งแรก", "First-time console setup"), 0xFF3A3360, Cloud.configured(), this::askConsoleSetup);
+        plain(c, L.t("ใช้ไอดี Console เท่านั้น • ไอดีผู้เล่นในเกมเข้าไม่ได้", "Console account only • game accounts can't log in here"), W / 2, card.bottom + 200 * u, 28 * u, 0x99FFFFFF, Paint.Align.CENTER, W - 80 * u);
+        plain(c, VERSION + " console", W - 40 * u, H - 40 * u, 24 * u, 0x66FFFFFF, Paint.Align.RIGHT, 0);
     }
 
     // ================================================================== match
@@ -2971,10 +5513,12 @@ public final class GameView extends View {
         Game g = game;
         c.save();
         if (g.shake > 0) c.translate((float) Math.sin(anim * 90) * 8 * u * g.shake, (float) Math.cos(anim * 77) * 8 * u * g.shake);
+        gameSky(c);
         c.translate(mox, moy);
         c.scale(ms, ms);
         drawPath(c, g);
         drawSlots(c, g);
+        drawWalls(c, g);
         drawHeat(c, g);
         for (Planet pl : g.slots) if (pl != null) drawPlanetAura(c, g, pl);
         for (Planet pl : g.slots) if (pl != null) drawPlanet(c, g, pl);
@@ -3002,6 +5546,34 @@ public final class GameView extends View {
         }
         if (paused && !g.won && !g.lost) drawPause(c);
         if (g.won || g.lost) drawResult(c, g);
+    }
+
+    /** moving sky behind the map: twinkling stars, drifting dust, slow nebula glow and the odd comet */
+    void gameSky(Canvas c) {
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        glowCircle(c, W * (0.25f + 0.05f * (float) Math.sin(anim * 0.11f)), H * 0.3f, 420 * u, 0x225B8CFF);
+        glowCircle(c, W * (0.8f + 0.05f * (float) Math.cos(anim * 0.09f)), H * 0.62f, 460 * u, 0x22E05BD8);
+        for (int i = 0; i < 90; i++) {
+            float sx = (i * 197.3f) % W, sy = ((i * 331.7f) % H + anim * (6 + (i % 3) * 5) * u) % H;
+            float tw = 0.5f + 0.5f * (float) Math.sin(anim * (1.5f + (i % 5) * 0.4f) + i);
+            p.setColor(alpha(i % 7 == 0 ? 0xFFFFE6A8 : 0xFFE6E0FF, (int) (40 + 150 * tw)));
+            c.drawCircle(sx, sy, (1 + (i % 3)) * u * (0.7f + 0.5f * tw), p);
+        }
+        float cf = (float) ((anim * 0.07) % 1.0);
+        if (cf < 0.25f) {
+            float k = cf / 0.25f;
+            float mx = W * (1.1f - k * 1.4f), my = H * (0.08f + k * 0.3f);
+            p.setShader(new LinearGradient(mx, my, mx + 200 * u, my - 90 * u, 0xAAFFE6A8, 0x00FFE6A8, Shader.TileMode.CLAMP));
+            Path tr = new Path();
+            tr.moveTo(mx, my - 5 * u);
+            tr.lineTo(mx + 200 * u, my - 90 * u);
+            tr.lineTo(mx, my + 5 * u);
+            tr.close();
+            c.drawPath(tr, p);
+            p.setShader(null);
+            glowCircle(c, mx, my, 12 * u, 0xFFFFF4D0);
+        }
     }
 
     void drawPath(Canvas c, Game g) {
@@ -3058,7 +5630,16 @@ public final class GameView extends View {
 
         // enemy spawn: a black hole
         float sx = g.px[0], sy = g.py[0];
-        blackHole(c, sx, sy, 46);
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        for (int i = 0; i < 18; i++) {
+            float f = (float) ((anim * 0.5 + i / 18.0) % 1.0);
+            double a = i * 2.4 + f * 3;
+            float rr = 150 * (1 - f);
+            p.setColor(alpha(i % 2 == 0 ? 0xFFB86BFF : 0xFFFF8A5B, (int) (200 * f)));
+            c.drawCircle(sx + (float) Math.cos(a) * rr, sy + (float) Math.sin(a) * rr, 3 + 4 * (1 - f), p);
+        }
+        blackHole(c, sx, sy, 46 + 4 * (float) Math.sin(anim * 3));
 
         // our base: a spiral galaxy
         float bx = g.px[g.px.length - 1], by = g.py[g.py.length - 1];
@@ -3070,7 +5651,12 @@ public final class GameView extends View {
         c.rotate(-anim * 14);
         sprite(c, gBmp, 0, 0, 125, 255);
         c.restore();
-        glowCircle(c, bx, by, 38, 0xFFFFF4D0);
+        glowCircle(c, bx, by, 38 + 6 * (float) Math.sin(anim * 2.5f), 0xFFFFF4D0);
+        for (int i = 0; i < 5; i++) {
+            double a = anim * (0.8 + i * 0.15) + i * 1.3;
+            float rr = 70 + i * 9;
+            star(c, bx + (float) Math.cos(a) * rr, by + (float) Math.sin(a) * rr * 0.62f, 6 + (i % 2) * 3);
+        }
         // base hp ring
         float frac = g.baseHp / (float) g.maxBaseHp;
         sp.setStrokeWidth(10);
@@ -3081,11 +5667,57 @@ public final class GameView extends View {
         c.drawArc(rf, -90, 360 * frac, false, sp);
     }
 
+    void drawWalls(Canvas c, Game g) {
+        for (Wall w : g.walls) {
+            if (w.dead) continue;
+            g.pointAt(Math.min(g.total, w.d + 4), tmp);
+            float ang = (float) Math.toDegrees(Math.atan2(tmp[1] - w.y, tmp[0] - w.x));
+            c.save();
+            c.translate(w.x, w.y);
+            c.rotate(ang);
+            if (w.hitT > 0) c.translate((float) Math.sin(anim * 80) * 3, 0);
+            float frac = w.hp / w.maxHp;
+            glowCircle(c, 0, 0, 70, 0x445EF2FF);
+            p.setShader(null);
+            p.setStyle(Paint.Style.FILL);
+            for (int k = 0; k < 3; k++) {
+                rf.set(-14, -56 + k * 38, 14, -22 + k * 38);
+                p.setColor(k % 2 == 0 ? 0xFF22304A : 0xFF34486A);
+                c.drawRoundRect(rf, 6, 6, p);
+            }
+            sp.setPathEffect(null);
+            sp.setStrokeWidth(4);
+            sp.setColor(alpha(0xFF5EF2FF, (int) (140 + 100 * Math.sin(anim * 6))));
+            rf.set(-16, -58, 16, 58);
+            c.drawRoundRect(rf, 8, 8, sp);
+            c.restore();
+            // hp bar
+            p.setColor(0xCC0B0520);
+            rf.set(w.x - 34, w.y - 74, w.x + 34, w.y - 66);
+            c.drawRoundRect(rf, 4, 4, p);
+            p.setColor(0xFF5EF2FF);
+            rf.set(w.x - 34, w.y - 74, w.x - 34 + 68 * frac, w.y - 66);
+            c.drawRoundRect(rf, 4, 4, p);
+        }
+    }
+
     void drawSlots(Canvas c, Game g) {
         float pulse = 0.5f + 0.5f * (float) Math.sin(anim * 5);
+        int bt = buildSel >= 0 && g != null ? g.deck[buildSel] : -1;
         for (int i = 0; i < g.slotX.length; i++) {
             float x = g.slotX[i], y = g.slotY[i];
-            boolean hl = buildSel >= 0 && g.slots[i] == null;
+            if (g.pathSlot[i]) {
+                // path slots only show while placing a Commander
+                if (g.slots[i] != null || bt < 0 || !Defs.onPathOnly(bt)) continue;
+                sp.setPathEffect(null);
+                sp.setStrokeWidth(6);
+                sp.setColor(alpha(0xFFFF5B5B, (int) (150 + 100 * pulse)));
+                c.drawCircle(x, y, 50, sp);
+                glowCircle(c, x, y, 70, alpha(0xFFFF5B5B, (int) (50 * pulse)));
+                continue;
+            }
+            boolean hl = buildSel >= 0 && g.slots[i] == null && (bt < 0 || !Defs.onPathOnly(bt))
+                    && (bt < 0 || !Defs.nearPathOnly(bt) || g.pathDist(x, y) <= 175);
             p.setStyle(Paint.Style.FILL);
             p.setShader(null);
             p.setColor(0x66000000);
@@ -3107,7 +5739,7 @@ public final class GameView extends View {
             sp.setStrokeWidth(4);
             sp.setColor(hl ? 0xFFFFD23F : 0x668F80D0);
             for (int k = 0; k < 4; k++) {
-                double a = k * Math.PI / 2 + Math.PI / 4;
+                double a = k * Math.PI / 2 + Math.PI / 4 + anim * 0.6 + i;
                 float cx = (float) Math.cos(a), sy = (float) Math.sin(a);
                 c.drawLine(x + cx * 44, y + sy * 44, x + cx * 52, y + sy * 52, sp);
             }
@@ -3162,9 +5794,18 @@ public final class GameView extends View {
         if (pl.enchant == Defs.EN_GIANTTIC) sc *= 1.15f;
         if (pl.enchant == Defs.EN_GALAXIA || pl.enchant == Defs.EN_MEGALONIA) sc *= 1.1f;
         sc *= 1f + Math.max(0, pl.flash) * 0.4f;
-        float bob = (float) Math.sin(pl.anim * 2.2f + pl.slot) * 3f;
+        float bob = (float) Math.sin(pl.anim * 2.2f + pl.slot) * 5f;
+        sc *= 1f + 0.025f * (float) Math.sin(anim * 2.6f + pl.slot * 1.7f);
         float x = pl.x, y = pl.y + bob;
         float half = 64 * sc;
+        // soft shadow that shrinks as the planet bobs up
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0x44000000);
+        rf.set(pl.x - 44 + bob, pl.y + 40, pl.x + 44 - bob, pl.y + 56);
+        c.drawOval(rf, p);
+        int rc = Defs.RARITY_COLOR[Defs.P_RARITY[pl.type]];
+        glowCircle(c, x, y, 80 + 6 * (float) Math.sin(anim * 3 + pl.slot), alpha(rc, 0x30));
         boolean off = pl.disabledT > 0;
         if (pl.enchant == Defs.EN_GALAXIA || pl.enchant == Defs.EN_MEGALONIA) {
             sp.setPathEffect(null);
@@ -3176,7 +5817,45 @@ public final class GameView extends View {
             }
         }
         if (pl.material >= 0) materialAura(c, x, y, 46 * sc, pl.material);
-        sprite(c, pBmp[pl.type], x, y, half, off ? 110 : 255);
+        if (Defs.P_KIND[pl.type] == Defs.K_COMMANDER) {
+            // its circling route
+            sp.setPathEffect(new DashPathEffect(new float[]{14, 12}, anim * 30));
+            sp.setStrokeWidth(4);
+            sp.setColor(0x66FF5B5B);
+            c.drawCircle(pl.ax, pl.ay, 110, sp);
+            sp.setPathEffect(null);
+        }
+        if (pl.type == Defs.KING) {
+            // royal aura reaching every planet
+            sp.setStrokeWidth(5);
+            sp.setColor(alpha(0xFFFFD23F, (int) (90 + 60 * Math.sin(anim * 3))));
+            c.drawCircle(x, y, 90 + 10 * (float) Math.sin(anim * 2), sp);
+        }
+        // a tiny sparkle orbiting the planet (behind it on the far side)
+        double oa = anim * (1.6 + (pl.type % 3) * 0.3) + pl.slot;
+        boolean back = Math.sin(oa) < 0;
+        float ox = x + (float) Math.cos(oa) * 72, oy = y + (float) Math.sin(oa) * 24 - 10;
+        if (back) star(c, ox, oy, 6);
+        sprite(c, skinBmp(pl.type, pl.skin), x, y, half, off ? 110 : 255);
+        if (!back) star(c, ox, oy, 8);
+        if (pl.hellMoon) {
+            // Hell Moon equipment circling the planet
+            double ha = anim * 1.8 + pl.slot;
+            float hx = x + (float) Math.cos(ha) * 70, hy = y + (float) Math.sin(ha) * 70;
+            glowCircle(c, hx, hy, 26, 0x99FF4B2B);
+            sprite(c, hellMoonBmp(), hx, hy, 17, 255);
+        }
+        for (int k = 0; k < pl.spirits; k++) {
+            // Savior spirits: pale wisps circling
+            double sa = anim * 1.3 + k * Math.PI * 2 / pl.spirits;
+            float gx = x + (float) Math.cos(sa) * 84, gy = y + (float) Math.sin(sa) * 40 - 20;
+            glowCircle(c, gx, gy, 20, 0x88B8FFF0);
+            p.setShader(null);
+            p.setColor(0xDDE8FFFA);
+            c.drawCircle(gx, gy, 7, p);
+            p.setColor(0x66E8FFFA);
+            c.drawCircle(gx - (float) Math.cos(sa) * 10, gy - 6, 5, p);
+        }
         if (off) {
             sp.setStrokeWidth(7);
             sp.setColor(0xCCB86BFF);
@@ -3294,8 +5973,19 @@ public final class GameView extends View {
             boolean rock = t == Defs.E_METEOR || t == Defs.E_MEGA;
             c.rotate(rock ? e.angle * 1.5f : (t == Defs.E_SHOOT ? e.angle * 3 : (float) Math.sin(e.angle * 0.03f) * 12f), e.x, e.y);
             float half = e.radius / 0.76f;
+            float sq = 1f + 0.06f * (float) Math.sin(anim * 9 + e.d * 0.05f);
+            c.scale(sq, 2f - sq, e.x, e.y);
             sprite(c, eBmp[t], e.x, e.y, half, alpha);
             c.restore();
+            if (!fiery && !e.phased) {
+                // glitter trail
+                for (int k = 1; k <= 3; k++) {
+                    g.pointAt(e.d - k * 14, tmp);
+                    p.setShader(null);
+                    p.setColor(alpha(0xFFE6E0FF, 120 - k * 35));
+                    c.drawCircle(tmp[0] + (float) Math.sin(anim * 7 + k) * 5, tmp[1], 4 - k * 0.8f, p);
+                }
+            }
         }
         if (e.mini) {
             sp.setPathEffect(null);
@@ -3359,6 +6049,7 @@ public final class GameView extends View {
             case Defs.K_SMOKE: gc = 0x66FF3B2F; break;
             case Defs.K_FIREROCK: gc = 0x99FF7A2B; break;
             case Defs.K_TORNADO: gc = 0x55FFB060; break;
+            case Defs.K_LANCE: gc = 0x99FF6A3D; break;
             case Defs.K_ICE: gc = 0x887DE6FF; break;
             default: gc = 0x55FFE0B0;
         }
@@ -3409,6 +6100,31 @@ public final class GameView extends View {
                     c.drawArc(rf, s.spin * 60 + i * 90, 260, false, sp);
                 }
                 break;
+            case Defs.K_LANCE: {
+                c.save();
+                c.translate(s.x, s.y);
+                c.rotate(ang);
+                // flame trail
+                for (int i = 0; i < 6; i++) {
+                    p.setColor(i % 2 == 0 ? 0x88FF4D2B : 0x88FFB627);
+                    c.drawCircle(-18 - i * 13, (float) Math.sin(s.spin * 2 + i) * 5, 13 - i * 1.6f, p);
+                }
+                Path sp2 = new Path();
+                sp2.moveTo(34, 0);
+                sp2.lineTo(-6, -11);
+                sp2.lineTo(-22, 0);
+                sp2.lineTo(-6, 11);
+                sp2.close();
+                p.setColor(0xFFFFE27A);
+                c.drawPath(sp2, p);
+                p.setColor(0xFFFFFFFF);
+                c.drawCircle(8, 0, 5, p);
+                sp.setStrokeWidth(3);
+                sp.setColor(0xFF8A1A14);
+                c.drawPath(sp2, sp);
+                c.restore();
+                break;
+            }
             case Defs.K_ICE: {
                 c.save();
                 c.translate(s.x, s.y);
@@ -3443,6 +6159,26 @@ public final class GameView extends View {
             g.pointAt(h.d, tmp);
             float x = tmp[0], y = tmp[1];
             float a = Math.max(0.3f, h.hp / h.maxHp);
+            if (h.summon == -2) {
+                // King's Knight Moon
+                glowCircle(c, x, y, 90, 0x99FFD23F);
+                sprite(c, pBmp[Defs.MOON], x, y, 44, 255);
+                Art.crown(c, x, y - 52, 36);
+                sp.setPathEffect(null);
+                sp.setStrokeWidth(5);
+                sp.setColor(0xDDFFD23F);
+                c.drawCircle(x, y, 54, sp);
+                float bw = 110;
+                p.setShader(null);
+                p.setStyle(Paint.Style.FILL);
+                p.setColor(0xDD0B0520);
+                rf.set(x - bw / 2 - 3, y - 92, x + bw / 2 + 3, y - 80);
+                c.drawRoundRect(rf, 6, 6, p);
+                p.setColor(0xFFFFD23F);
+                rf.set(x - bw / 2, y - 90, x - bw / 2 + bw * Math.max(0, h.hp / h.maxHp), y - 82);
+                c.drawRoundRect(rf, 4, 4, p);
+                continue;
+            }
             if (h.summon >= 0) {
                 glowCircle(c, x, y, 120, 0x885EF2FF);
                 float rad = Defs.E_RADIUS[h.summon] * (h.summonBoss ? 0.75f : 1.2f);
@@ -3550,33 +6286,40 @@ public final class GameView extends View {
     void drawBuild(Canvas c, Game g) {
         rf.set(-20 * u, panelTop, W + 20 * u, H + 40 * u);
         panel(c, new RectF(rf), 0xF2201248, 50 * u);
-        float gap = 20 * u, cw = (W - 60 * u - gap * 3) / 4f, chh = 270 * u;
+        int n = Profile.DECK_SIZE;
+        float gap = 14 * u, cw = (W - 60 * u - gap * (n - 1)) / n, chh = 270 * u;
         float y0 = panelTop + 40 * u;
-        if (buildSel >= 0)
-            plain(c, L.t("แตะช่องว่างบนแมพเพื่อวาง", "Tap an empty slot to place"), W / 2, panelTop - 16 * u, 34 * u, 0xFFFFD23F, Paint.Align.CENTER, 0);
-        for (int i = 0; i < Profile.DECK_SIZE; i++) {
+        if (buildSel >= 0) {
+            int bt = g.deck[buildSel];
+            String hint = bt >= 0 && Defs.onPathOnly(bt) ? L.t("แตะช่องบนทางเดิน (วงสีแดง)", "Tap a slot on the path (red ring)")
+                    : bt >= 0 && Defs.nearPathOnly(bt) ? L.t("แตะช่องที่ติดทางเดิน", "Tap a slot next to the path")
+                    : L.t("แตะช่องว่างบนแมพเพื่อวาง", "Tap an empty slot to place");
+            plain(c, hint, W / 2, panelTop - 16 * u, 34 * u, 0xFFFFD23F, Paint.Align.CENTER, 0);
+        }
+        for (int i = 0; i < n; i++) {
             final int idx = i;
             final int type = g.deck[i];
+            boolean special = i == Defs.SPECIAL_SLOT;
             float x0 = 30 * u + i * (cw + gap);
             float lift = buildSel == i ? 14 * u : 0;
             RectF r = new RectF(x0, y0 - lift, x0 + cw, y0 + chh - lift);
             if (type < 0) {
-                rarityCard(c, r, 0xFF6A6488, false, false, 30 * u);
-                text(c, L.t("ว่าง", "Empty"), r.centerX(), r.centerY() + 14 * u, 36 * u, 0xFF6A6488);
+                rarityCard(c, r, special ? Defs.RARITY_COLOR[Defs.SPECIALIST] : 0xFF6A6488, false, false, 26 * u);
+                text(c, special ? "Specialist" : L.t("ว่าง", "Empty"), r.centerX(), r.centerY() + 12 * u, 28 * u, special ? 0xFFB8A878 : 0xFF6A6488, Paint.Align.CENTER, cw - 10 * u);
                 continue;
             }
             int cost = Defs.PLACE_COST[type];
             int placed = g.countOf(type);
             boolean can = g.stars >= cost && placed < Defs.PLACE_LIMIT[type];
             int rc = Defs.RARITY_COLOR[Defs.P_RARITY[type]];
-            rarityCard(c, r, rc, can, buildSel == i, 30 * u);
+            rarityCard(c, r, rc, can, buildSel == i, 26 * u);
             float cx = r.centerX();
-            sprite(c, pBmp[type], cx, r.top + 100 * u, 80 * u, can ? 255 : 120);
-            if (pf.enchant[type] >= 0) badge(c, r.right - 34 * u, r.top + 50 * u, 18 * u, pf.enchant[type], 0);
-            text(c, Defs.P_NAME[type], cx, r.top + 200 * u, 36 * u, 0xFFFFFFFF, Paint.Align.CENTER, cw - 20 * u);
-            plain(c, placed + "/" + Defs.PLACE_LIMIT[type], r.left + 18 * u, r.top + 46 * u, 26 * u, placed >= Defs.PLACE_LIMIT[type] ? 0xFFFF6B6B : 0xFFB8F6FF, Paint.Align.LEFT, 0);
-            star(c, cx - 28 * u, r.top + 238 * u, 18 * u);
-            text(c, String.valueOf(cost), cx + 6 * u, r.top + 252 * u, 40 * u, can ? 0xFFFFD23F : 0xFFFF6B6B, Paint.Align.LEFT, 0);
+            sprite(c, pbmp(type), cx, r.top + 100 * u, Math.min(70 * u, cw * 0.36f), can ? 255 : 120);
+            if (pf.enchant[type] >= 0) badge(c, r.right - 28 * u, r.top + 46 * u, 15 * u, pf.enchant[type], 0);
+            text(c, Defs.P_NAME[type], cx, r.top + 196 * u, 30 * u, 0xFFFFFFFF, Paint.Align.CENTER, cw - 14 * u);
+            plain(c, placed + "/" + Defs.PLACE_LIMIT[type], r.left + 14 * u, r.top + 42 * u, 24 * u, placed >= Defs.PLACE_LIMIT[type] ? 0xFFFF6B6B : 0xFFB8F6FF, Paint.Align.LEFT, 0);
+            star(c, cx - 24 * u, r.top + 236 * u, 16 * u);
+            text(c, String.valueOf(cost), cx + 4 * u, r.top + 250 * u, 36 * u, can ? 0xFFFFD23F : 0xFFFF6B6B, Paint.Align.LEFT, 0);
             btns.add(new Btn(r, () -> {
                 if (paused || game.won || game.lost) return;
                 selPlanet = null;
@@ -3590,13 +6333,24 @@ public final class GameView extends View {
         panel(c, new RectF(rf), 0xF2201248, 50 * u);
         int rar = Defs.P_RARITY[pl.type];
         float x0 = 40 * u, y0 = panelTop + 30 * u;
-        sprite(c, pBmp[pl.type], x0 + 90 * u, y0 + 100 * u, 95 * u, 255);
+        sprite(c, skinBmp(pl.type, pl.skin), x0 + 90 * u, y0 + 100 * u, 95 * u, 255);
         float tx = x0 + 200 * u;
         text(c, Defs.P_NAME[pl.type] + "  Lv " + pl.level + "/" + Defs.MATCH_MAX[pl.type], tx, y0 + 50 * u, 50 * u, 0xFFFFFFFF, Paint.Align.LEFT, W - tx - 260 * u);
         text(c, Defs.RARITY_NAME[rar], W - 40 * u, y0 + 50 * u, 36 * u, Defs.RARITY_COLOR[rar], Paint.Align.RIGHT, 0);
         String stat;
+        int kd = Defs.P_KIND[pl.type];
         if (Game.isProducer(pl)) {
             stat = String.format(Locale.US, L.t("ผลิต %.1f SP ทุก %.1f วิ", "Makes %.1f SP every %.1fs"), Game.produceRate(pl), Game.cdOf(pl));
+        } else if (kd == Defs.K_WALL) {
+            stat = String.format(Locale.US, L.t("กำแพง 3 ชั้น • สร้างใหม่ทุก %.1f วิ", "3 walls • rebuilds every %.1fs"), Game.cdOf(pl));
+        } else if (kd == Defs.K_HAUNT) {
+            stat = String.format(Locale.US, L.t("Haunted + สโลว์ 35%%  ระยะ %d", "Haunted + 35%% slow  Range %d"), (int) Game.rangeOf(pl));
+        } else if (kd == Defs.K_STORM) {
+            stat = String.format(Locale.US, L.t("สตันวงกว้าง ทุก %.1f วิ  ระยะ %d", "Area stun every %.1fs  Range %d"), Game.cdOf(pl), (int) Game.rangeOf(pl));
+        } else if (kd == Defs.K_NUKE) {
+            stat = L.t("ไม่โจมตี • สกิลระเบิดทั้งแมพ ", "No attack • map-wide blast ") + Defs.nukeCost(g.wave) + " SP";
+        } else if (kd == Defs.K_KING) {
+            stat = L.t("บัฟทุกดวง +10% • Elite Command 1 ครั้ง", "+10% to every planet • Elite Command once");
         } else if (pl.type == Defs.SUN) {
             stat = String.format(Locale.US, L.t("คลื่นความร้อน ทุก %.1f วิ", "Heat wave every %.1fs"), Game.cdOf(pl));
         } else {
@@ -3613,7 +6367,8 @@ public final class GameView extends View {
         }
         if (pl.moons > 1) plain(c, "Moons x" + pl.moons, W - 40 * u, y0 + 152 * u, 28 * u, 0xFFE6E8F5, Paint.Align.RIGHT, 0);
         if (pl.buff > 0)
-            plain(c, L.t("บัฟ Pluto +", "Pluto buff +") + (int) (pl.buff * 100) + "%", W - 40 * u, y0 + 100 * u, 28 * u, 0xFFFFB2D8, Paint.Align.RIGHT, 0);
+            plain(c, L.t("บัฟ +", "Buff +") + (int) (pl.buff * 100) + "%" + (pl.king ? " (King)" : ""), W - 40 * u, y0 + 100 * u, 28 * u, 0xFFFFB2D8, Paint.Align.RIGHT, 0);
+        if (pl.spirits > 0) plain(c, L.t("วิญญาณ x", "Spirits x") + pl.spirits, W - 40 * u, y0 + 152 * u, 28 * u, 0xFFB8FFF0, Paint.Align.RIGHT, 0);
 
         float by = H - 120 * u, bh = 95 * u, bw = (W - 80 * u - 40 * u) / 3f;
         boolean max = pl.level >= Defs.MATCH_MAX[pl.type];
@@ -3624,19 +6379,38 @@ public final class GameView extends View {
             if (err != null) showToast(err);
         });
         rf.set(60 * u + bw, by - bh / 2, 60 * u + bw * 2, by + bh / 2);
-        button(c, rf, L.t("ขาย +", "Sell +") + Math.max(1, pl.spent / 2), 0xFFFF6B5B, true, () -> {
-            game.sell(pl);
-            selPlanet = null;
-        });
+        if (kd == Defs.K_NUKE) {
+            int nc = Defs.nukeCost(g.wave);
+            button(c, rf, L.t("ระเบิด ", "Blast ") + nc, 0xFFD0304A, g.stars >= nc, () -> Dialogs.confirm(ctx, "Nightmare",
+                    L.t("ใช้ ", "Spend ") + nc + L.t(" SP ระเบิด Nightmare และศัตรูทั้งแมพ?", " SP to blow up Nightmare and every enemy?"), L.t("ระเบิด!", "Blast!"), () -> {
+                        String err = game.nuke(pl);
+                        if (err != null) showToast(err);
+                        selPlanet = null;
+                    }));
+        } else if (kd == Defs.K_KING) {
+            button(c, rf, g.kingSkillUsed ? L.t("ใช้แล้ว", "Used") : "Elite Command", 0xFFE0A020, !g.kingSkillUsed, () -> {
+                String err = game.eliteCommand(pl);
+                if (err != null) showToast(err);
+            });
+        } else {
+            button(c, rf, L.t("ขาย +", "Sell +") + Math.max(1, pl.spent / 2), 0xFFFF6B5B, true, () -> {
+                game.sell(pl);
+                selPlanet = null;
+            });
+        }
         rf.set(80 * u + bw * 2, by - bh / 2, 80 * u + bw * 3, by + bh / 2);
         button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> selPlanet = null);
     }
+
+    static float ease(float t) { float k = 1 - t; return 1 - k * k * k; }
+
+    static float backOut(float t) { float s = 1.7f; t -= 1; return t * t * ((s + 1) * t + s) + 1; }
 
     void dim(Canvas c) {
         p.setShader(null);
         p.setStyle(Paint.Style.FILL);
         p.setColor(0xCC05010D);
-        c.drawRect(0, 0, W, H, p);
+        c.drawRect(-W, -H, W * 2, H * 2, p);
         btns.clear(); // only overlay buttons are active
     }
 
@@ -3665,6 +6439,16 @@ public final class GameView extends View {
             sprite(c, pBmp[Defs.SUN], W / 2, r.top + 130 * u, 110 * u, 255);
             title(c, L.t("ชนะแล้ว!", "Victory!"), W / 2, r.top + 300 * u, 96 * u, 0xFFFFD23F);
             plain(c, L.t("ปกป้องฐานได้ครบ ", "Defended all ") + g.maxWave + L.t(" เวฟ", " waves"), W / 2, r.top + 370 * u, 40 * u, 0xFFFFFFFF, Paint.Align.CENTER, 0);
+            if (pf.heroUnlocked) {
+                // celebrate the exclusive reward
+                RectF hb = new RectF(r.left - 20 * u, r.top - 330 * u, r.right + 20 * u, r.top - 30 * u);
+                panel(c, hb, 0xF0401018, 40 * u);
+                glowCircle(c, hb.left + 150 * u, hb.centerY(), 160 * u, 0x99FF6A3D);
+                sprite(c, pBmp[Defs.HERO], hb.left + 150 * u, hb.centerY() + 6 * u * (float) Math.sin(anim * 3), 115 * u, 255);
+                title(c, L.t("ได้รับดาว Hero!", "Hero planet unlocked!"), hb.left + 290 * u, hb.top + 120 * u, 52 * u, 0xFFFFC83A, Paint.Align.LEFT, hb.width() - 320 * u);
+                plain(c, L.t("Exclusive • ยิงทะลุ + เผา  (ใส่ Deck ให้แล้ว)", "Exclusive • Pierce + Burn  (added to your deck)"), hb.left + 290 * u, hb.top + 180 * u, 30 * u, 0xFFFFD8C8, Paint.Align.LEFT, hb.width() - 320 * u);
+                plain(c, L.t("ผ่านครบ 3 กาแล็กซีแล้ว!", "All 3 galaxies cleared!"), hb.left + 290 * u, hb.top + 230 * u, 28 * u, 0xFFFF9A7A, Paint.Align.LEFT, 0);
+            } else if (pf.firstClear) pill(c, W / 2, r.top + 425 * u, L.t("ผ่านครั้งแรก! โบนัส Millite + Crystal", "First clear! Bonus Millite + Crystal"), 30 * u, 0xFF140A2A, 0xFF9CFF7A);
         } else {
             blackHole(c, W / 2, r.top + 140 * u, 80 * u);
             title(c, L.t("ฐานถูกทำลาย", "Base destroyed"), W / 2, r.top + 300 * u, 86 * u, 0xFFFF6B6B, Paint.Align.CENTER, r.width() - 60 * u);
@@ -3675,12 +6459,21 @@ public final class GameView extends View {
         text(c, "+" + g.earnStars, W / 2 - 232 * u, r.top + 536 * u, 46 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
         milliteIcon(c, W / 2 - 20 * u, r.top + 520 * u, 26 * u);
         text(c, "+" + g.earnMillite, W / 2 + 18 * u, r.top + 536 * u, 46 * u, 0xFFE2C6FF, Paint.Align.LEFT, 0);
-        crystalIcon(c, W / 2 + 175 * u, r.top + 520 * u, 28 * u);
-        text(c, "+" + g.earnCrystal, W / 2 + 212 * u, r.top + 536 * u, 46 * u, 0xFFB8F6FF, Paint.Align.LEFT, 0);
+        if (g.stage == Defs.RAID) {
+            oilIcon(c, W / 2 + 175 * u, r.top + 520 * u, 28 * u);
+            text(c, "+" + pf.lastOil, W / 2 + 212 * u, r.top + 536 * u, 46 * u, 0xFFFFC890, Paint.Align.LEFT, 0);
+            plain(c, L.t("Raid สูงสุด: เวฟ ", "Raid best: wave ") + pf.raidBest, W / 2, r.top + 585 * u, 28 * u, 0xFF9CFF7A, Paint.Align.CENTER, 0);
+        } else {
+            crystalIcon(c, W / 2 + 175 * u, r.top + 520 * u, 28 * u);
+            text(c, "+" + g.earnCrystal, W / 2 + 212 * u, r.top + 536 * u, 46 * u, 0xFFB8F6FF, Paint.Align.LEFT, 0);
+        }
         final int st = g.stage;
+        boolean hasNext = g.won && st != Defs.RAID && st + 1 < Defs.ST_COUNT && st + 1 < pf.unlocked;
         rf.set(r.left + 70 * u, r.top + 610 * u, r.right - 70 * u, r.top + 720 * u);
-        button(c, rf, L.t("เล่นอีกครั้ง", "Play again"), 0xFFFF8A2B, true, () -> startStage(st));
+        if (hasNext) button(c, rf, L.t("ด่านต่อไป ", "Next stage ") + (Defs.galaxyOf(st + 1) + 1) + "-" + ((st + 1) % Defs.PER_GALAXY + 1), 0xFFFF8A2B, true,
+                () -> { playSel = st + 1; playGal = Defs.galaxyOf(st + 1); startStage(st + 1); });
+        else button(c, rf, L.t("เล่นอีกครั้ง", "Play again"), 0xFFFF8A2B, true, () -> startStage(st));
         rf.set(r.left + 70 * u, r.top + 760 * u, r.right - 70 * u, r.top + 870 * u);
-        button(c, rf, L.t("กลับล็อบบี้", "Back to lobby"), 0xFF6B5BD6, true, () -> { game = null; screen = S_LOBBY; });
+        button(c, rf, L.t("เลือกด่าน", "Stage select"), 0xFF6B5BD6, true, () -> { game = null; screen = S_PLAYMENU; });
     }
 }

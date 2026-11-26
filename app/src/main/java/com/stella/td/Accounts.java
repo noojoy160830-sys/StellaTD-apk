@@ -120,6 +120,10 @@ final class Accounts {
 
     void setLang(boolean en) { sp.edit().putInt("lang", en ? 1 : 0).apply(); }
 
+    boolean sfxOn() { return sp.getBoolean("sfx", true); }
+
+    void setSfx(boolean on) { sp.edit().putBoolean("sfx", on).apply(); }
+
     boolean infiniteSP() { return sp.getBoolean("dbg_sp", false); }
 
     void setInfiniteSP(boolean b) { sp.edit().putBoolean("dbg_sp", b).apply(); }

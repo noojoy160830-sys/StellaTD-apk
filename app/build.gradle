@@ -10,8 +10,23 @@ android {
         applicationId 'com.stella.td'
         minSdk 24
         targetSdk 34
-        versionCode 8
-        versionName '2.6'
+        versionCode 13
+        versionName '3.1'
+    }
+
+    // Two apps from one codebase:
+    //   game    -> "Stella TD"       (com.stella.td)
+    //   console -> "Stella Console"  (com.stella.td.console) staff-only admin console
+    flavorDimensions 'app'
+    productFlavors {
+        game {
+            dimension 'app'
+        }
+        console {
+            dimension 'app'
+            applicationIdSuffix '.console'
+            versionNameSuffix '-console'
+        }
     }
 
     buildTypes {

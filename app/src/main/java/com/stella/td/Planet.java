@@ -7,4 +7,14 @@ final class Planet {
     float x, y;
     float cdT, prodT, prodAcc, orbitA, disabledT, buff, bonusDmg, anim, flash;
     int spent, kills, moons;
+    /** Commander: the path point it circles around */
+    float ax, ay;
+    /** Cyber: where its walls go on the path */
+    float wallD = -1;
+    /** Savior: friendly spirits circling this planet */
+    int spirits;
+    /** King aura is on this planet / Hell Moon equipped */
+    boolean king, hellMoon;
+    /** skin style shown on the map (-1 = none) */
+    int skin = -1;
 }
