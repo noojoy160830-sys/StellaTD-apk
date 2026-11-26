@@ -10,6 +10,6 @@ package com.stella.td;
 final class FirebaseConfig {
     private FirebaseConfig() {}
 
-    static final String API_KEY = "AIzaSyBHTZWwEonn78ygzXX7sZpKR-by4e470_o";
-    static final String DB_URL = "https://stella-td-default-rtdb.asia-southeast1.firebasedatabase.app/:null";
+    static final String API_KEY = "AIzaSyBrzxn0z_yZ4B4jyr8KW0iZ-ONVH7c6S8c";
+    static final String DB_URL = "https://stella-td-2-default-rtdb.asia-southeast1.firebasedatabase.app";
 }
