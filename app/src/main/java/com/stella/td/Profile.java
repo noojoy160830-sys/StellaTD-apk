@@ -129,7 +129,9 @@ final class Profile {
             deck[1] = Defs.MOON;
             deck[2] = Defs.SATELLITE;
             deck[3] = -1;
-            save();
+            // write the starter kit without stamping a save time: a fresh install must never look
+            // newer than the account's cloud save (that used to wipe progress after reinstalling)
+            sp.write(toMap(), false);
         }
     }
 
@@ -188,6 +190,11 @@ final class Profile {
         }
         sp.write(m, true);
         load();
+    }
+
+    /** true for a profile nobody has played yet (starter kit only) */
+    boolean pristine() {
+        return games == 0 && wins == 0 && playSec < 30 && ownedCount() <= 3 && unlocked <= 1;
     }
 
     void save() {

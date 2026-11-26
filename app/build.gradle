@@ -10,8 +10,8 @@ android {
         applicationId 'com.stella.td'
         minSdk 24
         targetSdk 34
-        versionCode 14
-        versionName '3.2'
+        versionCode 15
+        versionName '3.3'
     }
 
     // Two apps from one codebase:
@@ -29,11 +29,22 @@ android {
         }
     }
 
+    // A fixed key keeps every build installable over the previous one (no uninstall, data kept).
+    // The workflow writes app/stella.keystore from the STELLA_KEYSTORE secret; without it the debug key is used.
+    def stellaKs = file('stella.keystore')
+    signingConfigs {
+        stella {
+            storeFile stellaKs
+            storePassword System.getenv('STELLA_KS_PASS') ?: ''
+            keyAlias 'stella'
+            keyPassword System.getenv('STELLA_KS_PASS') ?: ''
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
-            // Signed with the debug key so the APK installs without extra setup.
-            signingConfig signingConfigs.debug
+            signingConfig stellaKs.exists() ? signingConfigs.stella : signingConfigs.debug
         }
     }
 

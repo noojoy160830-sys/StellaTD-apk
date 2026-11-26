@@ -124,6 +124,18 @@ final class Accounts {
 
     void setSfx(boolean on) { sp.edit().putBoolean("sfx", on).apply(); }
 
+    int volume() { return sp.getInt("vol", 100); }
+
+    void setVolume(int v) { sp.edit().putInt("vol", v).apply(); }
+
+    boolean sfxBattle() { return sp.getBoolean("sfxBattle", true); }
+
+    void setSfxBattle(boolean on) { sp.edit().putBoolean("sfxBattle", on).apply(); }
+
+    boolean sfxUi() { return sp.getBoolean("sfxUi", true); }
+
+    void setSfxUi(boolean on) { sp.edit().putBoolean("sfxUi", on).apply(); }
+
     boolean infiniteSP() { return sp.getBoolean("dbg_sp", false); }
 
     void setInfiniteSP(boolean b) { sp.edit().putBoolean("dbg_sp", b).apply(); }

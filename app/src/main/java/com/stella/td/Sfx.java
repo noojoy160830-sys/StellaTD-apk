@@ -28,6 +28,11 @@ final class Sfx {
             0.35f, 0.4f, 0.22f, 0.35f, 0.35f, 0.55f, 0.6f, 0.25f, 0.35f, 0.9f, 0.7f, 0.6f, 0.8f, 0.8f, 0.7f, 0.7f};
 
     static volatile boolean enabled = true;
+    /** master volume 0..1, and separate switches for battle sounds and menu sounds */
+    static volatile float master = 1f;
+    static volatile boolean battle = true, ui = true;
+
+    static boolean isBattle(int id) { return id >= PLACE && id <= WAVE_START; }
     private static SoundPool pool;
     private static final int[] ids = new int[COUNT];
     private static final long[] last = new long[COUNT];
@@ -60,14 +65,15 @@ final class Sfx {
     static void play(int id) { play(id, 1f); }
 
     static void play(int id, float pitch) {
-        if (!enabled || !ready || pool == null) return;
+        if (!enabled || !ready || pool == null || master <= 0.001f) return;
+        if (isBattle(id) ? !battle : !ui) return;
         long now = System.nanoTime() / 1000000L;
         if (now - last[id] < GAP[id] * 1000) return;
         // never more than 16 sounds per 250 ms, so big fights stay pleasant
         if (now - windowStart > 250) { windowStart = now; windowCount = 0; }
         if (++windowCount > 16) return;
         last[id] = now;
-        float v = VOL[id];
+        float v = VOL[id] * master;
         pool.play(ids[id], v, v, id <= GACHA && id >= WIN ? 2 : 1, 0, Math.max(0.5f, Math.min(2f, pitch)));
     }
 

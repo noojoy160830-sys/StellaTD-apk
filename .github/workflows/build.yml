@@ -64,8 +64,21 @@ jobs:
           for f in Kanit-SemiBold.ttf Kanit-BlackItalic.ttf OFL.txt; do
             curl -fsSL "$base/$f" -o "app/src/main/assets/fonts/$f" || echo "Could not download $f (game will use the default font)"
           done
+      - name: Signing key (keeps updates installable)
+        working-directory: ${{ env.PROJ }}
+        env:
+          STELLA_KEYSTORE: ${{ secrets.STELLA_KEYSTORE }}
+        run: |
+          if [ -n "$STELLA_KEYSTORE" ]; then
+            echo "$STELLA_KEYSTORE" | tr -d ' \r\n' | base64 -d > app/stella.keystore
+            echo "Using the Stella signing key"
+          else
+            echo "::warning::No STELLA_KEYSTORE secret - using a temporary debug key (installing this build needs an uninstall first)"
+          fi
       - name: Build APK
         working-directory: ${{ env.PROJ }}
+        env:
+          STELLA_KS_PASS: ${{ secrets.STELLA_KS_PASS }}
         run: |
           chmod +x ./gradlew
           ./gradlew --no-daemon assembleGameRelease assembleConsoleRelease
@@ -79,8 +92,8 @@ jobs:
             StellaConsole.apk
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v3.2.${{ github.run_number }}
-          name: Stella TD v3.2.${{ github.run_number }}
+          tag_name: v3.3.${{ github.run_number }}
+          name: Stella TD v3.3.${{ github.run_number }}
           make_latest: true
           files: |
             StellaTD.apk
