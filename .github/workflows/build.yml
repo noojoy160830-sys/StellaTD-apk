@@ -41,15 +41,20 @@ jobs:
         working-directory: ${{ env.PROJ }}
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/StellaTD.apk"
+          ./gradlew --no-daemon assembleGameRelease assembleConsoleRelease
+          cp app/build/outputs/apk/game/release/app-game-release.apk "$GITHUB_WORKSPACE/StellaTD.apk"
+          cp app/build/outputs/apk/console/release/app-console-release.apk "$GITHUB_WORKSPACE/StellaConsole.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: StellaTD-apk
-          path: StellaTD.apk
+          path: |
+            StellaTD.apk
+            StellaConsole.apk
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.8.${{ github.run_number }}
-          name: Stella TD v2.8.${{ github.run_number }}
+          tag_name: v2.9.${{ github.run_number }}
+          name: Stella TD v2.9.${{ github.run_number }}
           make_latest: true
-          files: StellaTD.apk
+          files: |
+            StellaTD.apk
+            StellaConsole.apk
