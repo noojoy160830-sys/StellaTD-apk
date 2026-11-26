@@ -250,6 +250,13 @@ final class Defs {
     static final float[] ST_HP = new float[ST_COUNT + 1], ST_SPEED = new float[ST_COUNT + 1];
     static final float[][] ST_PATH = new float[ST_COUNT + 1][], ST_SLOTS = new float[ST_COUNT + 1][];
 
+    // ---- evolution: a few planets can evolve once they reach max level
+    static boolean canEvolve(int t) { return t == EARTH; }
+    static final int EVO_STARS = 5000, EVO_MILLITE = 30;
+    static String evoName(int t) { return t == EARTH ? "Gaia Earth" : P_NAME[t]; }
+    static final String EVO_DESC_TH = "ร่างวิวัฒน์: ดาเมจ +60%, ระยะ +15%, ยิงเร็วขึ้น 15% และทุกนัดที่ 4 เป็นแผ่นดินไหว สตันศัตรูรอบเป้า";
+    static final String EVO_DESC_EN = "Evolved: +60% damage, +15% range, 15% faster, every 4th shot is a quake that stuns nearby enemies";
+
     static int galaxyOf(int st) { return Math.min(GALAXIES - 1, st / PER_GALAXY); }
 
     // Map frame is 1000 x 1200 units. Paths are x,y pairs; the first point is the black hole, the last the base.

@@ -20,16 +20,16 @@ import java.util.Locale;
 /** Renders every screen and handles touch. Match rules live in {@link Game}, saved data in {@link Profile}. */
 public final class GameView extends View {
 
-    static final String VERSION = "v3.1";
+    static final String VERSION = "v3.2";
     /** must match versionCode in app/build.gradle */
-    static final int VERSION_CODE = 13;
+    static final int VERSION_CODE = 14;
 
     // hub screens
     static final int S_LOBBY = 0, S_SHOP = 1, S_PLANET = 2, S_PLAYMENU = 3, S_BANNER = 4, S_ENCHANT = 5, S_GAME = 6,
             S_LOGIN = 7, S_ADMIN = 8, S_LEADER = 9, S_TERM = 10, S_STAFF = 11, S_SERVER = 12, S_LOGS = 13;
     // popups
     static final int P_NONE = 0, P_PLAYER = 1, P_SETTINGS = 2, P_GACHA = 3, P_INDEX = 4, P_AUTO = 5, P_GIVE = 6,
-            P_AVATAR = 7, P_CONSOLE = 8, P_BULKRES = 9, P_ROLE = 10, P_EQUIP = 11, P_INV = 12, P_RSHOP = 13, P_ITEMS = 14;
+            P_AVATAR = 7, P_CONSOLE = 8, P_BULKRES = 9, P_ROLE = 10, P_EQUIP = 11, P_INV = 12, P_RSHOP = 13, P_ITEMS = 14, P_RATES = 15;
 
     static final class Btn {
         final RectF r;
@@ -740,6 +740,7 @@ public final class GameView extends View {
             case P_INV: drawInventory(c); break;
             case P_RSHOP: drawRaidShop(c); break;
             case P_ITEMS: drawGiveItems(c); break;
+            case P_RATES: drawRates(c); break;
             default: break;
         }
         c.restore();
@@ -1372,9 +1373,12 @@ public final class GameView extends View {
         float bx = rf.centerX(), by = rf.centerY();
         c.drawLine(bx + 10 * u, by - 22 * u, bx - 14 * u, by, sp);
         c.drawLine(bx - 14 * u, by, bx + 10 * u, by + 22 * u, sp);
-        title(c, title, 180 * u, 125 * u, 60 * u, 0xFFFFD23F, Paint.Align.LEFT, 330 * u);
-        chip(c, W - 330 * u, 100 * u, k1, v1);
-        chip(c, W - 120 * u, 100 * u, k2, v2);
+        tp.setTextSize(40 * u);
+        float w2 = tp.measureText(String.valueOf(v2)) + 120 * u, w1 = tp.measureText(String.valueOf(v1)) + 120 * u;
+        float c2 = W - 24 * u - w2 / 2, c1 = c2 - w2 / 2 - 14 * u - w1 / 2;
+        title(c, title, 180 * u, 125 * u, 60 * u, 0xFFFFD23F, Paint.Align.LEFT, Math.max(200 * u, c1 - w1 / 2 - 200 * u));
+        chip(c, c1, 100 * u, k1, v1);
+        chip(c, c2, 100 * u, k2, v2);
     }
 
     static final int AVATARS = 12;
@@ -1415,8 +1419,22 @@ public final class GameView extends View {
 
     Bitmap moonBmp(int m) { return m == Defs.MOON_HELL ? hellMoonBmp() : pBmp[Defs.MOON]; }
 
-    /** my planet as it looks with its equipped skin */
-    Bitmap pbmp(int type) { return pf == null ? pBmp[type] : skinBmp(type, pf.skinOn[type]); }
+    final java.util.HashMap<Integer, Bitmap> evoCache = new java.util.HashMap<>();
+
+    Bitmap evoBmp(int type) {
+        Bitmap b = evoCache.get(type);
+        if (b == null && pBmp[type] != null) { b = SkinArt.evolved(pBmp[type], type); evoCache.put(type, b); }
+        return b;
+    }
+
+    /** sprite for a planet: a skin wins, else the evolved form, else the base sprite */
+    Bitmap planetBmp(int type, int skin, boolean evo) {
+        if (skin >= 0) return skinBmp(type, skin);
+        return evo ? evoBmp(type) : pBmp[type];
+    }
+
+    /** my planet as it looks with its equipped skin / evolution */
+    Bitmap pbmp(int type) { return pf == null ? pBmp[type] : planetBmp(type, pf.skinOn[type], pf.evolved[type]); }
 
     /** a round photo, or the drawn icon when there is no photo */
     void avatarOf(Canvas c, float x, float y, float r, int id, String photo) {
@@ -1674,8 +1692,8 @@ public final class GameView extends View {
         c.scale(1f, 0.55f);
         sprite(c, gBmp, 0, 0, 150 * u, 170);
         c.restore();
-        float sy = (navTop + 420 * u) / 2f + 40 * u;
-        station(c, W / 2, sy, W * 0.42f);
+        float sy = 760 * u + (float) Math.sin(anim * 0.8f) * 8 * u;
+        station(c, W / 2, sy, W * 0.33f);
         // top bar
         rf.set(30 * u, 50 * u, 150 * u, 170 * u);
         button(c, rf, null, 0xFF6B5BD6, true, () -> popup = P_PLAYER);
@@ -1699,7 +1717,119 @@ public final class GameView extends View {
         plain(c, L.t("สถานีอวกาศ Stella • ผู้บัญชาการ ", "Stella Station • Commander ") + user, W / 2, 435 * u, 30 * u, 0xFFE6E0FF, Paint.Align.CENTER, 480 * u);
         netPill(c, W / 2, 490 * u);
         if (bcMsg != null && System.currentTimeMillis() - bcTime < 86400000L) ticker(c, 545 * u);
+        lobbyCards(c, Math.max(980 * u, navTop - 660 * u));
         plain(c, VERSION, W - 30 * u, navTop - 30 * u, 26 * u, 0x99FFFFFF, Paint.Align.RIGHT, 0);
+    }
+
+    /** lobby: Story / Raid mode cards, my deck and quick links */
+    void lobbyCards(Canvas c, float top) {
+        float gap = 24 * u, cw = (W - 80 * u - gap) / 2f, ch = 360 * u;
+        // ---- Story card
+        RectF s = new RectF(40 * u, top, 40 * u + cw, top + ch);
+        modeCard(c, s, 0xFFFF8A2B, 0xEE2A1550);
+        int cleared = 0;
+        for (int i = 0; i < Defs.ST_COUNT; i++) if (pf.clear[i]) cleared++;
+        int next = Math.min(pf.unlocked, Defs.ST_COUNT) - 1;
+        c.save();
+        c.clipRect(s.left, s.top, s.right, s.bottom);
+        blackHole(c, s.right - 80 * u, s.top + 95 * u, 50 * u);
+        for (int k = 0; k < 5; k++) {
+            double a = anim * 0.9 + k * 1.25;
+            sprite(c, eBmp[k % 4], s.right - 80 * u + (float) Math.cos(a) * 95 * u, s.top + 95 * u + (float) Math.sin(a) * 40 * u, 14 * u, 220);
+        }
+        c.restore();
+        title(c, L.t("สตอรี่", "Story"), s.left + 30 * u, s.top + 80 * u, 52 * u, 0xFFFFFFFF, Paint.Align.LEFT, cw - 170 * u);
+        plain(c, L.t("ผ่านแล้ว ", "Cleared ") + cleared + "/" + Defs.ST_COUNT, s.left + 30 * u, s.top + 140 * u, 28 * u, 0xFFFFD8B0, Paint.Align.LEFT, 0);
+        progressBar(c, s.left + 30 * u, s.top + 165 * u, cw - 60 * u, 16 * u, cleared / (float) Defs.ST_COUNT, 0xFFFF8A2B);
+        rf.set(s.left + 24 * u, s.bottom - 112 * u, s.right - 24 * u, s.bottom - 26 * u);
+        final int ns = next;
+        button(c, rf, L.t("เล่นต่อ ", "Continue ") + (Defs.galaxyOf(ns) + 1) + "-" + (ns % Defs.PER_GALAXY + 1), 0xFFFF8A2B, true, () -> {
+            playRaid = false;
+            playSel = ns;
+            playGal = Defs.galaxyOf(ns);
+            go(S_PLAYMENU);
+        });
+        // ---- Raid card
+        RectF r = new RectF(s.right + gap, top, W - 40 * u, top + ch);
+        boolean open = raidOpen();
+        modeCard(c, r, open ? 0xFFFF3B6B : 0xFF6A4A60, 0xEE300A22);
+        c.save();
+        c.clipRect(r.left, r.top, r.right, r.bottom);
+        for (int ring = 0; ring < 3; ring++) {
+            sp.setPathEffect(null);
+            sp.setStrokeWidth((5 - ring) * u);
+            sp.setColor(alpha(0xFFFF3B6B, open ? 200 - ring * 50 : 90));
+            float rr = (40 + ring * 22) * u + (float) Math.sin(anim * 2 + ring) * 4 * u;
+            rf2.set(r.right - 80 * u - rr, r.top + 95 * u - rr * 0.6f, r.right - 80 * u + rr, r.top + 95 * u + rr * 0.6f);
+            c.drawOval(rf2, sp);
+        }
+        sprite(c, eBmp[Defs.E_TITAN], r.right - 80 * u, r.top + 95 * u, 38 * u, open ? 255 : 110);
+        c.restore();
+        title(c, "Raid", r.left + 30 * u, r.top + 80 * u, 52 * u, open ? 0xFFFFFFFF : 0xFFB8A8B8, Paint.Align.LEFT, cw - 170 * u);
+        if (open) {
+            plain(c, L.t("เวฟสูงสุด ", "Best wave ") + pf.raidBest + "/" + Defs.RAID_WAVES, r.left + 30 * u, r.top + 140 * u, 28 * u, 0xFFFFC0D0, Paint.Align.LEFT, 0);
+            progressBar(c, r.left + 30 * u, r.top + 165 * u, cw - 60 * u, 16 * u, pf.raidBest / (float) Defs.RAID_WAVES, 0xFFFF3B6B);
+            oilIcon(c, r.left + 48 * u, r.top + 222 * u, 14 * u);
+            plain(c, String.valueOf(pf.oil), r.left + 72 * u, r.top + 232 * u, 28 * u, 0xFFFFC890, Paint.Align.LEFT, 0);
+        } else {
+            plain(c, L.t("ชนะ ", "Wins ") + pf.wins + "/" + RAID_WINS + L.t(" เพื่อปลดล็อก", " to unlock"), r.left + 30 * u, r.top + 140 * u, 28 * u, 0xFFD8C0C8, Paint.Align.LEFT, cw - 60 * u);
+            progressBar(c, r.left + 30 * u, r.top + 165 * u, cw - 60 * u, 16 * u, pf.wins / (float) RAID_WINS, 0xFF8A6A80);
+        }
+        rf.set(r.left + 24 * u, r.bottom - 112 * u, r.right - 24 * u, r.bottom - 26 * u);
+        button(c, rf, open ? L.t("เข้าสู่ Raid", "Enter Raid") : L.t("ล็อกอยู่", "Locked"), 0xFFFF3B6B, open, () -> { playRaid = true; go(S_PLAYMENU); });
+        if (!open) btns.add(new Btn(new RectF(rf), () -> showToast(L.t("ชนะให้ครบ " + RAID_WINS + " ครั้งเพื่อปลดล็อก Raid", "Win " + RAID_WINS + " games to unlock Raid"))));
+        // ---- deck strip
+        RectF d = new RectF(40 * u, r.bottom + gap, W - 40 * u, r.bottom + gap + 210 * u);
+        panel(c, d, 0xDD1A0F3D, 30 * u);
+        text(c, L.t("Deck ของฉัน", "My deck"), d.left + 30 * u, d.top + 48 * u, 32 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        float ds = 112 * u, dx = d.left + 30 * u;
+        for (int i = 0; i < Profile.DECK_SIZE; i++) {
+            int t = pf.deck[i];
+            boolean sp4 = i == Defs.SPECIAL_SLOT;
+            RectF q = new RectF(dx + i * (ds + 16 * u) + (sp4 ? 14 * u : 0), d.top + 72 * u, dx + i * (ds + 16 * u) + (sp4 ? 14 * u : 0) + ds, d.top + 72 * u + ds);
+            rarityCard(c, q, t >= 0 ? Defs.RARITY_COLOR[Defs.P_RARITY[t]] : sp4 ? Defs.RARITY_COLOR[Defs.SPECIALIST] : 0xFF4A4460, t >= 0, false, 18 * u);
+            if (t >= 0) sprite(c, pbmp(t), q.centerX(), q.centerY(), ds * 0.36f, 255);
+            else text(c, "+", q.centerX(), q.centerY() + 16 * u, 44 * u, 0xFF6A6488);
+        }
+        rf.set(d.right - 190 * u, d.top + 88 * u, d.right - 24 * u, d.top + 168 * u);
+        button(c, rf, L.t("แก้ไข", "Edit"), 0xFF6B5BD6, true, () -> go(S_PLANET));
+    }
+
+    void modeCard(Canvas c, RectF r, int accent, int bg) {
+        rf2.set(r);
+        rf2.offset(0, 10 * u);
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0x66000000);
+        c.drawRoundRect(rf2, 34 * u, 34 * u, p);
+        p.setColor(0xFFFFFFFF);
+        p.setShader(new LinearGradient(r.left, r.top, r.right, r.bottom, bg, darken(accent, 0.3f) & 0xEEFFFFFF, Shader.TileMode.CLAMP));
+        c.drawRoundRect(r, 34 * u, 34 * u, p);
+        p.setShader(null);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(4 * u);
+        sp.setColor(alpha(accent, 0xCC));
+        c.drawRoundRect(r, 34 * u, 34 * u, sp);
+        // sheen
+        p.setShader(new LinearGradient(r.left, r.top, r.left, r.top + r.height() * 0.4f, 0x22FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
+        c.drawRoundRect(r, 34 * u, 34 * u, p);
+        p.setShader(null);
+    }
+
+    void progressBar(Canvas c, float x, float y, float w, float h, float f, int col) {
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0x66000000);
+        rf2.set(x, y, x + w, y + h);
+        c.drawRoundRect(rf2, h / 2, h / 2, p);
+        f = Math.max(0, Math.min(1, f));
+        if (f > 0) {
+            p.setColor(0xFFFFFFFF);
+            p.setShader(new LinearGradient(x, 0, x + w, 0, lighten(col, 0.3f), col, Shader.TileMode.CLAMP));
+            rf2.set(x, y, x + Math.max(h, w * f), y + h);
+            c.drawRoundRect(rf2, h / 2, h / 2, p);
+            p.setShader(null);
+        }
     }
 
     /** orbital station: solar wings, modules, a rotating habitat ring and blinking lights */
@@ -1829,7 +1959,7 @@ public final class GameView extends View {
             float x = i == 0 ? 50 * u : 50 * u + ((i - 1) % 2) * (cw + 40 * u);
             float y = y0 + (i == 0 ? 0 : ch + 40 * u) + (1f - appear) * 60 * u;
             RectF q = new RectF(x, y, i == 0 ? W - 50 * u : x + cw, y + ch);
-            boolean live = i == 0;
+            boolean live = i != 1;
             rarityCard(c, q, cols[i], live, false, 36 * u);
             float ix = q.centerX(), iy = q.top + ch * 0.36f + (float) Math.sin(anim * 2.2f + i) * 10 * u;
             glowCircle(c, ix, iy, 130 * u, alpha(cols[i], 0x55));
@@ -1842,6 +1972,12 @@ public final class GameView extends View {
                         0xFF2E9A6A, ready, () -> {
                             if (pf.claimGift()) { Sfx.play(Sfx.COIN); showToast("+" + Profile.GIFT_STARS + " Star!"); pushNow(); }
                         });
+            } else if (i == 2) {
+                plain(c, L.t("Raid Capsule • ร้านค้า Raid", "Raid Capsule • Raid shop"), q.centerX(), q.bottom - 50 * u, 26 * u, 0xFFB8F6FF, Paint.Align.CENTER, cw - 20 * u);
+                btns.add(new Btn(q, () -> {
+                    if (raidOpen()) popup = P_RSHOP;
+                    else showToast(L.t("ชนะให้ครบ " + RAID_WINS + " ครั้งเพื่อปลดล็อกร้าน Raid", "Win " + RAID_WINS + " games to unlock the Raid shop"));
+                }));
             } else {
                 plain(c, L.t("เร็ว ๆ นี้", "Coming soon"), q.centerX(), q.bottom - 50 * u, 30 * u, 0xFFB8B2CC, Paint.Align.CENTER, 0);
                 btns.add(new Btn(q, () -> showToast(L.t("เร็ว ๆ นี้", "Coming soon"))));
@@ -1978,7 +2114,21 @@ public final class GameView extends View {
         boolean maxed = pf.level[t] >= Profile.MAX_LV;
         boolean canUp = own && !maxed && pf.copies[t] >= pf.upgradeCopies(t) && pf.stars >= pf.upgradeStars(t);
         rf.set(50 * u, b1, 50 * u + bw, b1 + bh);
-        button(c, rf, maxed ? "MAX" : L.t("อัปเกรด Lv", "Upgrade Lv"), 0xFF33C6A6, canUp, () -> {
+        boolean evoReady = own && maxed && Defs.canEvolve(t) && !pf.evolved[t];
+        if (evoReady) {
+            // only planets that have an evolution ever show this button
+            boolean afford = pf.stars >= Defs.EVO_STARS && pf.millite >= Defs.EVO_MILLITE;
+            glowCircle(c, rf.centerX(), rf.centerY(), rf.width() * 0.6f, alpha(0xFF7CFF8A, (int) (60 + 40 * Math.sin(anim * 4))));
+            button(c, rf, L.t("วิวัฒน์!", "Evolve!"), 0xFF2FB86A, afford, () -> Dialogs.confirm(ctx, L.t("วิวัฒนาการ", "Evolve"),
+                    Defs.P_NAME[selType] + " → " + Defs.evoName(selType) + "\n" + (L.en ? Defs.EVO_DESC_EN : Defs.EVO_DESC_TH) + "\n\n"
+                            + L.t("ใช้ ", "Costs ") + Defs.EVO_STARS + " Star + " + Defs.EVO_MILLITE + " Millite",
+                    L.t("วิวัฒน์!", "Evolve!"), () -> {
+                        String err = pf.evolve(selType);
+                        if (err != null) showToast(err);
+                        else { Sfx.play(Sfx.RARE); showToast(Defs.evoName(selType) + "!"); evoFlash = 1.6f; pushNow(); }
+                    }));
+            if (!afford) btns.add(new Btn(new RectF(rf), () -> showToast(L.t("ต้องใช้ ", "Needs ") + Defs.EVO_STARS + " Star + " + Defs.EVO_MILLITE + " Millite")));
+        } else button(c, rf, maxed ? "MAX" : L.t("อัปเกรด Lv", "Upgrade Lv"), 0xFF33C6A6, canUp, () -> {
             String err = pf.upgrade(selType);
             if (err != null) showToast(err);
             else showToast(Defs.P_NAME[selType] + " Lv " + pf.level[selType] + "!");
@@ -2038,9 +2188,17 @@ public final class GameView extends View {
             glowCircle(c, mx, my, half * 0.4f, 0x88FF4B2B);
             sprite(c, moonBmp(pf.moonOn[t]), mx, my, half * 0.2f, 255);
         }
-        String nm = Defs.P_NAME[t] + (own && pf.skinOn[t] >= 0 ? "  •  " + (L.en ? Skins.NAME[pf.skinOn[t]] : Skins.NAME_TH[pf.skinOn[t]]) : "");
+        if (evoFlash > 0) {
+            evoFlash -= 0.016f;
+            glowCircle(c, W / 2, cy, half * (2.4f - evoFlash), alpha(0xFF7CFF8A, (int) (200 * Math.min(1f, evoFlash))));
+        }
+        if (own && pf.evolved[t]) glowCircle(c, W / 2, cy, half * 1.5f, alpha(0xFF7CFF8A, (int) (50 + 30 * Math.sin(anim * 3))));
+        if (Defs.canEvolve(t) && !pf.evolved[t])
+            pill(c, W / 2 + half * 0.9f, cy - half * 0.95f, L.t("วิวัฒน์ได้ Lv " + Profile.MAX_LV, "Evolves at Lv " + Profile.MAX_LV), 24 * u, 0xFF0B2A14, 0xFF7CFF8A);
+        String nm = (own && pf.evolved[t] ? Defs.evoName(t) : Defs.P_NAME[t]) + (own && pf.skinOn[t] >= 0 ? "  •  " + (L.en ? Skins.NAME[pf.skinOn[t]] : Skins.NAME_TH[pf.skinOn[t]]) : "");
         text(c, nm, W / 2, nameY, 56 * u, own ? 0xFFFFFFFF : 0xFF8A84A0, Paint.Align.CENTER, W - 80 * u);
-        plain(c, L.en ? Defs.P_DESC_EN[t] : Defs.P_DESC[t], W / 2, nameY + 45 * u, 28 * u, 0xFFC9C2E6, Paint.Align.CENTER, W - 100 * u);
+        plain(c, own && pf.evolved[t] ? (L.en ? Defs.EVO_DESC_EN : Defs.EVO_DESC_TH) : L.en ? Defs.P_DESC_EN[t] : Defs.P_DESC[t], W / 2, nameY + 45 * u, 28 * u,
+                own && pf.evolved[t] ? 0xFFB8FFC8 : 0xFFC9C2E6, Paint.Align.CENTER, W - 100 * u);
         atkChips(c, W / 2, nameY + 95 * u, Defs.P_ATTACK[t], 34 * u);
         if (!own && t == Defs.HERO)
             plain(c, L.t("ผ่านด่าน 3-15 เพื่อปลดล็อก", "Clear stage 3-15 to unlock"), W / 2, nameY - 70 * u, 30 * u, 0xFFFF9A7A, Paint.Align.CENTER, 0);
@@ -2091,7 +2249,8 @@ public final class GameView extends View {
             plain(c, L.t("ยังไม่มีสกินของดาวนี้ — เปิด Raid Capsule ในกระเป๋า", "No skins for this planet yet — open Raid Capsules in your Inventory"),
                     r.left + 30 * u + cell + 20 * u, y + cell / 2 + 10 * u, 26 * u, 0xFF8A84A0, Paint.Align.LEFT, r.width() - cell - 100 * u);
         y += ((opts.size() + 4) / 5) * (cell + 40 * u) + 50 * u;
-        text(c, L.t("ดวงจันทร์", "Moon"), r.left + 40 * u, y, 40 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        text(c, "Artifact", r.left + 40 * u, y, 40 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        plain(c, L.t("ใส่ได้ดวงละ 1 ชิ้น", "One per planet"), r.right - 40 * u, y, 26 * u, 0xFFC9C2E6, Paint.Align.RIGHT, 0);
         y += 30 * u;
         for (int m = 0; m < Defs.MOON_COUNT; m++) {
             final int mm = m;
@@ -2158,7 +2317,7 @@ public final class GameView extends View {
         button(c, rf, L.t("อัตรา", "Rates"), 0xFF6B5BD6, true, () -> showToast(skinRates()));
         // owned items
         y = box.bottom + 60 * u;
-        text(c, L.t("ไอเทม", "Items"), r.left + 40 * u, y, 38 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        text(c, "Artifact", r.left + 40 * u, y, 38 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
         float ix = r.left + 40 * u;
         for (int m = 0; m < Defs.MOON_COUNT; m++) {
             sprite(c, moonBmp(m), ix + 40 * u, y + 70 * u, 30 * u, pf.moons[m] > 0 ? 255 : 70);
@@ -2376,6 +2535,7 @@ public final class GameView extends View {
         q.tier = pf.tier[t];
         q.material = pf.material[t];
         q.moons = q.enchant == Defs.EN_MOON ? 1 : 0;
+        q.evo = pf.evolved[t];
         return q;
     }
 
@@ -2410,8 +2570,9 @@ public final class GameView extends View {
     boolean galaxyOpen(int gal) { return pf.unlocked > gal * Defs.PER_GALAXY; }
 
     void drawPlayMenu(Canvas c) {
-        if (playRaid) { header(c, L.t("เล่น", "Play"), 0, pf.stars, 3, pf.oil); drawRaidMenu(c); return; }
-        header(c, L.t("เล่น", "Play"));
+        if (playRaid && !raidOpen()) playRaid = false;
+        if (playRaid) { header(c, "Raid", 0, pf.stars, 3, pf.oil); drawRaidMenu(c); return; }
+        header(c, L.t("สตอรี่", "Story"));
         if (playSel < 0 || playSel >= pf.unlocked) {
             playSel = Math.min(pf.unlocked, Defs.ST_COUNT) - 1;
             playGal = Defs.galaxyOf(playSel);
@@ -2425,13 +2586,13 @@ public final class GameView extends View {
         float cellW = (W - 100 * u - 4 * 16 * u) / 5f, cellH = 128 * u, gapG = 16 * u;
         float gridY = dY - 30 * u - 3 * cellH - 2 * gapG;
         float tabH = 92 * u, tabY = gridY - 30 * u - tabH;
-        float aTop = 185 * u, aBot = tabY - 26 * u;
+        modeTabs(c);
+        float aTop = 300 * u, aBot = tabY - 26 * u;
         // ---- art: the galaxy's black hole spitting out enemies
         RectF art = new RectF(40 * u, aTop, W - 40 * u, aBot);
         blackHoleScene(c, art, gal);
-        // ---- galaxy tabs (+ Raid)
-        float tw = (W - 130 * u) / 4f;
-        modeTabRaid(c, 50 * u + 3 * (tw + 10 * u), tabY, tw, tabH);
+        // ---- galaxy tabs
+        float tw = (W - 120 * u) / 3f;
         for (int i = 0; i < Defs.GALAXIES; i++) {
             final int gi = i;
             boolean open = galaxyOpen(i);
@@ -2509,30 +2670,29 @@ public final class GameView extends View {
 
     boolean playRaid;
 
-    boolean raidOpen() { return pf.clear[4]; }
+    static final int RAID_WINS = 15;
 
-    void modeTabRaid(Canvas c, float x, float y, float w, float h) {
-        rf.set(x, y, x + w, y + h);
+    boolean raidOpen() { return pf.wins >= RAID_WINS; }
+
+    /** Story | Raid switch at the top of the play menu */
+    void modeTabs(Canvas c) {
+        float tw = (W - 120 * u) / 2f, y = 190 * u, h = 90 * u;
+        rf.set(50 * u, y, 50 * u + tw, y + h);
+        button(c, rf, L.t("สตอรี่", "Story"), !playRaid ? 0xFFFF8A2B : 0xFF3A3360, true, () -> playRaid = false);
+        rf.set(70 * u + tw, y, 70 * u + tw * 2, y + h);
         boolean open = raidOpen();
-        button(c, rf, "Raid", playRaid ? 0xFFFF3B6B : 0xFF5A2440, open, () -> playRaid = true);
+        button(c, rf, open ? "Raid" : "Raid  " + pf.wins + "/" + RAID_WINS + " Win", playRaid ? 0xFFFF3B6B : 0xFF5A2440, open, () -> playRaid = true);
         if (!open) {
-            lockIcon(c, rf.left + 30 * u, rf.centerY(), 12 * u);
-            btns.add(new Btn(new RectF(rf), () -> showToast(L.t("ผ่านด่าน 1-5 เพื่อปลดล็อก Raid", "Clear stage 1-5 to unlock Raid"))));
+            lockIcon(c, rf.left + 40 * u, rf.centerY(), 13 * u);
+            btns.add(new Btn(new RectF(rf), () -> showToast(L.t("ชนะให้ครบ " + RAID_WINS + " ครั้งเพื่อปลดล็อก Raid (ตอนนี้ ", "Win " + RAID_WINS + " games to unlock Raid (now ") + pf.wins + ")")));
         }
     }
 
     void drawRaidMenu(Canvas c) {
         float sbH = 125 * u, sbY = navTop - 40 * u - sbH;
         float dH = 560 * u, dY = sbY - 24 * u - dH;
-        float tabH = 92 * u, tabY = dY - 30 * u - tabH;
-        float tw = (W - 130 * u) / 4f;
-        for (int i = 0; i < Defs.GALAXIES; i++) {
-            final int gi = i;
-            rf.set(50 * u + i * (tw + 10 * u), tabY, 50 * u + i * (tw + 10 * u) + tw, tabY + tabH);
-            button(c, rf, L.en ? Defs.GAL_NAME[i] : Defs.GAL_NAME_TH[i], 0xFF3A3360, galaxyOpen(i), () -> { playRaid = false; playGal = gi; });
-        }
-        modeTabRaid(c, 50 * u + 3 * (tw + 10 * u), tabY, tw, tabH);
-        RectF art = new RectF(40 * u, 185 * u, W - 40 * u, tabY - 26 * u);
+        modeTabs(c);
+        RectF art = new RectF(40 * u, 300 * u, W - 40 * u, dY - 26 * u);
         raidScene(c, art);
         RectF d = new RectF(40 * u, dY, W - 40 * u, dY + dH);
         panel(c, d, 0xEE2A0A1E, 34 * u);
@@ -2619,7 +2779,7 @@ public final class GameView extends View {
         sprite(c, hellMoonBmp(), box.left + 130 * u, box.top + 140 * u, 65 * u, 255);
         text(c, "Hell Moon", box.left + 260 * u, box.top + 80 * u, 44 * u, 0xFFFF8A5B, Paint.Align.LEFT, 0);
         plain(c, L.en ? Defs.MOON_DESC_EN[Defs.MOON_HELL] : Defs.MOON_DESC[Defs.MOON_HELL], box.left + 260 * u, box.top + 130 * u, 26 * u, 0xFFFFE0D0, Paint.Align.LEFT, box.width() - 290 * u);
-        plain(c, L.t("ใส่ให้ดาวผ่านปุ่ม อุปกรณ์  •  มีอยู่ ", "Equip via Equipment  •  owned ") + pf.moons[Defs.MOON_HELL], box.left + 260 * u, box.top + 200 * u, 26 * u, 0xFF9CFF7A, Paint.Align.LEFT, 0);
+        plain(c, L.t("Artifact • ใส่ผ่านปุ่ม อุปกรณ์  •  มีอยู่ ", "Artifact • equip via Equipment  •  owned ") + pf.moons[Defs.MOON_HELL], box.left + 260 * u, box.top + 200 * u, 26 * u, 0xFF9CFF7A, Paint.Align.LEFT, 0);
         rf.set(box.left + 260 * u, box.bottom - 105 * u, box.right - 30 * u, box.bottom - 25 * u);
         button(c, rf, L.t("ซื้อ  •  ", "Buy  •  ") + Defs.SHOP_HELLMOON + " Oil", 0xFFE0602B, pf.oil >= Defs.SHOP_HELLMOON, () -> {
             if (pf.buyMoon(Defs.MOON_HELL)) { Sfx.play(Sfx.COIN); showToast("Hell Moon +1"); pushNow(); }
@@ -2715,6 +2875,8 @@ public final class GameView extends View {
         button(c, rf, "Regular", ex ? 0xFF3A3360 : 0xFFFF8A2B, true, () -> bannerTab = 0);
         rf.set(380 * u, 190 * u, 720 * u, 275 * u);
         button(c, rf, "Exclusive", ex ? Defs.RARITY_COLOR[Defs.EXCLUSIVE] : 0xFF3A3360, true, () -> bannerTab = 1);
+        rf.set(740 * u, 190 * u, W - 50 * u, 275 * u);
+        button(c, rf, L.t("อัตรา %", "Rates %"), 0xFF4F8BFF, true, () -> popup = P_RATES);
         float bTop = 300 * u, bBot = navTop - 420 * u;
         RectF card = new RectF(40 * u, bTop, W - 40 * u, bBot);
         // card body: deep space + rotating god rays + galaxy
@@ -2861,6 +3023,85 @@ public final class GameView extends View {
     }
 
     int bannerTab;
+    float evoFlash;
+
+    /** drop rates by tier, with every planet of that tier (like other TD gacha screens) */
+    void drawRates(Canvas c) {
+        final boolean ex = bannerTab == 1;
+        RectF r = new RectF(30 * u, 110 * u, W - 30 * u, H - 110 * u);
+        popupFrame(c, r, ex ? L.t("อัตรา: ตู้ Exclusive", "Rates: Exclusive capsule") : L.t("อัตรา: แบนเนอร์ปกติ", "Rates: Regular banner"));
+        // tiers, rarest first
+        java.util.ArrayList<int[]> tiers = new java.util.ArrayList<>(); // {rarity}
+        java.util.ArrayList<float[]> chance = new java.util.ArrayList<>(); // per planet chance, index by tier
+        java.util.ArrayList<int[]> members = new java.util.ArrayList<>();
+        if (ex) {
+            for (int rar : new int[]{Defs.SPECIALIST, Defs.EXCLUSIVE}) {
+                java.util.ArrayList<Integer> m = new java.util.ArrayList<>();
+                java.util.ArrayList<Float> ch = new java.util.ArrayList<>();
+                for (int k = 0; k < Defs.CAPSULE_POOL.length; k++) {
+                    int t = Defs.CAPSULE_POOL[k];
+                    if (Defs.P_RARITY[t] == rar) { m.add(t); ch.add((float) Defs.CAPSULE_RATE[k]); }
+                }
+                int[] mm = new int[m.size()];
+                float[] cc = new float[m.size()];
+                for (int k = 0; k < mm.length; k++) { mm[k] = m.get(k); cc[k] = ch.get(k); }
+                tiers.add(new int[]{rar});
+                members.add(mm);
+                chance.add(cc);
+            }
+        } else {
+            for (int rar = Profile.PULL_RATE.length - 1; rar >= 0; rar--) {
+                int[] mm = Profile.typesOfRarity(rar);
+                float[] cc = new float[mm.length];
+                for (int k = 0; k < mm.length; k++) cc[k] = Profile.PULL_RATE[rar] / mm.length;
+                tiers.add(new int[]{rar});
+                members.add(mm);
+                chance.add(cc);
+            }
+        }
+        float cell = (r.width() - 80 * u) / 5f, headH = 90 * u;
+        float contentH = 0;
+        for (int[] mm : members) contentH += headH + (float) Math.ceil(mm.length / 5f) * (cell + 46 * u) + 24 * u;
+        RectF view = new RectF(r.left + 10 * u, r.top + 150 * u, r.right - 10 * u, r.bottom - 140 * u);
+        beginScroll(c, 2000 + (ex ? 1 : 0), view, contentH, 0.016f);
+        float y = view.top;
+        for (int i = 0; i < tiers.size(); i++) {
+            int rar = tiers.get(i)[0];
+            int col = Defs.RARITY_COLOR[rar];
+            float total = 0;
+            for (float f : chance.get(i)) total += f;
+            RectF hb = new RectF(r.left + 30 * u, y + 10 * u, r.right - 30 * u, y + headH - 6 * u);
+            p.setShader(null);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(alpha(col, 0x38));
+            c.drawRoundRect(hb, 18 * u, 18 * u, p);
+            p.setColor(col);
+            rf2.set(hb.left, hb.top, hb.left + 12 * u, hb.bottom);
+            c.drawRoundRect(rf2, 6 * u, 6 * u, p);
+            text(c, Defs.RARITY_NAME[rar], hb.left + 34 * u, hb.centerY() + 14 * u, 40 * u, col, Paint.Align.LEFT, 0);
+            text(c, fmtPct(total), hb.right - 24 * u, hb.centerY() + 14 * u, 40 * u, 0xFFFFFFFF, Paint.Align.RIGHT, 0);
+            y += headH;
+            int[] mm = members.get(i);
+            float[] cc = chance.get(i);
+            for (int k = 0; k < mm.length; k++) {
+                float x = r.left + 40 * u + (k % 5) * cell, yy = y + (k / 5) * (cell + 46 * u);
+                RectF cr = new RectF(x + 6 * u, yy + 6 * u, x + cell - 6 * u, yy + cell - 6 * u);
+                rarityCard(c, cr, col, pf.owned[mm[k]], false, 18 * u);
+                sprite(c, pBmp[mm[k]], cr.centerX(), cr.centerY() - 8 * u, cell * 0.36f, 255);
+                plain(c, fmtPct(cc[k]), cr.centerX(), cr.bottom - 12 * u, 22 * u, 0xFFFFFFFF, Paint.Align.CENTER, 0);
+                plain(c, Defs.P_NAME[mm[k]], cr.centerX(), cr.bottom + 32 * u, 22 * u, pf.owned[mm[k]] ? 0xFFE6E0FF : 0xFF8A84A0, Paint.Align.CENTER, cell);
+            }
+            y += (float) Math.ceil(mm.length / 5f) * (cell + 46 * u) + 24 * u;
+        }
+        endScroll(c);
+        plain(c, L.t("การ์ดซ้ำจะกลายเป็นชิ้นส่วนสำหรับอัปเกรด", "Duplicates become upgrade copies"), r.centerX(), r.bottom - 150 * u + 30 * u, 24 * u, 0xFF9C94C8, Paint.Align.CENTER, 0);
+        rf.set(r.centerX() - 200 * u, r.bottom - 110 * u, r.centerX() + 200 * u, r.bottom - 25 * u);
+        button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
+    }
+
+    static String fmtPct(float f) {
+        return f >= 10 || f == (int) f ? String.format(Locale.US, "%.1f%%", f) : String.format(Locale.US, "%.2f%%", f);
+    }
 
     void doCapsule(int n) {
         int[] r = pf.pullCapsule(n);
@@ -2962,6 +3203,10 @@ public final class GameView extends View {
         float cell = (W - 100 * u) / 6f;
         float pTop = by - 40 * u - cell * 2;
         text(c, L.t("เลือกดวงดาว", "Choose a planet"), 50 * u, pTop - 20 * u, 38 * u, 0xFFFFFFFF, Paint.Align.LEFT, 0);
+        int owned = pf.ownedCount();
+        if (owned > 12) plain(c, L.t("ปัดขึ้นเพื่อดูเพิ่ม", "Swipe up for more"), W - 50 * u, pTop - 20 * u, 26 * u, 0xFFC9C2E6, Paint.Align.RIGHT, 0);
+        RectF view = new RectF(40 * u, pTop, W - 40 * u, pTop + cell * 2);
+        beginScroll(c, S_ENCHANT, view, (float) Math.ceil(owned / 6f) * cell, 0.016f);
         int k = 0;
         for (int t = 0; t < Defs.P_COUNT; t++) {
             if (!pf.owned[t]) continue;
@@ -2969,12 +3214,13 @@ public final class GameView extends View {
             float x = 50 * u + (k % 6) * cell, y = pTop + (k / 6) * cell;
             RectF r = new RectF(x + 6 * u, y + 6 * u, x + cell - 6 * u, y + cell - 6 * u);
             rarityCard(c, r, Defs.RARITY_COLOR[Defs.P_RARITY[t]], true, t == enchSel, 22 * u);
-            sprite(c, pBmp[t], r.centerX(), r.centerY(), cell * 0.4f, 255);
+            sprite(c, pbmp(t), r.centerX(), r.centerY(), cell * 0.4f, 255);
             if (!mat && pf.enchant[t] >= 0) badge(c, r.right - 22 * u, r.top + 22 * u, 16 * u, pf.enchant[t], 0);
             if (mat && pf.material[t] >= 0) materialBadge(c, r.right - 22 * u, r.top + 22 * u, 16 * u, pf.material[t]);
-            btns.add(new Btn(r, () -> { if (!autoOn) enchSel = tt; }));
+            scrollBtn(r, () -> { if (!autoOn) enchSel = tt; });
             k++;
         }
+        endScroll(c);
         // machine / lab picture with the selected planet
         float aTop = 310 * u, aBot = pTop - 70 * u;
         float half = Math.min(270 * u, (aBot - aTop - 300 * u) * 0.42f);
@@ -4211,7 +4457,9 @@ public final class GameView extends View {
             rf.set(50 * u + i * (tw + 10 * u), 190 * u, 50 * u + i * (tw + 10 * u) + tw, 285 * u);
             button(c, rf, tabs[i], leaderTab == i ? 0xFFFF8A2B : 0xFF3A3360, true, () -> leaderTab = t);
         }
-        final java.util.List<Cloud.Player> list = rankList();
+        final java.util.List<Cloud.Player> list = new java.util.ArrayList<>();
+        // only regular players are ranked: staff/ranked ids, banned ids and the console are left out
+        for (Cloud.Player x : rankList()) if (x.role == 0 && !x.banned && !"console".equalsIgnoreCase(x.name)) list.add(x);
         final int tab = leaderTab;
         java.util.Collections.sort(list, (x, y) -> Integer.compare(statOf(y, tab), statOf(x, tab)));
         float py = 330 * u, ph = 420 * u;
@@ -4238,7 +4486,7 @@ public final class GameView extends View {
                 c.drawCircle(col.centerX(), cy, 56 * u, sp);
                 avatarOf(c, col.centerX(), cy, 46 * u, a.avatar, a.photo);
                 if (rank == 0) trophy(c, col.centerX(), cy - 95 * u, 30 * u);
-                text(c, a.name, col.centerX(), col.top - 20 * u, 34 * u, a.uid.equals(cloud.uid) ? 0xFFFFD23F : 0xFFFFFFFF, Paint.Align.CENTER, pw);
+                text(c, a.name, col.centerX(), col.top - 20 * u, 34 * u, java.util.Objects.equals(a.uid, cloud.uid) ? 0xFFFFD23F : 0xFFFFFFFF, Paint.Align.CENTER, pw);
             }
         }
         float y = py + ph + 40 * u, rh = 96 * u;
@@ -4246,7 +4494,7 @@ public final class GameView extends View {
         int max = (int) Math.max(0, Math.min(list.size(), (cardTop0 - 20 * u - y) / (rh + 12 * u)));
         for (int i = 0; i < max; i++) {
             Cloud.Player a = list.get(i);
-            boolean mine = a.uid.equals(cloud.uid);
+            boolean mine = java.util.Objects.equals(a.uid, cloud.uid);
             RectF r = new RectF(40 * u, y, W - 40 * u, y + rh);
             panel(c, r, mine ? 0xFF4A3D8F : 0xFF241A4E, 24 * u);
             int mc = i < 3 ? medal[i] : 0xFF6A6488;
@@ -4267,9 +4515,9 @@ public final class GameView extends View {
         panel(c, me, 0xEE2A1A5E, 36 * u);
         avatar(c, me.left + 110 * u, me.top + 110 * u, 70 * u, pf.avatar);
         title(c, user, me.left + 210 * u, me.top + 95 * u, 50 * u, 0xFFFFD23F, Paint.Align.LEFT, me.width() - 450 * u);
-        int myRank = 1;
-        for (int i = 0; i < list.size(); i++) if (list.get(i).uid.equals(cloud.uid)) myRank = i + 1;
-        plain(c, L.t("อันดับของคุณ: #", "Your rank: #") + myRank + " / " + list.size(), me.left + 210 * u, me.top + 145 * u, 32 * u, 0xFFE6E0FF, Paint.Align.LEFT, 0);
+        int myRank = -1;
+        for (int i = 0; i < list.size(); i++) if (java.util.Objects.equals(list.get(i).uid, cloud.uid)) myRank = i + 1;
+        plain(c, myRank < 0 ? L.t("ทีมงานไม่ถูกจัดอันดับ", "Staff ranks aren't ranked") : L.t("อันดับของคุณ: #", "Your rank: #") + myRank + " / " + list.size(), me.left + 210 * u, me.top + 145 * u, 32 * u, 0xFFE6E0FF, Paint.Align.LEFT, 0);
         rf.set(me.right - 230 * u, me.top + 40 * u, me.right - 40 * u, me.top + 120 * u);
         button(c, rf, L.t("รีเฟรช", "Refresh"), 0xFF33A8D0, !playersLoading, this::refreshPlayers);
         String[] lab = {L.t("ชนะ", "Wins"), "Star", L.t("เวลาเล่น", "Play time")};
@@ -4525,7 +4773,7 @@ public final class GameView extends View {
                 log("# mod:    ban <u> [hours|perm] [reason] • tempban <u> <hours> [reason] • unban <u> • kick <u>");
                 log("# admin:  give|take|set <u> <star|millite|crystal|oil|wins|bosskills> <n>");
                 log("#         skin <u> <style> <planet|all> • unskin <u> <style> <planet|all>   (styles: golden graveyard white aurora red elite shinypurple shiny madness king anniv)");
-                log("#         item <u> <capsule|hellmoon> <n>   (n can be negative)");
+                log("#         item <u> <capsule|hellmoon> <n>   (n can be negative) • evolve <u> <planet> [off]");
                 log("#         planet <u> <name|all> • unplanet <u> <name> • level <u> <name|all> <1-10>");
                 log("#         enchant <u> <planet> <enchant|none> [tier] • material <u> <planet> <material|none>");
                 log("#         unlock <u> [stage] • maxlevel <u> • reset <u> • wipe <u>");
@@ -4863,6 +5111,16 @@ public final class GameView extends View {
                 }
                 return "! capsule | hellmoon";
             }
+            case "evolve": {
+                int t = planetByName(a[2]);
+                if (t < 0) return "! " + L.t("ไม่พบดวงดาว ", "unknown planet ") + a[2];
+                if (!Defs.canEvolve(t)) return "! " + Defs.P_NAME[t] + L.t(" วิวัฒน์ไม่ได้", " has no evolution");
+                boolean off = a.length > 3 && a[3].equalsIgnoreCase("off");
+                if (!off && !q.owned[t]) return "! " + L.t("ยังไม่มีดาวนี้ (ใช้ planet ก่อน)", "doesn't own it (use planet first)");
+                q.evolved[t] = !off;
+                q.save();
+                return "ok: " + Defs.P_NAME[t] + (off ? " evolution removed" : " -> " + Defs.evoName(t));
+            }
             case "maxlevel": q.maxAllPlanets(); return "ok: all planets Lv 10";
             case "reset": q.reset(); return "ok: progress reset";
             default: return "! " + L.t("ไม่รู้จักคำสั่ง พิมพ์ help", "unknown command, type help");
@@ -4961,7 +5219,7 @@ public final class GameView extends View {
         y += 96 * u;
         for (int i = adminPage * per; i < Math.min(list.size(), (adminPage + 1) * per); i++) {
             final Cloud.Player a = list.get(i);
-            boolean mine = a.uid.equals(cloud.uid);
+            boolean mine = java.util.Objects.equals(a.uid, cloud.uid);
             RectF r = new RectF(40 * u, y, W - 40 * u, y + 100 * u);
             panel(c, r, a.uid.equals(adminSel) ? 0xFF4A3D8F : 0xFF241A4E, 24 * u);
             avatarOf(c, r.left + 55 * u, r.centerY(), 30 * u, a.avatar, a.photo);
@@ -5102,7 +5360,7 @@ public final class GameView extends View {
             commitAdmin(L.t("ลบสกิน ", "Removed ") + n + L.t(" ชิ้น", " skin(s)"));
         });
         y += bh + 40 * u;
-        text(c, L.t("ไอเทม", "Items"), r.left + 40 * u, y + 30 * u, 34 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        text(c, L.t("ไอเทม / Artifact", "Items / Artifacts"), r.left + 40 * u, y + 30 * u, 34 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
         y += 60 * u;
         // Raid capsules
         capsuleIcon(c, r.left + 80 * u, y + 40 * u, 32 * u);
@@ -5257,7 +5515,7 @@ public final class GameView extends View {
             avatarOf(c, r.left + 70 * u, r.centerY(), 34 * u, a.avatar, a.photo);
             text(c, a.name, r.left + 125 * u, r.top + 66 * u, 38 * u, 0xFFFFFFFF, Paint.Align.LEFT, 380 * u);
             pill(c, r.right - 330 * u, r.centerY(), Roles.NAME[a.role], 28 * u, 0xFF140A2A, Roles.COLOR[a.role]);
-            boolean can = cloud.isConsoleOwner() && !a.uid.equals(cloud.uid);
+            boolean can = cloud.isConsoleOwner() && !java.util.Objects.equals(a.uid, cloud.uid);
             rf.set(r.right - 200 * u, r.top + 18 * u, r.right - 24 * u, r.bottom - 18 * u);
             button(c, rf, L.t("เปลี่ยน", "Change"), 0xFF6B5BD6, can, () -> { roleTarget = a.uid; popup = P_ROLE; });
             y += 124 * u;
@@ -5836,7 +6094,8 @@ public final class GameView extends View {
         boolean back = Math.sin(oa) < 0;
         float ox = x + (float) Math.cos(oa) * 72, oy = y + (float) Math.sin(oa) * 24 - 10;
         if (back) star(c, ox, oy, 6);
-        sprite(c, skinBmp(pl.type, pl.skin), x, y, half, off ? 110 : 255);
+        if (pl.evo) glowCircle(c, x, y, half * 1.5f, alpha(0xFF7CFF8A, (int) (70 + 40 * Math.sin(anim * 3))));
+        sprite(c, planetBmp(pl.type, pl.skin, pl.evo), x, y, half, off ? 110 : 255);
         if (!back) star(c, ox, oy, 8);
         if (pl.hellMoon) {
             // Hell Moon equipment circling the planet
@@ -6333,9 +6592,9 @@ public final class GameView extends View {
         panel(c, new RectF(rf), 0xF2201248, 50 * u);
         int rar = Defs.P_RARITY[pl.type];
         float x0 = 40 * u, y0 = panelTop + 30 * u;
-        sprite(c, skinBmp(pl.type, pl.skin), x0 + 90 * u, y0 + 100 * u, 95 * u, 255);
+        sprite(c, planetBmp(pl.type, pl.skin, pl.evo), x0 + 90 * u, y0 + 100 * u, 95 * u, 255);
         float tx = x0 + 200 * u;
-        text(c, Defs.P_NAME[pl.type] + "  Lv " + pl.level + "/" + Defs.MATCH_MAX[pl.type], tx, y0 + 50 * u, 50 * u, 0xFFFFFFFF, Paint.Align.LEFT, W - tx - 260 * u);
+        text(c, (pl.evo ? Defs.evoName(pl.type) : Defs.P_NAME[pl.type]) + "  Lv " + pl.level + "/" + Defs.MATCH_MAX[pl.type], tx, y0 + 50 * u, 50 * u, 0xFFFFFFFF, Paint.Align.LEFT, W - tx - 260 * u);
         text(c, Defs.RARITY_NAME[rar], W - 40 * u, y0 + 50 * u, 36 * u, Defs.RARITY_COLOR[rar], Paint.Align.RIGHT, 0);
         String stat;
         int kd = Defs.P_KIND[pl.type];

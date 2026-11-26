@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Stella TD adaptive icon background (generated) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="108" android:endY="108">
+                <item android:offset="0" android:color="#FF3A1580"/>
+                <item android:offset="0.55" android:color="#FF1A0848"/>
+                <item android:offset="1" android:color="#FF080222"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="28" android:centerY="26" android:gradientRadius="60">
+                <item android:offset="0" android:color="#77FF4FD8"/>
+                <item android:offset="1" android:color="#00FF4FD8"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="86" android:centerY="90" android:gradientRadius="55">
+                <item android:offset="0" android:color="#66FF8A2B"/>
+                <item android:offset="1" android:color="#00FF8A2B"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M17.1,40a0.9,0.9 0 1 1 1.8,0a0.9,0.9 0 1 1 -1.8,0z" android:fillColor="#FFFFFFFF"/>
+    <path android:pathData="M29.2,84a0.8,0.8 0 1 1 1.6,0a0.8,0.8 0 1 1 -1.6,0z" android:fillColor="#FFFFFFFF"/>
+    <path android:pathData="M89.0,18a1.0,1.0 0 1 1 2.0,0a1.0,1.0 0 1 1 -2.0,0z" android:fillColor="#FFFFFFFF"/>
+    <path android:pathData="M75.3,74a0.7,0.7 0 1 1 1.4,0a0.7,0.7 0 1 1 -1.4,0z" android:fillColor="#FFFFFFFF"/>
+    <path android:pathData="M13.3,70a0.7,0.7 0 1 1 1.4,0a0.7,0.7 0 1 1 -1.4,0z" android:fillColor="#FFFFFFFF"/>
+    <path android:pathData="M61.2,14a0.8,0.8 0 1 1 1.6,0a0.8,0.8 0 1 1 -1.6,0z" android:fillColor="#FFFFFFFF"/>
+    <path android:pathData="M95.4,52a0.6,0.6 0 1 1 1.2,0a0.6,0.6 0 1 1 -1.2,0z" android:fillColor="#FFFFFFFF"/>
+</vector>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Stella Console adaptive icon (keeps its own terminal art over the game's planet icon) -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/console_icon_bg" />
+    <foreground android:drawable="@drawable/ic_console_full" />
+</adaptive-icon>

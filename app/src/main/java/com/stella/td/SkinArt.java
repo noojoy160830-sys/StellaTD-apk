@@ -44,6 +44,55 @@ final class SkinArt {
         return out;
     }
 
+    /** evolved form: richer colours, a glowing core and a ring of living crystals */
+    static Bitmap evolved(Bitmap src, int planet) {
+        int w = src.getWidth(), h = src.getHeight();
+        int[] px = new int[w * h];
+        src.getPixels(px, 0, w, 0, 0, w, h);
+        float[] hsv = new float[3];
+        for (int i = 0; i < px.length; i++) {
+            int c = px[i], a = c >>> 24;
+            if (a == 0) continue;
+            Art.rgbToHsv(c, hsv);
+            // greens get lusher, blues turn into deep glowing teal
+            if (hsv[0] > 60 && hsv[0] < 170) hsv[0] = 125;
+            else if (hsv[0] >= 170 && hsv[0] < 260) hsv[0] = 185;
+            hsv[1] = Math.min(1f, hsv[1] * 1.35f + 0.08f);
+            hsv[2] = Math.min(1f, hsv[2] * 1.12f + 0.04f);
+            px[i] = (a << 24) | (Art.hsvToRgb(hsv) & 0xFFFFFF);
+        }
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        out.setPixels(px, 0, w, 0, 0, w, h);
+        Canvas c = new Canvas(out);
+        float cx = w / 2f, cy = h / 2f, r = Math.min(w, h) * 0.38f;
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        // energy ring
+        p.setStyle(Paint.Style.STROKE);
+        p.setStrokeWidth(r * 0.07f);
+        p.setColor(0xCC7CFF8A);
+        c.drawOval(new android.graphics.RectF(cx - r * 1.25f, cy - r * 0.36f, cx + r * 1.25f, cy + r * 0.36f), p);
+        p.setStrokeWidth(r * 0.03f);
+        p.setColor(0xFFE8FFE8);
+        c.drawOval(new android.graphics.RectF(cx - r * 1.25f, cy - r * 0.36f, cx + r * 1.25f, cy + r * 0.36f), p);
+        // crystal shards on the ring
+        p.setStyle(Paint.Style.FILL);
+        for (int k = 0; k < 5; k++) {
+            double ang = k * Math.PI * 2 / 5 + 0.4;
+            float x = cx + (float) Math.cos(ang) * r * 1.25f, y = cy + (float) Math.sin(ang) * r * 0.36f;
+            android.graphics.Path d = new android.graphics.Path();
+            float s = r * 0.13f;
+            d.moveTo(x, y - s * 1.6f);
+            d.lineTo(x + s, y);
+            d.lineTo(x, y + s * 1.2f);
+            d.lineTo(x - s, y);
+            d.close();
+            p.setColor(k % 2 == 0 ? 0xFF7CFF8A : 0xFF5EF2FF);
+            c.drawPath(d, p);
+        }
+        sparkles(c, cx, cy, r, 0xEEFFFFFF, 4);
+        return out;
+    }
+
     static Bitmap make(Bitmap src, int style, int planet) {
         int w = src.getWidth(), h = src.getHeight();
         int[] px = new int[w * h];

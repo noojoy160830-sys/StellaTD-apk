@@ -192,11 +192,11 @@ final class Game {
 
     static float dmgOf(Planet p) {
         return Defs.P_DMG[p.type] * (1f + 0.3f * (p.level - 1)) * (1f + 0.12f * (p.plv - 1))
-                * (1f + enchDmg(p)) * (1f + matDmg(p)) * (1f + p.bonusDmg) * (1f + p.buff);
+                * (1f + enchDmg(p)) * (1f + matDmg(p)) * (1f + p.bonusDmg) * (1f + p.buff) * (p.evo ? 1.6f : 1f);
     }
 
     static float rangeOf(Planet p) {
-        return Defs.P_RANGE[p.type] * (1f + enchRng(p)) * (1f + matRng(p)) * (p.king ? 1.1f : 1f);
+        return Defs.P_RANGE[p.type] * (1f + enchRng(p)) * (1f + matRng(p)) * (p.king ? 1.1f : 1f) * (p.evo ? 1.15f : 1f);
     }
 
     /** the persistent upgrade level (Lv 1-10) speeds up attacks 4% and production 5% per level */
@@ -204,7 +204,7 @@ final class Game {
         float c = Defs.P_CD[p.type];
         float k = p.king ? 1.1f : 1f;
         if (isProducer(p)) return c / ((1f + 0.2f * (p.level - 1)) * (1f + 0.05f * (p.plv - 1)) * k);
-        return c / ((1f + enchSpa(p)) * (1f + matSpa(p)) * (1f + 0.04f * (p.plv - 1)) * k);
+        return c / ((1f + enchSpa(p)) * (1f + matSpa(p)) * (1f + 0.04f * (p.plv - 1)) * k * (p.evo ? 1.15f : 1f));
     }
 
     /** SP per production cycle (fractional, accumulated); persistent level adds 8% per level */
@@ -270,6 +270,7 @@ final class Game {
         p.plv = pf.level[type];
         p.enchant = pf.enchant[type];
         p.hellMoon = pf.moonOn[type] == Defs.MOON_HELL;
+        p.evo = pf.evolved[type];
         p.skin = pf.skinOn[type];
         p.ax = p.x;
         p.ay = p.y;
@@ -842,6 +843,15 @@ final class Game {
             text(e.x, e.y - 40, "STUN", 0xFF7DF3FF);
         }
         if (s.src != null && !s.mini) applyMaterialOnHit(e, dmg, s.src);
+        if (s.src != null && s.src.evo && !s.mini && ++s.src.evoShots % 4 == 0) {
+            // Gaia quake: stun everything around the target
+            for (Enemy o : enemies) {
+                if (o.dead || o.phased || dist(e.x, e.y, o.x, o.y) > 140 + o.radius) continue;
+                o.stunT = Math.max(o.stunT, o.boss ? 0.3f : o.mini ? 0.6f : 1.0f);
+            }
+            ring(e.x, e.y, 0xFF7CFF8A, 280);
+            for (int k = 0; k < 10; k++) particle(e.x, e.y, k % 2 == 0 ? 0xFF7CFF8A : 0xFFB88A4F, 220);
+        }
         int c;
         switch (s.kind) {
             case Defs.K_SMOKE: c = 0xFFFF4D3D; puff(e.x, e.y, 0x99FF3B2F); break;

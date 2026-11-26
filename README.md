@@ -97,3 +97,13 @@
 - สกิน 11 แบบ: Golden, Graveyard, White, Aurora, Red, Elite, Shiny Purple, Shiny, Madness, King, 1st Anniversary
 - อัปเกรด Lv มีผลกับคูลดาวน์/ดาเมจ/การผลิตดาว, ลด Sun และตัวแรงอื่น ๆ
 - แอดมิน: ให้สกิน/ไอเทม, ตั้ง Crystal Oil — คำสั่ง `skin`, `unskin`, `item`, `give <u> oil <n>`
+
+## v3.2
+- แก้เกมเด้งตอนกดดาว King, หน้า Factory/Lab เลื่อนรายชื่อดาวได้ ไม่ทับปุ่ม, ตัวเลขเงินมุมขวาบนไม่ทับกัน
+- เมนูเล่นแยก Story / Raid (ด่านแสดงเฉพาะใน Story), Raid ปลดล็อกเมื่อชนะครบ 15 ครั้ง
+- ไอดีที่มียศ (ทีมงาน) และไอดีที่โดนแบนไม่อยู่ในอันดับ
+- Hell Moon อยู่ในหมวด Artifact
+- ระบบวิวัฒน์: Earth → Gaia Earth (Lv 10 + 5000 Star + 30 Millite) ปุ่มวิวัฒน์ขึ้นเฉพาะดาวที่วิวัฒน์ได้
+- หน้าอัตรา (Rates %) แสดงโอกาสแต่ละระดับพร้อมดาวในระดับนั้น ทั้งแบนเนอร์ปกติและตู้ Exclusive
+- หน้าหลักใหม่: การ์ด Story / Raid และ Deck ของฉัน, ไอคอนแอปใหม่ (รองรับ adaptive icon)
+- คำสั่ง Console: `evolve <u> <planet> [off]`

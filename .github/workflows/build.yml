@@ -79,8 +79,8 @@ jobs:
             StellaConsole.apk
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v3.1.${{ github.run_number }}
-          name: Stella TD v3.1.${{ github.run_number }}
+          tag_name: v3.2.${{ github.run_number }}
+          name: Stella TD v3.2.${{ github.run_number }}
           make_latest: true
           files: |
             StellaTD.apk

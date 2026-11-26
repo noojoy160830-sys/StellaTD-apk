@@ -25,6 +25,7 @@ final class Profile {
     /** moons owned (by Defs.MOON_*) and the moon equipped on each planet (-1 = none) */
     final int[] moons = new int[Defs.MOON_COUNT];
     final int[] moonOn = new int[Defs.P_COUNT];
+    final boolean[] evolved = new boolean[Defs.P_COUNT];
     /** Base64 JPEG profile photo (used when avatar == -1) */
     String photo;
     final boolean[] owned = new boolean[Defs.P_COUNT];
@@ -90,6 +91,8 @@ final class Profile {
         System.arraycopy(so, 0, skinOn, 0, Defs.P_COUNT);
         int[] mo = ints(sp.getString("moons", null), Defs.MOON_COUNT, 0);
         System.arraycopy(mo, 0, moons, 0, Defs.MOON_COUNT);
+        int[] ev = ints(sp.getString("evolved", null), Defs.P_COUNT, 0);
+        for (int i = 0; i < Defs.P_COUNT; i++) evolved[i] = ev[i] == 1 && Defs.canEvolve(i);
         int[] mq = ints(sp.getString("moonOn", null), Defs.P_COUNT, -1);
         System.arraycopy(mq, 0, moonOn, 0, Defs.P_COUNT);
         photo = sp.getString("photo", null);
@@ -159,6 +162,9 @@ final class Profile {
         m.put("skinOn", str(skinOn));
         m.put("moons", str(moons));
         m.put("moonOn", str(moonOn));
+        int[] evs = new int[Defs.P_COUNT];
+        for (int i = 0; i < Defs.P_COUNT; i++) evs[i] = evolved[i] ? 1 : 0;
+        m.put("evolved", str(evs));
         m.put("photo", photo == null ? "" : photo);
         m.put("owned", str(own));
         m.put("copies", str(copies));
@@ -199,7 +205,7 @@ final class Profile {
     }
 
     /** Star paid when a planet is sold, by rarity (grows with its level) */
-    static final int[] SELL_BASE = {40, 120, 350, 900, 2200, 5000, 0};
+    static final int[] SELL_BASE = {40, 120, 350, 900, 2200, 5000, 0, 0};
 
     int sellValue(int t) {
         int base = SELL_BASE[Defs.P_RARITY[t]];
@@ -208,7 +214,7 @@ final class Profile {
 
     /** exclusives can't be sold, and you must keep at least one planet */
     boolean canSell(int t) {
-        if (!owned[t] || Defs.P_RARITY[t] == Defs.EXCLUSIVE) return false;
+        if (!owned[t] || Defs.P_RARITY[t] >= Defs.EXCLUSIVE) return false;
         return ownedCount() > 1;
     }
 
@@ -224,6 +230,7 @@ final class Profile {
         tier[t] = 0;
         material[t] = -1;
         moonOn[t] = -1;
+        evolved[t] = false;
         for (int i = 0; i < deck.length; i++) if (deck[i] == t) deck[i] = -1;
         if (deckCount() == 0) for (int k = 0; k < Defs.P_COUNT; k++) if (owned[k]) { deck[0] = k; break; }
         save();
@@ -373,6 +380,21 @@ final class Profile {
         } else skins.add(k);
         save();
         return res;
+    }
+
+    /** evolve a max-level planet that has an evolution; returns an error message or null */
+    String evolve(int t) {
+        if (!Defs.canEvolve(t)) return L.t("ดาวนี้วิวัฒน์ไม่ได้", "This planet can't evolve");
+        if (!owned[t]) return L.t("ยังไม่มีดาวนี้", "You don't own it");
+        if (evolved[t]) return L.t("วิวัฒน์แล้ว", "Already evolved");
+        if (level[t] < MAX_LV) return L.t("ต้องอัปเกรดถึง Lv " + MAX_LV + " ก่อน", "Reach Lv " + MAX_LV + " first");
+        if (stars < Defs.EVO_STARS || millite < Defs.EVO_MILLITE)
+            return L.t("ต้องใช้ " + Defs.EVO_STARS + " Star + " + Defs.EVO_MILLITE + " Millite", "Needs " + Defs.EVO_STARS + " Star + " + Defs.EVO_MILLITE + " Millite");
+        stars -= Defs.EVO_STARS;
+        millite -= Defs.EVO_MILLITE;
+        evolved[t] = true;
+        save();
+        return null;
     }
 
     void equipSkin(int planet, int style) {
