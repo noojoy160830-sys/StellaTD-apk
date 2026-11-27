@@ -39,6 +39,61 @@
         ".write": "auth != null && auth.token.email === 'console@console.stellatd.game' && !data.exists()",
         ".validate": "newData.hasChildren(['by', 't', 'msg'])"
       }
+    },
+    "friends": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$other": {
+          ".write": "auth != null && (auth.uid === $uid || auth.uid === $other)"
+        }
+      }
+    },
+    "friendReq": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$from": {
+          ".write": "auth != null && (auth.uid === $from || auth.uid === $uid)"
+        }
+      }
+    },
+    "invites": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
+        "$from": {
+          ".write": "auth != null && (auth.uid === $from || auth.uid === $uid)"
+        }
+      }
+    },
+    "rooms": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && data.child('meta/host').val() === auth.uid",
+        "meta": {
+          ".write": "auth != null && (!data.exists() || data.child('host').val() === auth.uid)"
+        },
+        "members": {
+          "$uid": {
+            ".write": "auth != null && (auth.uid === $uid || root.child('rooms').child($code).child('meta/host').val() === auth.uid)"
+          }
+        },
+        "gifts": {
+          "$uid": {
+            ".write": "auth != null && (auth.uid === $uid || root.child('rooms').child($code).child('members').child(auth.uid).exists())"
+          }
+        }
+      }
+    },
+    "codes": {
+      ".read": "auth != null",
+      ".write": "auth != null && auth.token.email === 'console@console.stellatd.game'",
+      "$code": {
+        "used": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && !data.exists()"
+          }
+        }
+      }
     }
   }
 }

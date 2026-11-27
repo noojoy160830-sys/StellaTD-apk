@@ -6,7 +6,20 @@ import java.util.Random;
 
 /** Pure game simulation for one stage. Coordinates are map units (1000 x 1200). */
 final class Game {
-    final Random rnd = new Random();
+    Random rnd = new Random();
+    // co-op: the team shares one base; each player reports how much leaked through their board
+    boolean coop;
+    int leak, otherLeak, coopBonus;
+    String partnerName;
+    int partnerWave;
+    boolean partnerAlive = true;
+
+    void startCoop(long seed) {
+        coop = true;
+        rnd = new Random(seed);
+        maxBaseHp = Social.TEAM_HP;
+        baseHp = Social.TEAM_HP;
+    }
     final int stage, maxWave;
     final float[] px, py, cum;
     final float total;
@@ -493,6 +506,7 @@ final class Game {
         if (kingSkillUsed) return L.t("ใช้ Elite Command ไปแล้วในด่านนี้", "Elite Command was already used this match");
         kingSkillUsed = true;
         baseHp += 5;
+        coopBonus += 5;
         maxBaseHp = Math.max(maxBaseHp, baseHp);
         for (int k = 0; k < 3; k++) {
             HeatWave h = new HeatWave();
@@ -558,6 +572,7 @@ final class Game {
             enemies.addAll(pending);
             pending.clear();
         }
+        if (coop) baseHp = Math.min(baseHp, maxBaseHp + coopBonus - leak - otherLeak);
         if (baseHp <= 0 && !lost) {
             baseHp = 0;
             lost = true;
@@ -1216,6 +1231,7 @@ final class Game {
 
             if (e.d >= total) {
                 baseHp -= e.baseDmg;
+                leak += e.baseDmg;
                 Sfx.play(Sfx.BASE_HIT);
                 shake = 0.35f;
                 pointAt(total, tmp);

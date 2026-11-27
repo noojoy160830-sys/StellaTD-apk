@@ -115,7 +115,13 @@ final class Cloud {
         });
     }
 
+    /** an error whose message is already written for the player */
+    static final class UserError extends Exception {
+        UserError(String m) { super(m); }
+    }
+
     static String friendly(Exception e) {
+        if (e instanceof UserError) return e.getMessage();
         String m = e.getMessage() == null ? e.toString() : e.getMessage();
         if (m.contains("EMAIL_EXISTS")) return L.t("ชื่อนี้ถูกใช้ไปแล้ว", "This name is already taken");
         if (m.contains("EMAIL_NOT_FOUND") || m.contains("INVALID_LOGIN_CREDENTIALS") || m.contains("INVALID_PASSWORD"))

@@ -761,8 +761,17 @@ final class Profile {
         firstClear = false;
         heroUnlocked = false;
         lastChallengeReward = null;
+        if (g.coop && g.won) {
+            // team win bonus
+            int bonus = g.earnStars / 4;
+            stars += bonus;
+            items[Items.SUPPLY]++;
+            lastChallengeReward = L.t("โบนัสทีม: ", "Team bonus: ") + bonus + " Star • 1 Supply Capsule";
+        }
         if (g.challenge != 0 && g.won) {
-            if (g.challenge == 1 && dailyReady()) {
+            if (g.coop) {
+                // challenges are solo
+            } else if (g.challenge == 1 && dailyReady()) {
                 dailyDone = today();
                 items[Items.STARDUST] += 8;
                 items[Items.NEBULA] += 1;
