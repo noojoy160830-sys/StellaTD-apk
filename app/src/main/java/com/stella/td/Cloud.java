@@ -68,13 +68,14 @@ final class Cloud {
     boolean isConsoleOwner() { return console && name != null && Accounts.norm(name).equals(CONSOLE_USER); }
 
     /** may open the admin panel / console at all */
-    boolean isAdmin() { return name != null && (isConsoleOwner() || role >= Roles.STAFF); }
+    boolean isAdmin() { return name != null && isConsoleOwner(); }
 
     int myRole() { return isConsoleOwner() ? Roles.OWNER : role; }
 
     /** read my rank from the database (background thread) */
     void loadRole() throws Exception {
-        role = isConsoleOwner() ? Roles.OWNER : Roles.of(get("roles/" + uid));
+        // ranks were removed: only the Stella Console account has any power
+        role = isConsoleOwner() ? Roles.OWNER : Roles.NONE;
     }
 
     String email(String user) { return Accounts.norm(user) + (console ? CONSOLE_DOMAIN : DOMAIN); }
@@ -591,7 +592,7 @@ final class Cloud {
                 p.stars = Json.num(m, "stars", 0);
                 p.playSec = Json.num(m, "playSec", 0);
                 p.planets = Json.num(m, "planets", 0);
-                p.role = roles == null ? 0 : Roles.of(roles.get(p.uid));
+                p.role = 0; // ranks were removed
                 if (bans != null && bans.get(p.uid) != null) {
                     Object bv = bans.get(p.uid);
                     Map<String, Object> bm = Json.obj(bv);

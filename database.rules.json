@@ -2,47 +2,41 @@
   "rules": {
     "users": {
       "$uid": {
-        ".read": "auth != null && (auth.uid === $uid || (((((auth.token.email === 'console@console.stellatd.game' || root.child('roles').child(auth.uid).val() === 'owner') || root.child('roles').child(auth.uid).val() === 'dev') || root.child('roles').child(auth.uid).val() === 'admin') || root.child('roles').child(auth.uid).val() === 'mod') || root.child('roles').child(auth.uid).val() === 'staff'))",
-        ".write": "auth != null && (auth.uid === $uid || (((auth.token.email === 'console@console.stellatd.game' || root.child('roles').child(auth.uid).val() === 'owner') || root.child('roles').child(auth.uid).val() === 'dev') || root.child('roles').child(auth.uid).val() === 'admin'))",
-        "session": {
-          ".write": "auth != null && (auth.uid === $uid || ((((auth.token.email === 'console@console.stellatd.game' || root.child('roles').child(auth.uid).val() === 'owner') || root.child('roles').child(auth.uid).val() === 'dev') || root.child('roles').child(auth.uid).val() === 'admin') || root.child('roles').child(auth.uid).val() === 'mod'))"
-        }
+        ".read": "auth != null && (auth.uid === $uid || auth.token.email === 'console@console.stellatd.game')",
+        ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'console@console.stellatd.game')"
       }
     },
     "public": {
       ".read": "auth != null",
       "$uid": {
-        ".write": "auth != null && (auth.uid === $uid || (((auth.token.email === 'console@console.stellatd.game' || root.child('roles').child(auth.uid).val() === 'owner') || root.child('roles').child(auth.uid).val() === 'dev') || root.child('roles').child(auth.uid).val() === 'admin'))"
+        ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'console@console.stellatd.game')"
       }
     },
     "presence": {
       ".read": "auth != null",
       "$uid": {
-        ".write": "auth != null && (auth.uid === $uid || ((((auth.token.email === 'console@console.stellatd.game' || root.child('roles').child(auth.uid).val() === 'owner') || root.child('roles').child(auth.uid).val() === 'dev') || root.child('roles').child(auth.uid).val() === 'admin') || root.child('roles').child(auth.uid).val() === 'mod'))"
+        ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'console@console.stellatd.game')"
       }
     },
     "bans": {
-      ".read": "auth != null && (((((auth.token.email === 'console@console.stellatd.game' || root.child('roles').child(auth.uid).val() === 'owner') || root.child('roles').child(auth.uid).val() === 'dev') || root.child('roles').child(auth.uid).val() === 'admin') || root.child('roles').child(auth.uid).val() === 'mod') || root.child('roles').child(auth.uid).val() === 'staff')",
+      ".read": "auth != null && auth.token.email === 'console@console.stellatd.game'",
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && ((((auth.token.email === 'console@console.stellatd.game' || root.child('roles').child(auth.uid).val() === 'owner') || root.child('roles').child(auth.uid).val() === 'dev') || root.child('roles').child(auth.uid).val() === 'admin') || root.child('roles').child(auth.uid).val() === 'mod')"
+        ".write": "auth != null && auth.token.email === 'console@console.stellatd.game'"
       }
     },
     "config": {
       ".read": "auth != null",
-      ".write": "auth != null && ((auth.token.email === 'console@console.stellatd.game' || root.child('roles').child(auth.uid).val() === 'owner') || root.child('roles').child(auth.uid).val() === 'dev')"
+      ".write": "auth != null && auth.token.email === 'console@console.stellatd.game'"
     },
     "roles": {
       ".read": "auth != null",
-      "$uid": {
-        ".write": "auth != null && auth.token.email === 'console@console.stellatd.game'",
-        ".validate": "newData.isString() && (newData.val() === 'owner' || newData.val() === 'dev' || newData.val() === 'admin' || newData.val() === 'mod' || newData.val() === 'staff')"
-      }
+      ".write": "false"
     },
     "logs": {
-      ".read": "auth != null && (((((auth.token.email === 'console@console.stellatd.game' || root.child('roles').child(auth.uid).val() === 'owner') || root.child('roles').child(auth.uid).val() === 'dev') || root.child('roles').child(auth.uid).val() === 'admin') || root.child('roles').child(auth.uid).val() === 'mod') || root.child('roles').child(auth.uid).val() === 'staff')",
+      ".read": "auth != null && auth.token.email === 'console@console.stellatd.game'",
       "$id": {
-        ".write": "auth != null && (((((auth.token.email === 'console@console.stellatd.game' || root.child('roles').child(auth.uid).val() === 'owner') || root.child('roles').child(auth.uid).val() === 'dev') || root.child('roles').child(auth.uid).val() === 'admin') || root.child('roles').child(auth.uid).val() === 'mod') || root.child('roles').child(auth.uid).val() === 'staff') && !data.exists()",
+        ".write": "auth != null && auth.token.email === 'console@console.stellatd.game' && !data.exists()",
         ".validate": "newData.hasChildren(['by', 't', 'msg'])"
       }
     }

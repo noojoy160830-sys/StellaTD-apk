@@ -19,43 +19,6 @@ jobs:
           P=$(dirname "$(find . -name gradlew -not -path '*/node_modules/*' | head -n 1)")
           echo "Project folder: $P"
           echo "PROJ=$P" >> $GITHUB_ENV
-      - name: Apply update (code pasted as text)
-        run: |
-          # The code comes as update_1.txt ... update_8.txt (small parts are easier to paste on a phone).
-          EXPECT="1:21000 2:21000 3:21000 4:21000 5:21000 6:21000 7:21000 8:14560"
-          SHA="b26fecef2a947b6bd531f9d1b48977c5842e26d444bacfbbe99cf3275da0b588"
-          F=$(find . -name update_1.txt -not -path '*/node_modules/*' | head -n 1)
-          if [ -z "$F" ]; then
-            echo "No update_1.txt found - building the code as it is in the repo"
-            exit 0
-          fi
-          D=$(dirname "$F")
-          BAD=0
-          : > /tmp/update.b64
-          for e in $EXPECT; do
-            i=${e%:*}; want=${e#*:}
-            f="$D/update_$i.txt"
-            if [ ! -f "$f" ]; then
-              echo "::error::update_$i.txt is missing - create it and paste part $i"
-              BAD=1; continue
-            fi
-            have=$(tr -d ' \r\n\t' < "$f" | wc -c)
-            if [ "$have" != "$want" ]; then
-              echo "::error::update_$i.txt has $have characters but should have $want - delete it and paste part $i again"
-              BAD=1
-            else
-              echo "update_$i.txt OK ($have characters)"
-            fi
-            tr -d ' \r\n\t' < "$f" >> /tmp/update.b64
-          done
-          if [ "$BAD" = 1 ]; then exit 1; fi
-          if [ "$(sha256sum /tmp/update.b64 | cut -c1-64)" != "$SHA" ]; then
-            echo "::error::The parts are complete but their content doesn't match - one part was pasted into the wrong file or edited. Paste all parts again."
-            exit 1
-          fi
-          base64 -d /tmp/update.b64 > /tmp/update.tar.xz
-          tar -xJf /tmp/update.tar.xz -C "$PROJ"
-          echo "Update applied"
       - name: Download game font (Kanit, OFL)
         working-directory: ${{ env.PROJ }}
         run: |
@@ -84,17 +47,26 @@ jobs:
           ./gradlew --no-daemon assembleGameRelease assembleConsoleRelease
           cp app/build/outputs/apk/game/release/app-game-release.apk "$GITHUB_WORKSPACE/StellaTD.apk"
           cp app/build/outputs/apk/console/release/app-console-release.apk "$GITHUB_WORKSPACE/StellaConsole.apk"
+      - name: Lock Stella Console (owner only)
+        env:
+          STELLA_KS_PASS: ${{ secrets.STELLA_KS_PASS }}
+        run: |
+          # The console is never published. It is packed in an AES-encrypted zip that only opens
+          # with the owner's password (the STELLA_KS_PASS secret) and kept as a private build artifact.
+          if [ -z "$STELLA_KS_PASS" ]; then echo "::warning::No STELLA_KS_PASS secret - console not packaged"; rm -f StellaConsole.apk; exit 0; fi
+          7z a -tzip -mem=AES256 -p"$STELLA_KS_PASS" StellaConsole-owner.zip StellaConsole.apk > /dev/null
+          rm -f StellaConsole.apk
+          echo "Console locked: StellaConsole-owner.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: StellaTD-apk
-          path: |
-            StellaTD.apk
-            StellaConsole.apk
+          name: StellaConsole-owner
+          path: StellaConsole-owner.zip
+          if-no-files-found: ignore
+          retention-days: 30
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v3.3.${{ github.run_number }}
-          name: Stella TD v3.3.${{ github.run_number }}
+          tag_name: v3.4.${{ github.run_number }}
+          name: Stella TD v3.4.${{ github.run_number }}
           make_latest: true
           files: |
             StellaTD.apk
-            StellaConsole.apk

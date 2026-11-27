@@ -20,9 +20,9 @@ import java.util.Locale;
 /** Renders every screen and handles touch. Match rules live in {@link Game}, saved data in {@link Profile}. */
 public final class GameView extends View {
 
-    static final String VERSION = "v3.3";
+    static final String VERSION = "v3.4";
     /** must match versionCode in app/build.gradle */
-    static final int VERSION_CODE = 15;
+    static final int VERSION_CODE = 16;
 
     // hub screens
     static final int S_LOBBY = 0, S_SHOP = 1, S_PLANET = 2, S_PLAYMENU = 3, S_BANNER = 4, S_ENCHANT = 5, S_GAME = 6,
@@ -375,8 +375,9 @@ public final class GameView extends View {
         busyMsg = msg == null ? "" : msg;
     }
 
+    /** only the Stella Console app (signed in as the console account) can manage the game */
     boolean isAdmin() {
-        return pf != null && cloud.isAdmin();
+        return consoleApp && pf != null && cloud.isAdmin();
     }
 
     void askLogin(String prefillUser) {
@@ -693,14 +694,17 @@ public final class GameView extends View {
         }
         btns.clear();
         scrollOn = false;
-        if (bg != null) c.drawBitmap(bg, 0, 0, null);
-        twinkles(c);
+        if (consoleApp) consoleBg(c);
+        else {
+            if (bg != null) c.drawBitmap(bg, 0, 0, null);
+            twinkles(c);
+        }
         if (!ready) {
             drawLoading(c);
             postInvalidateOnAnimation();
             return;
         }
-        if (screen != S_GAME) meteorShower(c, dt);
+        if (screen != S_GAME && !consoleApp) meteorShower(c, dt);
         // screen entrance: slide up + fade in
         float te = ease(Math.min(1f, transT / 0.35f));
         c.save();
@@ -944,6 +948,7 @@ public final class GameView extends View {
     }
 
     void panel(Canvas c, RectF r, int color, float rad) {
+        if (consoleApp) { flatPanel(c, r, color, rad); return; }
         p.setStyle(Paint.Style.FILL);
         p.setShader(null);
         rf2.set(r);
@@ -1059,6 +1064,7 @@ public final class GameView extends View {
     }
 
     void button(Canvas c, RectF r, String label, int color, boolean enabled, Runnable a) {
+        if (consoleApp) { flatButton(c, r, label, color, enabled, a); return; }
         float rad = Math.min(r.height() / 2f, 34 * u);
         int base = enabled ? color : 0xFF4A4562;
         p.setStyle(Paint.Style.FILL);
@@ -1223,6 +1229,7 @@ public final class GameView extends View {
 
     /** heading text in the game's display font */
     void title(Canvas c, String s, float x, float y, float size, int color, Paint.Align al, float maxW) {
+        if (consoleApp) { text(c, s, x, y, size * 0.86f, color, al, maxW); return; }
         tp.setTypeface(titleFont);
         text(c, s, x, y, size, color, al, maxW);
         tp.setTypeface(bodyFont);
@@ -3678,6 +3685,19 @@ public final class GameView extends View {
     }
 
     void popupFrame(Canvas c, RectF r, String title) {
+        if (consoleApp) {
+            dim(c);
+            flatPanel(c, r, C_CARD, 28 * u);
+            p.setShader(null);
+            p.setColor(C_ACCENT);
+            rf2.set(r.left, r.top, r.right, r.top + 8 * u);
+            c.save();
+            c.clipRect(r.left, r.top, r.right, r.top + 8 * u);
+            c.drawRoundRect(new RectF(r.left, r.top, r.right, r.top + 56 * u), 28 * u, 28 * u, p);
+            c.restore();
+            text(c, title, r.left + 40 * u, r.top + 90 * u, 44 * u, C_TEXT, Paint.Align.LEFT, r.width() - 80 * u);
+            return;
+        }
         dim(c);
         panel(c, r, 0xFF2A1A5E, 44 * u);
         title(c, title, r.centerX(), r.top + 95 * u, 60 * u, 0xFFFFD23F, Paint.Align.CENTER, r.width() - 60 * u);
@@ -5160,18 +5180,17 @@ public final class GameView extends View {
         if (my < Roles.STAFF) { log("! " + L.t("ต้องมียศทีมงาน", "staff rank required")); return; }
         switch (cmd) {
             case "help":
-                log("# staff:  list [text] • online • whois <u> • info <u> • staff • logs [n] • server • refresh • clear");
-                log("# mod:    ban <u> [hours|perm] [reason] • tempban <u> <hours> [reason] • unban <u> • kick <u>");
-                log("# admin:  give|take|set <u> <star|millite|crystal|oil|wins|bosskills> <n>");
+                log("# view:    list [text] • online • whois <u> • info <u> • logs [n] • server • refresh • clear");
+                log("# players: ban <u> [hours|perm] [reason] • tempban <u> <hours> [reason] • unban <u> • kick <u>");
+                log("# items:   give|take|set <u> <star|millite|crystal|oil|wins|bosskills> <n>");
                 log("#         skin <u> <style> <planet|all> • unskin <u> <style> <planet|all>   (styles: golden graveyard white aurora red elite shinypurple shiny madness king anniv)");
                 log("#         item <u> <capsule|hellmoon> <n>   (n can be negative) • evolve <u> <planet> [off]");
                 log("#         planet <u> <name|all> • unplanet <u> <name> • level <u> <name|all> <1-10>");
                 log("#         enchant <u> <planet> <enchant|none> [tier] • material <u> <planet> <material|none>");
                 log("#         unlock <u> [stage] • maxlevel <u> • reset <u> • wipe <u>");
                 log("#         giveall <star|millite|crystal> <n>");
-                log("# dev:    maintenance on|off • broadcast <msg>|clear • minver <n>" + (consoleApp ? "" : " • infsp on|off"));
-                log("# console: role <u> <owner|dev|admin|mod|staff|none>   (ranks come only from Stella Console)");
-                log("# ranks:  owner > dev > admin > mod > staff   (you: " + (cloud.isConsoleOwner() ? "CONSOLE" : Roles.NAME[my]) + ")");
+                log("# server:  maintenance on|off • broadcast <msg>|clear • minver <n>" + (consoleApp ? "" : " • infsp on|off"));
+
                 return;
             case "clear": consoleLog.clear(); return;
             case "refresh": refreshPlayers(); log("refreshing player list..."); return;
@@ -5196,15 +5215,6 @@ public final class GameView extends View {
                 for (Cloud.Player x : players) if (onlineNow(x)) { n++; b.append(x.name).append("  "); }
                 log("online now: " + n + (consoleApp ? "" : "  •  ping " + pingMs + " ms"));
                 if (n > 0) log(b.toString().trim());
-                return;
-            }
-            case "staff": {
-                if (players.isEmpty()) { refreshPlayers(() -> runCommand(lineOf(a), true)); return; }
-                for (int r = Roles.OWNER; r >= Roles.STAFF; r--) {
-                    StringBuilder b = new StringBuilder();
-                    for (Cloud.Player x : players) if (x.role == r) b.append(x.name).append("  ");
-                    if (b.length() > 0) log(Roles.NAME[r] + ": " + b.toString().trim());
-                }
                 return;
             }
             case "logs": {
@@ -5319,16 +5329,9 @@ public final class GameView extends View {
                 if (meTarget || protectedTarget) { log("! " + L.t("เตะคนนี้ไม่ได้", "can't kick this player")); return; }
                 cloud.kick(tid, tname, (ok, err) -> log(err != null ? "! " + err : "ok: kicked " + tname));
                 return;
-            case "role": {
-                if (!cloud.isConsoleOwner()) { log("! " + L.t("ให้ยศได้จาก Stella Console เท่านั้น", "ranks can only be given from Stella Console")); return; }
-                if (a.length < 3) { log("! role <user> <owner|dev|admin|mod|staff|none>"); return; }
-                int to = a[2].equalsIgnoreCase("none") || a[2].equalsIgnoreCase("player") ? Roles.NONE : Roles.of(a[2]);
-                if (to == Roles.NONE && !a[2].equalsIgnoreCase("none") && !a[2].equalsIgnoreCase("player")) { log("! unknown rank " + a[2]); return; }
-                if (meTarget) { log("! " + L.t("เปลี่ยนยศตัวเองไม่ได้", "you can't change your own rank")); return; }
-                final int fto = to;
-                cloud.setRole(tid, tname, to, (ok, err) -> { log(err != null ? "! " + err : "ok: " + tname + " = " + Roles.NAME[fto]); refreshPlayers(); });
+            case "role":
+                log("! " + L.t("ระบบยศถูกเอาออกแล้ว • จัดการเกมได้จาก Stella Console เท่านั้น", "ranks were removed • only Stella Console manages the game"));
                 return;
-            }
             case "wipe":
                 if (!need(Roles.ADMIN)) return;
                 if (meTarget || protectedTarget) { log("! " + L.t("ลบคนนี้ไม่ได้", "can't wipe this player")); return; }
@@ -5525,8 +5528,127 @@ public final class GameView extends View {
 
     boolean staffScreen(int s) { return s == S_ADMIN || s == S_TERM || s == S_STAFF || s == S_SERVER || s == S_LOGS; }
 
+    // ================================================================== Stella Console look
+    static final int C_BG = 0xFF0A0F1C, C_BG2 = 0xFF0F1830, C_CARD = 0xFF131C30, C_LINE = 0xFF24314F, C_TEXT = 0xFFEAF2FF,
+            C_DIM = 0xFF8394B8, C_ACCENT = 0xFF34E39A;
+
+    /** clean dashboard background: dark gradient, faint grid, one soft glow */
+    void consoleBg(Canvas c) {
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0xFFFFFFFF);
+        p.setShader(new LinearGradient(0, 0, 0, H, C_BG2, C_BG, Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, W, H, p);
+        p.setShader(null);
+        glowCircle(c, W * 0.85f, H * 0.08f, 520 * u, 0x1834E39A);
+        glowCircle(c, W * 0.1f, H * 0.9f, 520 * u, 0x14548CFF);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(1.2f * u);
+        sp.setColor(0x10FFFFFF);
+        float step = 72 * u, off = (anim * 6 * u) % step;
+        for (float x = 0; x < W; x += step) c.drawLine(x, 0, x, H, sp);
+        for (float y = -step + off; y < H; y += step) c.drawLine(0, y, W, y, sp);
+    }
+
+    /** flat rounded button: tinted fill, thin border, white label */
+    void flatButton(Canvas c, RectF r, String label, int color, boolean enabled, Runnable a) {
+        float rad = Math.min(r.height() / 2f, 22 * u);
+        boolean neutral = darken(color, 0f) == color && (((color >> 16) & 255) + ((color >> 8) & 255) + (color & 255)) < 200;
+        // game colours are muted toward the card colour so the console stays calm and readable
+        int base = !enabled ? 0xFF1A2238 : mix(color, C_CARD, 0.45f) | 0xFF000000;
+        p.setStyle(Paint.Style.FILL);
+        p.setShader(null);
+        p.setColor(0xFFFFFFFF);
+        p.setShader(new LinearGradient(0, r.top, 0, r.bottom, enabled ? lighten(base, neutral ? 0.08f : 0.06f) : base, enabled ? darken(base, 0.18f) : base, Shader.TileMode.CLAMP));
+        c.drawRoundRect(r, rad, rad, p);
+        p.setShader(null);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(2 * u);
+        sp.setColor(enabled ? alpha(lighten(base, 0.45f), 0x99) : C_LINE);
+        c.drawRoundRect(r, rad, rad, sp);
+        if (label != null) {
+            float ts = Math.min(r.height() * 0.38f, 40 * u);
+            text(c, label, r.centerX(), r.centerY() + ts * 0.36f, ts, enabled ? 0xFFFFFFFF : 0xFF5E6B8A, Paint.Align.CENTER, r.width() - 24 * u);
+        }
+        if (a != null) btns.add(new Btn(new RectF(r), a));
+    }
+
+    /** flat card with a hairline border */
+    void flatPanel(Canvas c, RectF r, int color, float rad) {
+        rad = Math.min(rad, 28 * u);
+        p.setStyle(Paint.Style.FILL);
+        p.setShader(null);
+        // map the game's purple panel colours onto the console palette
+        int fill = (((color >> 16) & 255) > 150 || ((color >> 8) & 255) > 150 || (color & 255) > 170) ? alpha(darken(color, 0.55f), 0xF0) : (color >>> 24) < 0x60 ? color : C_CARD;
+        p.setColor(fill);
+        c.drawRoundRect(r, rad, rad, p);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(2 * u);
+        sp.setColor(C_LINE);
+        c.drawRoundRect(r, rad, rad, sp);
+    }
+
+    /** the console logo mark: a hexagon with a prompt chevron */
+    void consoleMark(Canvas c, float cx, float cy, float r) {
+        Path h = new Path();
+        for (int i = 0; i < 6; i++) {
+            double a = Math.PI / 6 + i * Math.PI / 3;
+            float x = cx + (float) Math.cos(a) * r, y = cy + (float) Math.sin(a) * r;
+            if (i == 0) h.moveTo(x, y); else h.lineTo(x, y);
+        }
+        h.close();
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0xFFFFFFFF);
+        p.setShader(new LinearGradient(cx - r, cy - r, cx + r, cy + r, 0xFF34E39A, 0xFF2A7BFF, Shader.TileMode.CLAMP));
+        c.drawPath(h, p);
+        p.setShader(null);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(r * 0.16f);
+        sp.setColor(0xFF0A0F1C);
+        c.drawLine(cx - r * 0.42f, cy - r * 0.32f, cx - r * 0.08f, cy, sp);
+        c.drawLine(cx - r * 0.08f, cy, cx - r * 0.42f, cy + r * 0.32f, sp);
+        c.drawLine(cx + r * 0.02f, cy + r * 0.34f, cx + r * 0.42f, cy + r * 0.34f, sp);
+    }
+
+    /** small line icons for the console tabs: 0 players, 1 terminal, 2 server, 3 logs */
+    void tabIcon(Canvas c, int k, float x, float y, float r, int col) {
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(r * 0.17f);
+        sp.setColor(col);
+        p.setStyle(Paint.Style.FILL);
+        p.setShader(null);
+        p.setColor(col);
+        switch (k) {
+            case 0:
+                c.drawCircle(x, y - r * 0.35f, r * 0.32f, sp);
+                rf2.set(x - r * 0.7f, y + r * 0.1f, x + r * 0.7f, y + r * 1.2f);
+                c.drawArc(rf2, 180, 180, false, sp);
+                break;
+            case 1:
+                rf2.set(x - r, y - r * 0.75f, x + r, y + r * 0.75f);
+                c.drawRoundRect(rf2, r * 0.2f, r * 0.2f, sp);
+                c.drawLine(x - r * 0.55f, y - r * 0.25f, x - r * 0.2f, y, sp);
+                c.drawLine(x - r * 0.2f, y, x - r * 0.55f, y + r * 0.25f, sp);
+                c.drawLine(x, y + r * 0.3f, x + r * 0.5f, y + r * 0.3f, sp);
+                break;
+            case 2:
+                for (int i = 0; i < 2; i++) {
+                    rf2.set(x - r, y - r * 0.8f + i * r * 0.9f, x + r, y - r * 0.1f + i * r * 0.9f);
+                    c.drawRoundRect(rf2, r * 0.15f, r * 0.15f, sp);
+                    c.drawCircle(x + r * 0.6f, rf2.centerY(), r * 0.1f, p);
+                }
+                break;
+            default:
+                for (int i = 0; i < 3; i++) {
+                    float yy = y - r * 0.6f + i * r * 0.6f;
+                    c.drawCircle(x - r * 0.8f, yy, r * 0.1f, p);
+                    c.drawLine(x - r * 0.45f, yy, x + r * 0.9f, yy, sp);
+                }
+        }
+    }
+
     /** header + tab row shared by every staff screen */
     void staffTop(Canvas c, String title) {
+        if (consoleApp) { consoleTop(c, title); return; }
         p.setStyle(Paint.Style.FILL);
         p.setColor(0xFFFFFFFF);
         p.setShader(new LinearGradient(0, 0, 0, 300 * u, 0xF0090420, 0x00090420, Shader.TileMode.CLAMP));
@@ -5556,8 +5678,8 @@ public final class GameView extends View {
         int r = cloud.myRole();
         pill(c, W - 200 * u, 75 * u, cloud.isConsoleOwner() ? "CONSOLE" : Roles.NAME[r], 30 * u, 0xFF140A2A, cloud.isConsoleOwner() ? 0xFF7CFF8A : Roles.COLOR[r]);
         plain(c, user, W - 200 * u, 140 * u, 28 * u, 0xFFE6E0FF, Paint.Align.CENTER, 300 * u);
-        String[] tabs = {L.t("ผู้เล่น", "Players"), L.t("คอนโซล", "Console"), L.t("ทีมงาน", "Staff"), L.t("เซิร์ฟ", "Server"), "Log"};
-        int[] scr = {S_ADMIN, S_TERM, S_STAFF, S_SERVER, S_LOGS};
+        String[] tabs = {L.t("ผู้เล่น", "Players"), L.t("เทอร์มินัล", "Terminal"), L.t("เซิร์ฟเวอร์", "Server"), "Log"};
+        int[] scr = {S_ADMIN, S_TERM, S_SERVER, S_LOGS};
         float tw = (W - 60 * u - 4 * 10 * u) / 5f;
         for (int i = 0; i < 5; i++) {
             final int s = scr[i];
@@ -5568,6 +5690,64 @@ public final class GameView extends View {
                 if (s == S_LOGS) refreshLogs();
                 if (s == S_STAFF || s == S_ADMIN) refreshPlayers();
             });
+        }
+    }
+
+    /** console app bar: logo, title, live status and a segmented tab bar with icons */
+    void consoleTop(Canvas c, String title) {
+        p.setStyle(Paint.Style.FILL);
+        p.setShader(null);
+        p.setColor(0xF20A0F1C);
+        c.drawRect(0, 0, W, 285 * u, p);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(2 * u);
+        sp.setColor(C_LINE);
+        c.drawLine(0, 285 * u, W, 285 * u, sp);
+        consoleMark(c, 85 * u, 100 * u, 42 * u);
+        text(c, "Stella Console", 150 * u, 92 * u, 42 * u, C_TEXT, Paint.Align.LEFT, 0);
+        plain(c, title, 150 * u, 136 * u, 28 * u, C_DIM, Paint.Align.LEFT, 0);
+        // live status chip
+        boolean on = net == NET_ONLINE;
+        String st = on ? L.t("เชื่อมต่อแล้ว", "Connected") : L.t("กำลังเชื่อมต่อ", "Connecting");
+        tp.setTextSize(26 * u);
+        float cw = tp.measureText(st) + 80 * u;
+        rf.set(W - 40 * u - cw, 72 * u, W - 40 * u, 128 * u);
+        p.setColor(on ? 0x2234E39A : 0x22FFD23F);
+        c.drawRoundRect(rf, 28 * u, 28 * u, p);
+        p.setColor(on ? C_ACCENT : 0xFFFFD23F);
+        c.drawCircle(rf.left + 30 * u, rf.centerY(), 9 * u * (on ? 1f + 0.2f * (float) Math.sin(anim * 4) : 1f), p);
+        plain(c, st, rf.left + 50 * u, rf.centerY() + 9 * u, 26 * u, on ? C_ACCENT : 0xFFFFD23F, Paint.Align.LEFT, 0);
+        // segmented tabs
+        String[] tabs = {L.t("ผู้เล่น", "Players"), L.t("เทอร์มินัล", "Terminal"), L.t("เซิร์ฟเวอร์", "Server"), "Log"};
+        int[] scr = {S_ADMIN, S_TERM, S_SERVER, S_LOGS};
+        RectF bar = new RectF(30 * u, 172 * u, W - 30 * u, 262 * u);
+        p.setColor(0xFF0F1628);
+        c.drawRoundRect(bar, 24 * u, 24 * u, p);
+        c.drawRoundRect(bar, 24 * u, 24 * u, sp);
+        float tw = bar.width() / 4f;
+        for (int i = 0; i < 4; i++) {
+            final int s = scr[i];
+            boolean act = screen == s;
+            RectF t = new RectF(bar.left + i * tw + 6 * u, bar.top + 6 * u, bar.left + (i + 1) * tw - 6 * u, bar.bottom - 6 * u);
+            if (act) {
+                p.setColor(0x2634E39A);
+                c.drawRoundRect(t, 19 * u, 19 * u, p);
+                sp.setColor(0x9934E39A);
+                c.drawRoundRect(t, 19 * u, 19 * u, sp);
+                sp.setColor(C_LINE);
+            }
+            int col = act ? C_ACCENT : C_DIM;
+            tp.setTextSize(28 * u);
+            float lw = tp.measureText(tabs[i]);
+            float total = lw + 50 * u, x0 = t.centerX() - total / 2;
+            tabIcon(c, i, x0 + 16 * u, t.centerY() - 2 * u, 16 * u, col);
+            plain(c, tabs[i], x0 + 50 * u, t.centerY() + 10 * u, 28 * u, act ? C_TEXT : C_DIM, Paint.Align.LEFT, 0);
+            btns.add(new Btn(t, () -> {
+                go(s);
+                if (s == S_SERVER) refreshServer();
+                if (s == S_LOGS) refreshLogs();
+                if (s == S_ADMIN) refreshPlayers();
+            }));
         }
     }
 
@@ -5621,7 +5801,7 @@ public final class GameView extends View {
             }
             text(c, a.name + (mine ? L.t("  (คุณ)", "  (you)") : ""), r.left + 100 * u, r.top + 62 * u, 36 * u, 0xFFFFFFFF, Paint.Align.LEFT, 330 * u);
             float tx = r.left + 450 * u;
-            if (a.role > 0) { pill(c, tx + 60 * u, r.centerY(), Roles.NAME[a.role], 24 * u, 0xFF140A2A, Roles.COLOR[a.role]); tx += 135 * u; }
+            if (a.role > 0) { pill(c, tx + 60 * u, r.centerY(), "Console", 24 * u, 0xFF0A0F1C, C_ACCENT); tx += 135 * u; }
             if (a.banned) pill(c, tx + 60 * u, r.centerY(), "BANNED", 24 * u, 0xFFFFFFFF, 0xFFD0304A);
             plain(c, a.stars + " Star • " + a.wins + " W", r.right - 30 * u, r.top + 60 * u, 24 * u, 0xFFFFD23F, Paint.Align.RIGHT, 0);
             btns.add(new Btn(r, () -> selectAdmin(a.uid)));
@@ -5647,13 +5827,12 @@ public final class GameView extends View {
         boolean mod = t != null && Roles.canBan(my) && !self && !above;
         String[] labels = {L.t("ตั้ง Star", "Set Star"), L.t("ตั้ง Millite", "Set Millite"), L.t("ตั้ง Crystal", "Set Crystal"),
                 L.t("ให้ / แก้ดวงดาว", "Give / edit planet"), banned ? L.t("ปลดแบน", "Unban") : L.t("แบน...", "Ban..."), L.t("เตะออก", "Kick"),
-                L.t("ยศ: ", "Rank: ") + Roles.NAME[trole], L.t("Lv 10 ทุกดวง", "All planets Lv 10"), L.t("ปลดล็อกทุกด่าน", "Unlock all stages"),
+                L.t("Lv 10 ทุกดวง", "All planets Lv 10"), L.t("ปลดล็อกทุกด่าน", "Unlock all stages"),
                 L.t("ตั้ง Wins", "Set wins"), L.t("ตั้ง Crystal Oil", "Set Crystal Oil"), L.t("ให้สกิน / ไอเทม", "Give skin / item"),
                 L.t("รีเซ็ตความคืบหน้า", "Reset progress"), L.t("ลบข้อมูลผู้เล่น", "Delete player data")};
-        int[] colors = {0xFFE0A020, 0xFFB86BFF, 0xFF33A8D0, 0xFF33C6A6, 0xFFFF6B5B, 0xFFFF8A2B, Roles.COLOR[trole], 0xFF4F8BFF, 0xFF33C6A6, 0xFF33C6A6,
+        int[] colors = {0xFFE0A020, 0xFFB86BFF, 0xFF33A8D0, 0xFF33C6A6, 0xFFFF6B5B, 0xFFFF8A2B, 0xFF4F8BFF, 0xFF33C6A6, 0xFF33C6A6,
                 0xFFFF9A3B, 0xFFFF3B6B, 0xFFFF6B5B, 0xFFD0304A};
-        boolean canRank = t != null && !self && cloud.isConsoleOwner();
-        boolean[] en = {edit, edit, edit, edit, mod, mod && onlineNow(tp0 == null ? new Cloud.Player() : tp0) || mod, canRank, edit, edit, edit, edit, edit, edit, edit && !self};
+        boolean[] en = {edit, edit, edit, edit, mod, mod && onlineNow(tp0 == null ? new Cloud.Player() : tp0) || mod, edit, edit, edit, edit, edit, edit, edit && !self};
         Runnable[] acts = {
                 () -> setAmount("Star", q.stars, v -> q.stars = v),
                 () -> setAmount("Millite", q.millite, v -> q.millite = v),
@@ -5661,7 +5840,6 @@ public final class GameView extends View {
                 () -> { givePick = -1; popup = P_GIVE; },
                 () -> { if (banned) unbanPlayer(t); else askBan(t); },
                 () -> cloud.kick(t, nameOf(t), (ok, err) -> showToast(err != null ? err : nameOf(t) + L.t(" ถูกเตะออกแล้ว", " was kicked"))),
-                () -> { roleTarget = t; popup = P_ROLE; },
                 () -> { q.maxAllPlanets(); commitAdmin(L.t("Lv 10 ทุกดวงแล้ว", "All planets Lv 10")); },
                 () -> { q.unlockAllStages(); commitAdmin(L.t("ปลดล็อกทุกด่านแล้ว", "All stages unlocked")); },
                 () -> setAmount("Wins", q.wins, v -> q.wins = v),
@@ -5860,7 +6038,7 @@ public final class GameView extends View {
         }
         if (((int) (anim * 2)) % 2 == 0) plain(c, "_", box.left + 24 * u, y, 30 * u, 0xFF7CFF8A, Paint.Align.LEFT, 0);
         // quick commands
-        String[] quick = {"help", "list", "online", "staff", "logs 15", "server"};
+        String[] quick = {"help", "list", "online", "logs 15", "server"};
         float qw = (W - 80 * u - 5 * 10 * u) / 6f, qy = bottom - 310 * u;
         for (int i = 0; i < quick.length; i++) {
             final String qc = quick[i];
@@ -5995,8 +6173,16 @@ public final class GameView extends View {
         y += bh + 20 * u;
         rf.set(40 * u, y, W - 40 * u, y + bh);
         button(c, rf, L.t("รีเฟรช", "Refresh"), 0xFF33A8D0, !serverLoading, this::refreshServer);
-        if (!dev) plain(c, L.t("ต้องเป็น Dev หรือ Owner ถึงจะเปลี่ยนการตั้งค่าได้", "Dev or Owner rank is needed to change these"), W / 2, y + bh + 70 * u, 28 * u, 0xFF9C94C8, Paint.Align.CENTER, 0);
+        if (consoleApp) {
+            // the console stays unlocked on this device; locking it asks for the password again
+            rf.set(40 * u, navTopOr(H) - 150 * u, W - 40 * u, navTopOr(H) - 60 * u);
+            button(c, rf, L.t("ล็อก Console บนเครื่องนี้", "Lock Console on this device"), 0xFF5A1E2E, true, () -> Dialogs.confirm(ctx,
+                    L.t("ล็อก Console", "Lock Console"), L.t("ครั้งหน้าต้องใส่รหัสผ่านอีกครั้ง", "You'll need the password again next time"),
+                    L.t("ล็อก", "Lock"), this::logout));
+        }
     }
+
+    float navTopOr(float h) { return h; }
 
     // ------------------------------------------------------------------ audit log
     void refreshLogs() {
@@ -6126,35 +6312,49 @@ public final class GameView extends View {
 
     /** login screen of the Stella Console app */
     void drawConsoleLogin(Canvas c) {
-        glowCircle(c, W / 2, H * 0.3f, 420 * u, 0x332E9A6A);
-        // a terminal window with a blinking prompt
-        RectF term = new RectF(90 * u, H * 0.16f, W - 90 * u, H * 0.42f);
-        panel(c, term, 0xF005020F, 34 * u);
-        sp.setPathEffect(null);
-        sp.setStrokeWidth(4 * u);
-        sp.setColor(0xFF2E9A6A);
-        c.drawRoundRect(term, 34 * u, 34 * u, sp);
-        int[] dots = {0xFFFF5B5B, 0xFFFFD23F, 0xFF4DFF8A};
-        for (int i = 0; i < 3; i++) { p.setColor(dots[i]); c.drawCircle(term.left + (50 + i * 40) * u, term.top + 45 * u, 12 * u, p); }
-        String[] lines = {"$ stella-console --connect", "> firebase: " + (Cloud.configured() ? "ready" : "NOT CONFIGURED"), "> waiting for staff login"};
-        for (int i = 0; i < lines.length; i++)
-            plain(c, lines[i], term.left + 50 * u, term.top + (130 + i * 60) * u, 32 * u, i == 0 ? 0xFFFFE27A : 0xFF9CFFB8, Paint.Align.LEFT, term.width() - 100 * u);
-        if (((int) (anim * 2)) % 2 == 0) plain(c, "_", term.left + 50 * u, term.top + 310 * u, 34 * u, 0xFF7CFF8A, Paint.Align.LEFT, 0);
-        RectF card = new RectF(70 * u, H * 0.47f, W - 70 * u, H * 0.47f + 620 * u);
-        panel(c, card, 0xEE1C1240, 44 * u);
-        title(c, "Stella Console", W / 2, card.top + 130 * u, 84 * u, 0xFF7CFF8A);
-        plain(c, L.t("สำหรับทีมงาน: Owner • Dev • Admin • Mod • Staff", "For staff: Owner • Dev • Admin • Mod • Staff"), W / 2, card.top + 200 * u, 30 * u, 0xFFE6E0FF, Paint.Align.CENTER, card.width() - 60 * u);
-        rf.set(card.left + 60 * u, card.top + 260 * u, card.right - 60 * u, card.top + 390 * u);
-        button(c, rf, L.t("เข้าสู่ระบบ Console", "Console log in"), 0xFF2E9A6A, true, () -> askLogin(Cloud.CONSOLE_USER));
-        float bw = (card.width() - 160 * u) / 2;
-        rf.set(card.left + 60 * u, card.top + 440 * u, card.left + 60 * u + bw, card.top + 530 * u);
-        button(c, rf, "ไทย", L.en ? 0xFF3A3360 : 0xFF33C6A6, true, () -> { L.en = false; acc.setLang(false); });
-        rf.set(card.right - 60 * u - bw, card.top + 440 * u, card.right - 60 * u, card.top + 530 * u);
-        button(c, rf, "English", L.en ? 0xFF33C6A6 : 0xFF3A3360, true, () -> { L.en = true; acc.setLang(true); });
-        rf.set(card.left + 60 * u, card.bottom + 40 * u, card.right - 60 * u, card.bottom + 140 * u);
-        button(c, rf, L.t("ตั้งรหัสบัญชี Console ครั้งแรก", "First-time console setup"), 0xFF3A3360, Cloud.configured(), this::askConsoleSetup);
-        plain(c, L.t("ใช้ไอดี Console เท่านั้น • ไอดีผู้เล่นในเกมเข้าไม่ได้", "Console account only • game accounts can't log in here"), W / 2, card.bottom + 200 * u, 28 * u, 0x99FFFFFF, Paint.Align.CENTER, W - 80 * u);
-        plain(c, VERSION + " console", W - 40 * u, H - 40 * u, 24 * u, 0x66FFFFFF, Paint.Align.RIGHT, 0);
+        float cy = H * 0.3f;
+        glowCircle(c, W / 2, cy, 330 * u, 0x2234E39A);
+        float pulse = 1f + 0.04f * (float) Math.sin(anim * 2.2f);
+        consoleMark(c, W / 2, cy, 120 * u * pulse);
+        text(c, "Stella Console", W / 2, cy + 230 * u, 70 * u, C_TEXT, Paint.Align.CENTER, W - 80 * u);
+        plain(c, L.t("ศูนย์ควบคุมเกม Stella TD", "Stella TD control center"), W / 2, cy + 290 * u, 32 * u, C_DIM, Paint.Align.CENTER, 0);
+        RectF card = new RectF(70 * u, cy + 380 * u, W - 70 * u, cy + 380 * u + 470 * u);
+        flatPanel(c, card, C_CARD, 28 * u);
+        String[] lines = {"firebase  " + (Cloud.configured() ? "ready" : "NOT CONFIGURED"), "account   console", "session   " + L.t("จำไว้ในเครื่องนี้", "kept on this device")};
+        for (int i = 0; i < lines.length; i++) {
+            p.setShader(null);
+            p.setColor(i == 0 && !Cloud.configured() ? 0xFFFF5B5B : C_ACCENT);
+            c.drawCircle(card.left + 50 * u, card.top + (62 + i * 56) * u, 7 * u, p);
+            plain(c, lines[i], card.left + 75 * u, card.top + (72 + i * 56) * u, 30 * u, C_TEXT, Paint.Align.LEFT, card.width() - 100 * u);
+        }
+        rf.set(card.left + 40 * u, card.bottom - 150 * u, card.right - 40 * u, card.bottom - 40 * u);
+        button(c, rf, L.t("ปลดล็อก Console", "Unlock Console"), 0xFF1E9E6A, Cloud.configured(), this::askConsoleUnlock);
+        float bw = (W - 140 * u - 20 * u) / 2;
+        rf.set(70 * u, card.bottom + 40 * u, 70 * u + bw, card.bottom + 130 * u);
+        button(c, rf, "ไทย", !L.en ? 0xFF2A4A7A : 0xFF162036, true, () -> { L.en = false; acc.setLang(false); });
+        rf.set(W - 70 * u - bw, card.bottom + 40 * u, W - 70 * u, card.bottom + 130 * u);
+        button(c, rf, "English", L.en ? 0xFF2A4A7A : 0xFF162036, true, () -> { L.en = true; acc.setLang(true); });
+        plain(c, L.t("ใส่รหัสครั้งเดียว แล้วเครื่องนี้จะเข้าได้ทันทีทุกครั้ง", "Enter the password once — this device stays unlocked"), W / 2, card.bottom + 200 * u, 26 * u, C_DIM, Paint.Align.CENTER, W - 80 * u);
+        RectF link = new RectF(W / 2 - 250 * u, H - 190 * u, W / 2 + 250 * u, H - 120 * u);
+        plain(c, L.t("ตั้งค่าบัญชี Console ครั้งแรก", "First-time console setup"), W / 2, link.centerY() + 10 * u, 26 * u, 0xFF5E8BFF, Paint.Align.CENTER, 0);
+        if (Cloud.configured()) btns.add(new Btn(link, this::askConsoleSetup));
+        plain(c, VERSION + " console", W - 40 * u, H - 40 * u, 24 * u, 0x55FFFFFF, Paint.Align.RIGHT, 0);
+    }
+
+    /** the console has one account, so unlocking only asks for its password */
+    void askConsoleUnlock() {
+        Dialogs.ask(ctx, "Stella Console", L.t("ใส่รหัสผ่าน Console", "Console password"),
+                new String[]{L.t("รหัสผ่าน", "Password")}, new int[]{Dialogs.PASSWORD}, new String[]{null},
+                L.t("ปลดล็อก", "Unlock"), v -> {
+                    if (v[0].isEmpty()) return L.t("ใส่รหัสผ่าน", "Enter the password");
+                    setBusy(L.t("กำลังปลดล็อก...", "Unlocking..."));
+                    cloud.signIn(Cloud.CONSOLE_USER, v[0], (id, err) -> {
+                        setBusy(null);
+                        if (err != null) { showToast(err); return; }
+                        startSession(false);
+                    });
+                    return null;
+                });
     }
 
     // ================================================================== match
