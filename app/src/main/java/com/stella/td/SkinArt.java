@@ -44,6 +44,72 @@ final class SkinArt {
         return out;
     }
 
+    /** artifact moons: brightness mapped onto each artifact's colour ramp, plus a small motif */
+    static final int[][] ART_RAMP = {null,
+            {0xFF0A2A48, 0xFF5EC8FF, 0xFFF0FFFF},   // frost
+            {0xFF1A0838, 0xFF8A4BFF, 0xFFE6D0FF},   // storm
+            {0xFF4A2A00, 0xFFE0A020, 0xFFFFF4B0},   // gold
+            {0xFF05000E, 0xFF2A0A4A, 0xFFB86BFF}};  // void
+
+    static Bitmap tintMoon(Bitmap moon, int m) {
+        int w = moon.getWidth(), h = moon.getHeight();
+        int[] px = new int[w * h];
+        moon.getPixels(px, 0, w, 0, 0, w, h);
+        int[] ramp = ART_RAMP[m];
+        for (int i = 0; i < px.length; i++) {
+            int c = px[i], a = c >>> 24;
+            if (a == 0) continue;
+            float lum = (0.3f * ((c >> 16) & 255) + 0.59f * ((c >> 8) & 255) + 0.11f * (c & 255)) / 255f;
+            if (m == Defs.MOON_VOID) lum = 1f - lum * 0.85f;
+            int rgb = lum < 0.5f ? mix(ramp[0], ramp[1], lum * 2) : mix(ramp[1], ramp[2], (lum - 0.5f) * 2);
+            px[i] = (a << 24) | (rgb & 0xFFFFFF);
+        }
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        out.setPixels(px, 0, w, 0, 0, w, h);
+        Canvas c = new Canvas(out);
+        float cx = w / 2f, cy = h / 2f, r = Math.min(w, h) * 0.38f;
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        switch (m) {
+            case Defs.MOON_FROST:
+                p.setStyle(Paint.Style.STROKE);
+                p.setStrokeWidth(r * 0.06f);
+                p.setColor(0xEEFFFFFF);
+                for (int k = 0; k < 3; k++) {
+                    double a = k * Math.PI / 3;
+                    float dx = (float) Math.cos(a) * r * 0.45f, dy = (float) Math.sin(a) * r * 0.45f;
+                    c.drawLine(cx - dx, cy - dy, cx + dx, cy + dy, p);
+                }
+                break;
+            case Defs.MOON_STORM: {
+                p.setColor(0xFFFFF27A);
+                android.graphics.Path b = new android.graphics.Path();
+                b.moveTo(cx + r * 0.15f, cy - r * 0.6f);
+                b.lineTo(cx - r * 0.3f, cy + r * 0.08f);
+                b.lineTo(cx, cy + r * 0.08f);
+                b.lineTo(cx - r * 0.15f, cy + r * 0.6f);
+                b.lineTo(cx + r * 0.32f, cy - r * 0.1f);
+                b.lineTo(cx + r * 0.02f, cy - r * 0.1f);
+                b.close();
+                c.drawPath(b, p);
+                break;
+            }
+            case Defs.MOON_GOLD:
+                sparkles(c, cx, cy, r, 0xFFFFFFFF, 4);
+                break;
+            case Defs.MOON_VOID:
+                p.setStyle(Paint.Style.STROKE);
+                p.setStrokeWidth(r * 0.08f);
+                p.setColor(0xCCB86BFF);
+                c.drawCircle(cx, cy, r * 1.02f, p);
+                p.setStyle(Paint.Style.FILL);
+                p.setColor(0xFF000000);
+                c.drawCircle(cx, cy, r * 0.32f, p);
+                break;
+            default:
+        }
+        return out;
+    }
+
     /** evolved form: richer colours, a glowing core and a ring of living crystals */
     static Bitmap evolved(Bitmap src, int planet) {
         int w = src.getWidth(), h = src.getHeight();
@@ -54,9 +120,17 @@ final class SkinArt {
             int c = px[i], a = c >>> 24;
             if (a == 0) continue;
             Art.rgbToHsv(c, hsv);
-            // greens get lusher, blues turn into deep glowing teal
-            if (hsv[0] > 60 && hsv[0] < 170) hsv[0] = 125;
-            else if (hsv[0] >= 170 && hsv[0] < 260) hsv[0] = 185;
+            if (planet == Defs.EARTH) {
+                // greens get lusher, blues turn into deep glowing teal
+                if (hsv[0] > 60 && hsv[0] < 170) hsv[0] = 125;
+                else if (hsv[0] >= 170 && hsv[0] < 260) hsv[0] = 185;
+            } else {
+                // pull every hue toward the evolution's colour, keeping a little variation
+                float tgt = Defs.evoHue(planet), d = ((hsv[0] - tgt + 540) % 360) - 180;
+                hsv[0] = (tgt + d * 0.25f + 360) % 360;
+                if (planet == Defs.MOON) hsv[2] *= 0.8f;
+                hsv[1] = Math.max(hsv[1], 0.45f);
+            }
             hsv[1] = Math.min(1f, hsv[1] * 1.35f + 0.08f);
             hsv[2] = Math.min(1f, hsv[2] * 1.12f + 0.04f);
             px[i] = (a << 24) | (Art.hsvToRgb(hsv) & 0xFFFFFF);
@@ -69,7 +143,8 @@ final class SkinArt {
         // energy ring
         p.setStyle(Paint.Style.STROKE);
         p.setStrokeWidth(r * 0.07f);
-        p.setColor(0xCC7CFF8A);
+        int ringCol = Art.hsvToRgb(new float[]{Defs.evoHue(planet), 0.55f, 1f}) | 0xFF000000;
+        p.setColor((ringCol & 0xFFFFFF) | 0xCC000000);
         c.drawOval(new android.graphics.RectF(cx - r * 1.25f, cy - r * 0.36f, cx + r * 1.25f, cy + r * 0.36f), p);
         p.setStrokeWidth(r * 0.03f);
         p.setColor(0xFFE8FFE8);
@@ -86,7 +161,7 @@ final class SkinArt {
             d.lineTo(x, y + s * 1.2f);
             d.lineTo(x - s, y);
             d.close();
-            p.setColor(k % 2 == 0 ? 0xFF7CFF8A : 0xFF5EF2FF);
+            p.setColor(k % 2 == 0 ? ringCol : 0xFFFFFFFF);
             c.drawPath(d, p);
         }
         sparkles(c, cx, cy, r, 0xEEFFFFFF, 4);

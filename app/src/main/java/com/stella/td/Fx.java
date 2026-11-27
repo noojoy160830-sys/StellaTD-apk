@@ -2,8 +2,8 @@ package com.stella.td;
 
 /** Visual effect: particle, ring or floating text. */
 final class Fx {
-    static final int PART = 0, RING = 1, TEXT = 2, STARTEXT = 3, PUFF = 4;
+    static final int PART = 0, RING = 1, TEXT = 2, STARTEXT = 3, PUFF = 4, BEAM = 5;
     int kind, color;
-    float x, y, vx, vy, life, maxLife, size;
+    float x, y, vx, vy, life, maxLife, size, x2, y2;
     String text;
 }

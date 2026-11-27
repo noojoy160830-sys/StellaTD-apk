@@ -264,6 +264,152 @@ final class Art {
         c.restore();
     }
 
+    // ---------------------------------------------------------------- unique satellites
+    /** Smart Satellite: sleek AI core, long angled solar wings and a big dish */
+    static void smartSat(Canvas c, float cx, float cy, float size) {
+        float s = size;
+        Paint o = stroke(s * 0.018f, OUTLINE);
+        c.drawCircle(cx, cy, s * 0.46f, grad(new RadialGradient(cx, cy, s * 0.46f, 0x3348F0FF, 0x0048F0FF, Shader.TileMode.CLAMP)));
+        // wings: three tilted panels per side
+        for (int side = -1; side <= 1; side += 2) {
+            c.save();
+            c.rotate(side * -12, cx, cy);
+            // strut
+            Paint st = stroke(s * 0.022f, 0xFFB8C8D8);
+            c.drawLine(cx + side * s * 0.1f, cy, cx + side * s * 0.16f, cy, st);
+            for (int k = 0; k < 3; k++) {
+                float x0 = cx + side * (s * 0.16f + k * s * 0.095f);
+                RectF pnl = new RectF(Math.min(x0, x0 + side * s * 0.085f), cy - s * 0.085f, Math.max(x0, x0 + side * s * 0.085f), cy + s * 0.085f);
+                c.drawRect(pnl, grad(new LinearGradient(pnl.left, pnl.top, pnl.right, pnl.bottom, 0xFF5B8CFF, 0xFF1E2A8A, Shader.TileMode.CLAMP)));
+                Paint gl = stroke(s * 0.006f, 0x8848F0FF);
+                c.drawLine(pnl.centerX(), pnl.top, pnl.centerX(), pnl.bottom, gl);
+                c.drawLine(pnl.left, pnl.centerY(), pnl.right, pnl.centerY(), gl);
+                c.drawRect(pnl, o);
+            }
+            c.restore();
+        }
+        // dish
+        Paint f = fill();
+        c.drawLine(cx + s * 0.04f, cy - s * 0.1f, cx + s * 0.12f, cy - s * 0.26f, stroke(s * 0.02f, 0xFFB8C8D8));
+        RectF dish = new RectF(cx + s * 0.02f, cy - s * 0.38f, cx + s * 0.24f, cy - s * 0.22f);
+        c.save();
+        c.rotate(-30, dish.centerX(), dish.centerY());
+        f.setColor(0xFFF2F6FF);
+        c.drawArc(dish, 0, 180, true, f);
+        c.drawArc(dish, 0, 180, true, o);
+        f.setColor(0xFFFFD23F);
+        c.drawCircle(dish.centerX(), dish.centerY() + s * 0.01f, s * 0.018f, f);
+        c.restore();
+        // octagonal core
+        android.graphics.Path oct = new android.graphics.Path();
+        float r = s * 0.13f;
+        for (int k = 0; k < 8; k++) {
+            double a = Math.PI / 8 + k * Math.PI / 4;
+            float x = cx + (float) Math.cos(a) * r, y = cy + (float) Math.sin(a) * r;
+            if (k == 0) oct.moveTo(x, y); else oct.lineTo(x, y);
+        }
+        oct.close();
+        c.drawPath(oct, grad(new LinearGradient(cx - r, cy - r, cx + r, cy + r, 0xFFFFFFFF, 0xFF6FD8E8, Shader.TileMode.CLAMP)));
+        c.drawPath(oct, o);
+        // AI eye
+        c.drawCircle(cx, cy, s * 0.06f, grad(new RadialGradient(cx, cy, s * 0.06f, 0xFFFFFFFF, 0xFF00C8FF, Shader.TileMode.CLAMP)));
+        c.drawCircle(cx, cy, s * 0.06f, stroke(s * 0.012f, 0xFF0A3A5A));
+        f.setColor(0xFF0A3A5A);
+        c.drawCircle(cx, cy, s * 0.022f, f);
+        // gold trim
+        c.drawLine(cx - r * 0.7f, cy + r * 0.75f, cx + r * 0.7f, cy + r * 0.75f, stroke(s * 0.014f, 0xFFFFD23F));
+    }
+
+    /** Savior Satellite: pearl body, feather wings and a golden halo */
+    static void saviorSat(Canvas c, float cx, float cy, float size) {
+        float s = size;
+        Paint o = stroke(s * 0.016f, OUTLINE);
+        c.drawCircle(cx, cy, s * 0.47f, grad(new RadialGradient(cx, cy, s * 0.47f, 0x667CFFE0, 0x007CFFE0, Shader.TileMode.CLAMP)));
+        // feather wings: stacked curved blades
+        for (int side = -1; side <= 1; side += 2) {
+            for (int k = 0; k < 3; k++) {
+                android.graphics.Path w = new android.graphics.Path();
+                float len = s * (0.36f - k * 0.06f), y0 = cy - s * 0.02f + k * s * 0.07f;
+                w.moveTo(cx + side * s * 0.08f, y0);
+                w.quadTo(cx + side * len * 0.7f, y0 - s * (0.17f - k * 0.04f), cx + side * len, y0 - s * (0.06f - k * 0.03f));
+                w.quadTo(cx + side * len * 0.6f, y0 + s * 0.03f, cx + side * s * 0.08f, y0 + s * 0.05f);
+                w.close();
+                c.drawPath(w, grad(new LinearGradient(cx, y0, cx + side * len, y0, 0xFFFFFFFF, k == 0 ? 0xFFB8FFF0 : 0xFF8FE8FF, Shader.TileMode.CLAMP)));
+                c.drawPath(w, o);
+            }
+        }
+        // pearl body
+        RectF body = new RectF(cx - s * 0.1f, cy - s * 0.15f, cx + s * 0.1f, cy + s * 0.17f);
+        c.drawOval(body, grad(new RadialGradient(cx - s * 0.03f, cy - s * 0.06f, s * 0.2f, 0xFFFFFFFF, 0xFFC8E8F0, Shader.TileMode.CLAMP)));
+        c.drawOval(body, o);
+        // glowing heart gem
+        android.graphics.Path gem = new android.graphics.Path();
+        gem.moveTo(cx, cy - s * 0.05f);
+        gem.lineTo(cx + s * 0.045f, cy + s * 0.01f);
+        gem.lineTo(cx, cy + s * 0.08f);
+        gem.lineTo(cx - s * 0.045f, cy + s * 0.01f);
+        gem.close();
+        c.drawPath(gem, grad(new LinearGradient(cx, cy - s * 0.05f, cx, cy + s * 0.08f, 0xFFB8FFF0, 0xFF20C8A0, Shader.TileMode.CLAMP)));
+        c.drawPath(gem, stroke(s * 0.01f, 0xFF0A4A3A));
+        // halo
+        RectF halo = new RectF(cx - s * 0.14f, cy - s * 0.31f, cx + s * 0.14f, cy - s * 0.23f);
+        c.drawOval(halo, stroke(s * 0.03f, 0xFFFFE27A));
+        c.drawOval(halo, stroke(s * 0.012f, 0xFFFFFFFF));
+    }
+
+    /** Commander Satellite: armoured hex hull, missile racks and a radar mast */
+    static void commanderSat(Canvas c, float cx, float cy, float size) {
+        float s = size;
+        Paint o = stroke(s * 0.018f, OUTLINE);
+        Paint f = fill();
+        c.drawCircle(cx, cy, s * 0.46f, grad(new RadialGradient(cx, cy, s * 0.46f, 0x44FF3B3B, 0x00FF3B3B, Shader.TileMode.CLAMP)));
+        // short armoured fins
+        for (int side = -1; side <= 1; side += 2) {
+            android.graphics.Path fin = new android.graphics.Path();
+            fin.moveTo(cx + side * s * 0.12f, cy - s * 0.08f);
+            fin.lineTo(cx + side * s * 0.33f, cy - s * 0.04f);
+            fin.lineTo(cx + side * s * 0.33f, cy + s * 0.08f);
+            fin.lineTo(cx + side * s * 0.12f, cy + s * 0.1f);
+            fin.close();
+            c.drawPath(fin, grad(new LinearGradient(cx, cy - s * 0.08f, cx, cy + s * 0.1f, 0xFF6A7488, 0xFF2A303C, Shader.TileMode.CLAMP)));
+            c.drawPath(fin, o);
+            c.drawLine(cx + side * s * 0.15f, cy + s * 0.01f, cx + side * s * 0.3f, cy + s * 0.02f, stroke(s * 0.018f, 0xFFFF3B3B));
+            // missile rack: two missiles under each fin
+            for (int k = 0; k < 2; k++) {
+                float mx = cx + side * (s * 0.19f + k * s * 0.08f), my = cy + s * 0.16f;
+                RectF m = new RectF(mx - s * 0.022f, my - s * 0.06f, mx + s * 0.022f, my + s * 0.06f);
+                f.setColor(0xFFE8ECF2);
+                c.drawRoundRect(m, s * 0.02f, s * 0.02f, f);
+                f.setColor(0xFFFF3B3B);
+                c.drawRect(m.left, m.bottom - s * 0.03f, m.right, m.bottom, f);
+                c.drawRoundRect(m, s * 0.02f, s * 0.02f, o);
+            }
+        }
+        // radar mast
+        c.drawLine(cx, cy - s * 0.12f, cx, cy - s * 0.33f, stroke(s * 0.02f, 0xFF9AA3B5));
+        RectF radar = new RectF(cx - s * 0.1f, cy - s * 0.37f, cx + s * 0.1f, cy - s * 0.29f);
+        f.setColor(0xFFB8C0CC);
+        c.drawOval(radar, f);
+        c.drawOval(radar, o);
+        f.setColor(0xFFFF3B3B);
+        c.drawCircle(cx, cy - s * 0.38f, s * 0.022f, f);
+        // hex hull
+        android.graphics.Path hex = new android.graphics.Path();
+        float r = s * 0.15f;
+        for (int k = 0; k < 6; k++) {
+            double a = k * Math.PI / 3;
+            float x = cx + (float) Math.cos(a) * r, y = cy + (float) Math.sin(a) * r * 0.9f;
+            if (k == 0) hex.moveTo(x, y); else hex.lineTo(x, y);
+        }
+        hex.close();
+        c.drawPath(hex, grad(new LinearGradient(cx - r, cy - r, cx + r, cy + r, 0xFF8A94A8, 0xFF2A303C, Shader.TileMode.CLAMP)));
+        c.drawPath(hex, o);
+        // red command star
+        f.setColor(0xFFFF3B3B);
+        c.drawPath(starPath(cx, cy, s * 0.07f, s * 0.03f, 5), f);
+        c.drawPath(starPath(cx, cy, s * 0.07f, s * 0.03f, 5), stroke(s * 0.008f, 0xFF4A0A0A));
+    }
+
     static Bitmap planet(int type, int size) {
         Bitmap b = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
@@ -272,41 +418,9 @@ final class Art {
             satellite(c, cx, cy, size);
             return b;
         }
-        if (type == Defs.SMART_SAT || type == Defs.SAVIOR_SAT || type == Defs.COMMANDER) {
-            Bitmap base = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
-            satellite(new Canvas(base), cx, cy, size);
-            // recolour the panels: gold (Smart), ghost cyan (Savior), crimson (Commander)
-            float hue = type == Defs.SMART_SAT ? 170 : type == Defs.SAVIOR_SAT ? -40 : 140;
-            Bitmap rc = recolor(base, hue, type == Defs.SAVIOR_SAT ? 0.6f : 1.3f, type == Defs.SAVIOR_SAT ? 1.25f : 1.05f);
-            if (type == Defs.SAVIOR_SAT) {
-                c.drawCircle(cx, cy, size * 0.46f, grad(new RadialGradient(cx, cy, size * 0.46f, 0x667CFFE0, 0x007CFFE0, Shader.TileMode.CLAMP)));
-            }
-            c.drawBitmap(rc, 0, 0, null);
-            Paint o = stroke(size * 0.02f, OUTLINE);
-            Paint f = fill();
-            if (type == Defs.SMART_SAT) {
-                // satellite dish on top
-                f.setColor(0xFFFFE27A);
-                RectF dish = new RectF(cx - size * 0.1f, cy - size * 0.36f, cx + size * 0.1f, cy - size * 0.2f);
-                c.drawArc(dish, 0, 180, true, f);
-                c.drawArc(dish, 0, 180, true, o);
-                f.setColor(0xFFFFFFFF);
-                c.drawCircle(cx, cy - size * 0.33f, size * 0.025f, f);
-            } else if (type == Defs.SAVIOR_SAT) {
-                // halo
-                Paint h = stroke(size * 0.03f, 0xFFB8FFF0);
-                c.drawOval(new RectF(cx - size * 0.13f, cy - size * 0.34f, cx + size * 0.13f, cy - size * 0.27f), h);
-            } else {
-                // missile pods
-                for (int k = -1; k <= 1; k += 2) {
-                    f.setColor(0xFFFF4B4B);
-                    RectF pod = new RectF(cx + k * size * 0.07f - size * 0.03f, cy - size * 0.3f, cx + k * size * 0.07f + size * 0.03f, cy - size * 0.14f);
-                    c.drawRoundRect(pod, size * 0.03f, size * 0.03f, f);
-                    c.drawRoundRect(pod, size * 0.03f, size * 0.03f, o);
-                }
-            }
-            return b;
-        }
+        if (type == Defs.SMART_SAT) { smartSat(c, cx, cy, size); return b; }
+        if (type == Defs.SAVIOR_SAT) { saviorSat(c, cx, cy, size); return b; }
+        if (type == Defs.COMMANDER) { commanderSat(c, cx, cy, size); return b; }
         boolean ringed = type == Defs.SATURN || type == Defs.URANUS || type == Defs.HERO || type == Defs.KING || type == Defs.GALACIA_P;
         float rf = ringed ? 0.27f : (type == Defs.SUN ? 0.3f : 0.36f);
         int atmo;

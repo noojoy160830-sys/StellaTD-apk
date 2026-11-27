@@ -36,11 +36,20 @@ final class Game {
     int bannerColor = 0xFFFFFFFF;
     final float[] tmp = new float[2];
 
-    Game(int stage, Profile pf) {
+    /** 0 normal, 1 daily challenge, 2 weekly challenge */
+    final int challenge;
+    final boolean[] mod = new boolean[Defs.CH_MOD.length];
+
+    Game(int stage, Profile pf) { this(stage, pf, 0); }
+
+    Game(int stage, Profile pf, int challenge) {
         this.stage = stage;
         this.pf = pf;
+        this.challenge = challenge;
         this.deck = pf.deck.clone();
-        this.maxWave = Defs.ST_WAVES[stage];
+        if (challenge == 1) mod[Defs.dailyMod(Profile.today())] = true;
+        if (challenge == 2) for (int m : Defs.weeklyMods(Profile.week())) mod[m] = true;
+        this.maxWave = challenge == 1 ? Defs.DAILY_WAVES : challenge == 2 ? Defs.WEEKLY_WAVES : Defs.ST_WAVES[stage];
         float[] p = Defs.ST_PATH[stage];
         int n = p.length / 2;
         px = new float[n];
@@ -137,6 +146,8 @@ final class Game {
             case Defs.EN_MEGALONIA: return 0.17f;
             case Defs.EN_GIANTTIC: return 0.30f;
             case Defs.EN_GALAXIA: return 0.50f;
+            case Defs.EN_FROSTBITE: return 0.10f;
+            case Defs.EN_NOVA: return 0.12f;
             default: return 0f;
         }
     }
@@ -147,6 +158,7 @@ final class Game {
             case Defs.EN_STORM: return 0.15f;
             case Defs.EN_ELECTRO: return 0.07f;
             case Defs.EN_MEGALONIA: return 0.17f;
+            case Defs.EN_NOVA: return 0.12f;
             default: return 0f;
         }
     }
@@ -196,15 +208,15 @@ final class Game {
     }
 
     static float rangeOf(Planet p) {
-        return Defs.P_RANGE[p.type] * (1f + enchRng(p)) * (1f + matRng(p)) * (p.king ? 1.1f : 1f) * (p.evo ? 1.15f : 1f);
+        return Defs.P_RANGE[p.type] * (1f + enchRng(p)) * (1f + matRng(p)) * (p.king ? 1.1f : 1f) * (p.evo ? 1.15f : 1f) * p.rangeMul;
     }
 
     /** the persistent upgrade level (Lv 1-10) speeds up attacks 4% and production 5% per level */
     static float cdOf(Planet p) {
         float c = Defs.P_CD[p.type];
         float k = p.king ? 1.1f : 1f;
-        if (isProducer(p)) return c / ((1f + 0.2f * (p.level - 1)) * (1f + 0.05f * (p.plv - 1)) * k);
-        return c / ((1f + enchSpa(p)) * (1f + matSpa(p)) * (1f + 0.04f * (p.plv - 1)) * k * (p.evo ? 1.15f : 1f));
+        if (isProducer(p)) return c / ((1f + 0.2f * (p.level - 1)) * (1f + 0.05f * (p.plv - 1)) * k * (p.evo ? 1.15f : 1f));
+        return c / ((1f + enchSpa(p)) * (1f + matSpa(p)) * (1f + 0.04f * (p.plv - 1)) * k * (p.evo ? 1.15f : 1f) * (p.art == Defs.MOON_STORM ? 1.12f : 1f));
     }
 
     /** SP per production cycle (fractional, accumulated); persistent level adds 8% per level */
@@ -212,6 +224,8 @@ final class Game {
         float a = (Defs.P_DMG[p.type] + (p.level >= 4 ? 1 : 0)) * (1f + 0.08f * (p.plv - 1)) * (p.king ? 1.1f : 1f);
         if (p.enchant == Defs.EN_MIDAS) a *= 1.5f;
         if (p.material == Defs.MAT_GOLD) a *= 1.6f;
+        if (p.art == Defs.MOON_GOLD) a *= 1.2f;
+        if (p.evo) a *= 1.6f;
         return a;
     }
 
@@ -269,7 +283,9 @@ final class Game {
         p.cdT = 0.3f;
         p.plv = pf.level[type];
         p.enchant = pf.enchant[type];
-        p.hellMoon = pf.moonOn[type] == Defs.MOON_HELL;
+        p.art = pf.moonOn[type];
+        p.hellMoon = p.art == Defs.MOON_HELL;
+        if (mod[2]) p.rangeMul = 0.8f; // challenge: short sight
         p.evo = pf.evolved[type];
         p.skin = pf.skinOn[type];
         p.ax = p.x;
@@ -279,6 +295,7 @@ final class Game {
         p.material = pf.material[type];
         p.moons = p.enchant == Defs.EN_MOON ? 1 : 0;
         slots[slot] = p;
+        placedCount++;
         ring(p.x, p.y, Defs.RARITY_COLOR[Defs.P_RARITY[type]], 80);
         for (int i = 0; i < 14; i++) particle(p.x, p.y, Defs.RARITY_COLOR[Defs.P_RARITY[type]], 220);
         return null;
@@ -321,7 +338,7 @@ final class Game {
         int w = wave + (stage % Defs.PER_GALAXY) / 2 + g * 4;
         int n = 4 + (int) (wave * 1.3f);
         for (int i = 0; i < n; i++) queue.add(pickEnemy(w));
-        boolean boss = wave % 10 == 0 || wave == maxWave;
+        boolean boss = wave % 10 == 0 || wave == maxWave || (mod[3] && wave % 5 == 0);
         boolean mini = !boss && wave % 10 == 5;
         if (stage == Defs.RAID && boss) {
             queue.add(Defs.E_TITAN);
@@ -403,6 +420,8 @@ final class Game {
             e.shield = e.maxShield;
         }
         e.speed = Defs.E_SPEED[type] * (1f + Math.min(0.25f, wave * 0.006f)) * Defs.ST_SPEED[stage];
+        if (mod[0]) e.speed *= 1.35f;
+        if (mod[1]) { e.maxHp *= 1.6f; e.hp = e.maxHp; e.maxShield *= 1.6f; e.shield = e.maxShield; }
         e.radius = Defs.E_RADIUS[type];
         e.baseDmg = Defs.E_BASEDMG[type];
         e.abilT = rnd.nextFloat() * 2f;
@@ -503,6 +522,11 @@ final class Game {
         if (shake > 0) shake -= dt;
         updateFx(dt);
         if (won || lost) return;
+        if (!novaQueue.isEmpty()) {
+            java.util.ArrayList<Object[]> q = new java.util.ArrayList<>(novaQueue);
+            novaQueue.clear();
+            for (Object[] o : q) damage((Enemy) o[0], (Float) o[1], (Planet) o[2]);
+        }
 
         if (!inWave) {
             prepT -= dt;
@@ -830,11 +854,33 @@ final class Game {
             burst(s, e.x, e.y);
         }
         float dmg = s.dmg;
-        if (s.src != null && s.src.material == Defs.MAT_DIAMOND && rnd.nextFloat() < 0.15f) {
+        Planet src = s.src;
+        if (src != null && src.material == Defs.MAT_DIAMOND && rnd.nextFloat() < 0.15f) {
             dmg *= 2f;
             text(e.x, e.y - 50, "CRIT!", 0xFF9EF6FF);
         }
+        if (src != null && !s.mini) {
+            if (src.art == Defs.MOON_FROST && e.slowT > 0) dmg *= 1.1f;
+            if (src.art == Defs.MOON_VOID && (e.boss || e.mini)) dmg *= 1.25f;
+            if (src.enchant == Defs.EN_OVERCHARGE && ++src.overShots % 5 == 0) {
+                dmg *= 2.5f;
+                text(e.x, e.y - 50, "OVERCHARGE", 0xFFFFE27A);
+                ring(e.x, e.y, 0xFFFFE27A, 120);
+            }
+            if (src.evo && ++src.evoShots % 4 == 0) dmg = evoStrike(e, dmg, src);
+        }
+        if (src != null && src.material == Defs.MAT_OBSIDIAN && e.shield > 0) {
+            // obsidian cuts through half of the shield
+            float pierce = Math.min(e.shield, dmg * 0.5f);
+            e.hp -= pierce;
+            dmg -= pierce;
+        }
         damage(e, dmg, s.src);
+        if (src != null && !s.mini) {
+            if (src.art == Defs.MOON_FROST) applySlow(e, 0.2f, 1.2f);
+            if (src.enchant == Defs.EN_FROSTBITE) applySlow(e, 0.15f, 1.2f);
+            if (src.material == Defs.MAT_STELLARIUM && ++src.chainShots % 6 == 0) chain(e, dmg * 0.6f, src);
+        }
         if (s.burnDps > 0) applyBurn(e, s.burnDps, s.burnDur);
         else if (s.src != null && s.src.hellMoon) applyBurn(e, dmg * 0.6f * fireMul(s.src), 2.5f); // Hell Moon: every hit burns
         if (s.slowAmt > 0) applySlow(e, s.slowAmt, s.slowDur);
@@ -843,15 +889,7 @@ final class Game {
             text(e.x, e.y - 40, "STUN", 0xFF7DF3FF);
         }
         if (s.src != null && !s.mini) applyMaterialOnHit(e, dmg, s.src);
-        if (s.src != null && s.src.evo && !s.mini && ++s.src.evoShots % 4 == 0) {
-            // Gaia quake: stun everything around the target
-            for (Enemy o : enemies) {
-                if (o.dead || o.phased || dist(e.x, e.y, o.x, o.y) > 140 + o.radius) continue;
-                o.stunT = Math.max(o.stunT, o.boss ? 0.3f : o.mini ? 0.6f : 1.0f);
-            }
-            ring(e.x, e.y, 0xFF7CFF8A, 280);
-            for (int k = 0; k < 10; k++) particle(e.x, e.y, k % 2 == 0 ? 0xFF7CFF8A : 0xFFB88A4F, 220);
-        }
+
         int c;
         switch (s.kind) {
             case Defs.K_SMOKE: c = 0xFFFF4D3D; puff(e.x, e.y, 0x99FF3B2F); break;
@@ -862,6 +900,65 @@ final class Game {
         }
         for (int k = 0; k < 3; k++) particle(e.x, e.y, c, 140);
     }
+
+    /** each evolved planet's 4th-shot special; returns the (maybe boosted) damage */
+    float evoStrike(Enemy e, float dmg, Planet p) {
+        switch (p.type) {
+            case Defs.MARS:
+                for (Enemy o : enemies) {
+                    if (o.dead || o.phased || dist(e.x, e.y, o.x, o.y) > 140 + o.radius) continue;
+                    applyBurn(o, dmg * 0.5f * fireMul(p), 3f);
+                }
+                ring(e.x, e.y, 0xFFFF6A2B, 280);
+                for (int k = 0; k < 10; k++) particle(e.x, e.y, k % 2 == 0 ? 0xFFFF6A2B : 0xFFFFD23F, 220);
+                return dmg;
+            case Defs.NEPTUNE:
+                for (Enemy o : enemies) {
+                    if (o.dead || o.phased || dist(e.x, e.y, o.x, o.y) > 160 + o.radius) continue;
+                    applySlow(o, 0.5f, 2f);
+                }
+                ring(e.x, e.y, 0xFF5EC8FF, 320);
+                for (int k = 0; k < 10; k++) particle(e.x, e.y, 0xFF9BEFFF, 240);
+                return dmg;
+            case Defs.MOON:
+                text(e.x, e.y - 50, "ECLIPSE", 0xFFC58CFF);
+                ring(e.x, e.y, 0xFF8A4BFF, 140);
+                return dmg * 3f;
+            case Defs.SATELLITE:
+                ring(e.x, e.y, 0xFFFFD23F, 120);
+                return dmg * 2f;
+            default: // Gaia quake: stun everything around the target
+                for (Enemy o : enemies) {
+                    if (o.dead || o.phased || dist(e.x, e.y, o.x, o.y) > 140 + o.radius) continue;
+                    o.stunT = Math.max(o.stunT, o.boss ? 0.3f : o.mini ? 0.6f : 1.0f);
+                }
+                ring(e.x, e.y, 0xFF7CFF8A, 280);
+                for (int k = 0; k < 10; k++) particle(e.x, e.y, k % 2 == 0 ? 0xFF7CFF8A : 0xFFB88A4F, 220);
+                return dmg;
+        }
+    }
+
+    /** Stellarium: bounce to the two nearest other enemies */
+    void chain(Enemy from, float dmg, Planet src) {
+        int n = 0;
+        for (int k = 0; k < 2; k++) {
+            Enemy best = null;
+            float bd = 260;
+            for (Enemy o : enemies) {
+                if (o == from || o.dead || o.phased || o.chainMark == chainId + 1) continue;
+                float d = dist(from.x, from.y, o.x, o.y);
+                if (d < bd) { bd = d; best = o; }
+            }
+            if (best == null) break;
+            best.chainMark = chainId + 1;
+            beam(from.x, from.y, best.x, best.y, 0xFFFF7AE0);
+            damage(best, dmg, src);
+            n++;
+        }
+        chainId++;
+    }
+
+    int chainId;
 
     void applyMaterialOnHit(Enemy e, float dmg, Planet p) {
         if (p.material == Defs.MAT_URANIUM && !e.dead) {
@@ -907,8 +1004,11 @@ final class Game {
         }
     }
 
+    int kills, placedCount;
+
     void kill(Enemy e, Planet src) {
         e.dead = true;
+        kills++;
         Sfx.play(e.boss || e.mini ? Sfx.BOSS_KILL : Sfx.KILL, 0.9f + rnd.nextFloat() * 0.25f);
         boolean big = e.boss || e.mini;
         int c = e.boss ? 0xFFB86BFF : 0xFFFFB35C;
@@ -916,7 +1016,16 @@ final class Game {
         for (int i = 0; i < (big ? 40 : 8); i++) particle(e.x, e.y, c, big ? 400 : 200);
         if (src != null) {
             src.kills++;
-            float spChance = (src.enchant == Defs.EN_MIDAS ? 0.2f : 0f) + (src.material == Defs.MAT_GOLD ? 0.25f : 0f);
+            float spChance = (src.enchant == Defs.EN_MIDAS ? 0.2f : 0f) + (src.material == Defs.MAT_GOLD ? 0.25f : 0f) + (src.art == Defs.MOON_GOLD ? 0.1f : 0f);
+            if (src.enchant == Defs.EN_NOVA) {
+                // nova: the kill explodes on its neighbours
+                float boom = e.maxHp * 0.3f;
+                ring(e.x, e.y, 0xFFFFB0F0, 200);
+                for (Enemy o : enemies) {
+                    if (o == e || o.dead || o.phased || dist(e.x, e.y, o.x, o.y) > 130 + o.radius) continue;
+                    novaQueue.add(new Object[]{o, Math.min(boom, dmgOf(src) * 3f), src});
+                }
+            }
             if (spChance > 0 && rnd.nextFloat() < spChance) {
                 stars++;
                 starText(e.x, e.y - 30, 1);
@@ -1179,6 +1288,21 @@ final class Game {
         f.color = color;
         fx.add(f);
     }
+
+    void beam(float x, float y, float x2, float y2, int color) {
+        Fx f = new Fx();
+        f.kind = Fx.BEAM;
+        f.x = x;
+        f.y = y;
+        f.x2 = x2;
+        f.y2 = y2;
+        f.life = f.maxLife = 0.25f;
+        f.color = color;
+        fx.add(f);
+    }
+
+    /** damage queued by kills (Nova), applied after the current hit finishes */
+    final java.util.ArrayList<Object[]> novaQueue = new java.util.ArrayList<>();
 
     void ring(float x, float y, int color, float size) {
         Fx f = new Fx();

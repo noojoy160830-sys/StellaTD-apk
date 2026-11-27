@@ -26,6 +26,16 @@ final class Profile {
     final int[] moons = new int[Defs.MOON_COUNT];
     final int[] moonOn = new int[Defs.P_COUNT];
     final boolean[] evolved = new boolean[Defs.P_COUNT];
+    // daily missions + login calendar
+    int missionDay, loginStreak;
+    // bag items (Items), challenge completion stamps
+    final int[] items = new int[Items.COUNT];
+    int dailyDone, weeklyDone;
+    /** last challenge reward text (shown on the result screen) */
+    String lastChallengeReward;
+    final int[] missionType = new int[Missions.PER_DAY], missionProg = new int[Missions.PER_DAY];
+    final boolean[] missionDone = new boolean[Missions.PER_DAY];
+    boolean missionBonus;
     /** Base64 JPEG profile photo (used when avatar == -1) */
     String photo;
     final boolean[] owned = new boolean[Defs.P_COUNT];
@@ -91,6 +101,21 @@ final class Profile {
         System.arraycopy(so, 0, skinOn, 0, Defs.P_COUNT);
         int[] mo = ints(sp.getString("moons", null), Defs.MOON_COUNT, 0);
         System.arraycopy(mo, 0, moons, 0, Defs.MOON_COUNT);
+        int[] it = ints(sp.getString("items", null), Items.COUNT, 0);
+        System.arraycopy(it, 0, items, 0, Items.COUNT);
+        dailyDone = sp.getInt("dailyDone", 0);
+        weeklyDone = sp.getInt("weeklyDone", 0);
+        missionDay = sp.getInt("missionDay", 0);
+        loginStreak = sp.getInt("loginStreak", 0);
+        missionBonus = sp.getBoolean("missionBonus", false);
+        int[] mt = ints(sp.getString("missionType", null), Missions.PER_DAY, 0);
+        int[] mp = ints(sp.getString("missionProg", null), Missions.PER_DAY, 0);
+        int[] md = ints(sp.getString("missionDone", null), Missions.PER_DAY, 0);
+        for (int i = 0; i < Missions.PER_DAY; i++) {
+            missionType[i] = Math.max(0, Math.min(Missions.COUNT - 1, mt[i]));
+            missionProg[i] = mp[i];
+            missionDone[i] = md[i] == 1;
+        }
         int[] ev = ints(sp.getString("evolved", null), Defs.P_COUNT, 0);
         for (int i = 0; i < Defs.P_COUNT; i++) evolved[i] = ev[i] == 1 && Defs.canEvolve(i);
         int[] mq = ints(sp.getString("moonOn", null), Defs.P_COUNT, -1);
@@ -164,6 +189,17 @@ final class Profile {
         m.put("skinOn", str(skinOn));
         m.put("moons", str(moons));
         m.put("moonOn", str(moonOn));
+        m.put("items", str(items));
+        m.put("dailyDone", dailyDone);
+        m.put("weeklyDone", weeklyDone);
+        m.put("missionDay", missionDay);
+        m.put("loginStreak", loginStreak);
+        m.put("missionBonus", missionBonus);
+        m.put("missionType", str(missionType));
+        m.put("missionProg", str(missionProg));
+        int[] mdn = new int[Missions.PER_DAY];
+        for (int i = 0; i < Missions.PER_DAY; i++) mdn[i] = missionDone[i] ? 1 : 0;
+        m.put("missionDone", str(mdn));
         int[] evs = new int[Defs.P_COUNT];
         for (int i = 0; i < Defs.P_COUNT; i++) evs[i] = evolved[i] ? 1 : 0;
         m.put("evolved", str(evs));
@@ -253,6 +289,183 @@ final class Profile {
 
     boolean giftReady() { return giftDay != today(); }
 
+    /** id of the current week (Monday start) */
+    static int week() {
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        cal.setFirstDayOfWeek(java.util.Calendar.MONDAY);
+        cal.setMinimalDaysInFirstWeek(4);
+        return cal.get(java.util.Calendar.YEAR) * 60 + cal.get(java.util.Calendar.WEEK_OF_YEAR);
+    }
+
+    boolean dailyReady() { return dailyDone != today(); }
+
+    boolean weeklyReady() { return weeklyDone != week(); }
+
+    // ---------------------------------------------------------------- bag items
+    /** open an Artifact Capsule; returns the artifact index or -1 */
+    int openArtifactCapsule() {
+        if (items[Items.ART_CAPSULE] <= 0) return -1;
+        items[Items.ART_CAPSULE]--;
+        int a = Items.rollArtifact(rnd);
+        moons[a]++;
+        track(Missions.PULL, 1);
+        save();
+        return a;
+    }
+
+    /** open a Supply Capsule; returns {kind, amount} (kind as in Items.SUPPLY_TABLE) or null */
+    int[] openSupply() {
+        if (items[Items.SUPPLY] <= 0) return null;
+        items[Items.SUPPLY]--;
+        int sum = 0;
+        for (int[] row : Items.SUPPLY_TABLE) sum += row[1];
+        int x = rnd.nextInt(sum);
+        int[] pick = Items.SUPPLY_TABLE[0];
+        for (int[] row : Items.SUPPLY_TABLE) { x -= row[1]; if (x < 0) { pick = row; break; } }
+        int n = pick[2] + rnd.nextInt(pick[3] - pick[2] + 1);
+        switch (pick[0]) {
+            case 0: stars += n; break;
+            case 1: millite += n; break;
+            case 2: crystals += n; break;
+            case 3: items[Items.STARDUST] += n; break;
+            default: items[Items.NEBULA] += n;
+        }
+        track(Missions.PULL, 1);
+        save();
+        return new int[]{pick[0], n};
+    }
+
+    int have(int id) {
+        switch (id) {
+            case -1: return stars;
+            case -2: return millite;
+            case -3: return oil;
+            default: return items[id];
+        }
+    }
+
+    void take(int id, int n) {
+        switch (id) {
+            case -1: stars -= n; break;
+            case -2: millite -= n; break;
+            case -3: oil -= n; break;
+            default: items[id] -= n;
+        }
+    }
+
+    boolean canCraft(int r) {
+        for (int[] in : Items.RECIPE_IN[r]) if (have(in[0]) < in[1]) return false;
+        return true;
+    }
+
+    String craft(int r) {
+        if (!canCraft(r)) return L.t("วัตถุดิบไม่พอ", "Not enough materials");
+        for (int[] in : Items.RECIPE_IN[r]) take(in[0], in[1]);
+        items[Items.RECIPE_OUT[r]]++;
+        save();
+        return null;
+    }
+
+    /** buy Raid shop row i; returns null on success */
+    String buyRaidShop(int i) {
+        int[] row = Defs.RAID_SHOP[i];
+        if (oil < row[1]) return L.t("Crystal Oil ไม่พอ", "Not enough Crystal Oil");
+        oil -= row[1];
+        if (row[0] == -100) raidCapsules++;
+        else if (row[0] <= -10) moons[-10 - row[0]]++;
+        else items[row[0]]++;
+        save();
+        return null;
+    }
+
+    /** today's login-calendar slot (0..6) */
+    int loginSlot() { return loginStreak % 7; }
+
+    /** claim today's login reward; returns a description or null when already claimed */
+    String claimLogin() {
+        if (!giftReady()) return null;
+        int[] r = Missions.LOGIN[loginSlot()];
+        String s = grant(r[0], r[1]);
+        if (loginSlot() == 6) { crystals += Missions.LOGIN_DAY7_CRYSTAL; s += " + " + Missions.LOGIN_DAY7_CRYSTAL + " Crystal"; }
+        loginStreak++;
+        giftDay = today();
+        save();
+        return s;
+    }
+
+    /** kind: 0 Star, 1 Crystal, 2 Crystal Oil, 3 Raid Capsule */
+    String grant(int kind, int n) {
+        switch (kind) {
+            case 1: crystals += n; return n + " Crystal";
+            case 2: oil += n; return n + " Crystal Oil";
+            case 3: raidCapsules += n; return n + " Raid Capsule";
+            case 4: case 5: case 6: case 7: case 8: items[kind - 4] += n; return n + " " + Items.NAME[kind - 4];
+            default: stars += n; return n + " Star";
+        }
+    }
+
+    /** roll a fresh set of missions on a new day */
+    void refreshMissions() {
+        int d = today();
+        if (missionDay == d) return;
+        missionDay = d;
+        int[] t = Missions.pick(d, wins >= 15);
+        for (int i = 0; i < Missions.PER_DAY; i++) { missionType[i] = t[i]; missionProg[i] = 0; missionDone[i] = false; }
+        missionBonus = false;
+        save();
+    }
+
+    /** add progress to every open mission of this type (RAIDWAVE keeps the best value) */
+    void track(int type, int amount) {
+        if (amount <= 0) return;
+        refreshMissions();
+        for (int i = 0; i < Missions.PER_DAY; i++) {
+            if (missionType[i] != type || missionDone[i]) continue;
+            missionProg[i] = type == Missions.RAIDWAVE ? Math.max(missionProg[i], amount) : missionProg[i] + amount;
+            missionProg[i] = Math.min(missionProg[i], Missions.TARGET[type]);
+        }
+    }
+
+    boolean missionReady(int i) { return !missionDone[i] && missionProg[i] >= Missions.TARGET[missionType[i]]; }
+
+    boolean anyMissionClaim() {
+        refreshMissions();
+        for (int i = 0; i < Missions.PER_DAY; i++) if (missionReady(i)) return true;
+        return bonusReady();
+    }
+
+    boolean bonusReady() {
+        if (missionBonus) return false;
+        for (boolean b : missionDone) if (!b) return false;
+        return true;
+    }
+
+    String claimMission(int i) {
+        if (!missionReady(i)) return null;
+        int t = missionType[i];
+        missionDone[i] = true;
+        String s = grant(Missions.REWARD_KIND[t] == 2 ? 2 : Missions.REWARD_KIND[t], Missions.REWARD[t]);
+        save();
+        return s;
+    }
+
+    String claimBonus() {
+        if (!bonusReady()) return null;
+        missionBonus = true;
+        crystals += Missions.BONUS_CRYSTAL;
+        raidCapsules += Missions.BONUS_CAPSULE;
+        items[Items.NEBULA]++;
+        save();
+        return Missions.BONUS_CRYSTAL + " Crystal + " + Missions.BONUS_CAPSULE + " Raid Capsule + 1 Nebula Core";
+    }
+
+    /** true when any owned planet can be upgraded right now */
+    boolean anyUpgrade() {
+        for (int t = 0; t < Defs.P_COUNT; t++)
+            if (owned[t] && level[t] < MAX_LV && copies[t] >= upgradeCopies(t) && stars >= upgradeStars(t)) return true;
+        return false;
+    }
+
     boolean claimGift() {
         if (!giftReady()) return false;
         giftDay = today();
@@ -299,6 +512,7 @@ final class Profile {
         int cost = count >= 10 ? PULL10 : PULL1 * count;
         if (stars < cost) return null;
         stars -= cost;
+        track(Missions.PULL, count);
         int[] res = new int[count];
         lastNew = new boolean[count];
         for (int i = 0; i < count; i++) {
@@ -341,6 +555,7 @@ final class Profile {
         int cost = count >= 10 ? Defs.CAPSULE_OIL_10 : Defs.CAPSULE_OIL * count;
         if (oil < cost) return null;
         oil -= cost;
+        track(Missions.PULL, count);
         int[] res = new int[count];
         lastNew = new boolean[count];
         for (int i = 0; i < count; i++) {
@@ -395,10 +610,11 @@ final class Profile {
         if (!owned[t]) return L.t("ยังไม่มีดาวนี้", "You don't own it");
         if (evolved[t]) return L.t("วิวัฒน์แล้ว", "Already evolved");
         if (level[t] < MAX_LV) return L.t("ต้องอัปเกรดถึง Lv " + MAX_LV + " ก่อน", "Reach Lv " + MAX_LV + " first");
-        if (stars < Defs.EVO_STARS || millite < Defs.EVO_MILLITE)
-            return L.t("ต้องใช้ " + Defs.EVO_STARS + " Star + " + Defs.EVO_MILLITE + " Millite", "Needs " + Defs.EVO_STARS + " Star + " + Defs.EVO_MILLITE + " Millite");
+        int need = Defs.evoCatalysts(t);
+        if (stars < Defs.EVO_STARS || items[Items.CATALYST] < need)
+            return L.t("ต้องใช้ " + need + " Evo Catalyst + " + Defs.EVO_STARS + " Star", "Needs " + need + " Evo Catalyst + " + Defs.EVO_STARS + " Star");
         stars -= Defs.EVO_STARS;
-        millite -= Defs.EVO_MILLITE;
+        items[Items.CATALYST] -= need;
         evolved[t] = true;
         save();
         return null;
@@ -418,7 +634,8 @@ final class Profile {
     String equipMoon(int planet, int m) {
         if (m < 0) { moonOn[planet] = -1; save(); return null; }
         if (moonOn[planet] == m) return null;
-        if (moonsFree(m) <= 0) return L.t("ไม่มี " + Defs.MOON_NAME[m] + " ว่าง (ซื้อที่ร้าน Raid)", "No free " + Defs.MOON_NAME[m] + " (buy one in the Raid shop)");
+        if (moonsFree(m) <= 0)
+            return L.t(Defs.MOON_NAME[m] + " ทุกชิ้นใส่อยู่แล้ว • ถอดจากดาวอื่นก่อน หรือหาเพิ่ม", "Every " + Defs.MOON_NAME[m] + " is in use • remove it from another planet or get another one");
         moonOn[planet] = m;
         save();
         return null;
@@ -485,6 +702,7 @@ final class Profile {
         copies[t] -= upgradeCopies(t);
         stars -= upgradeStars(t);
         level[t]++;
+        track(Missions.UPGRADE, 1);
         save();
         return null;
     }
@@ -539,10 +757,26 @@ final class Profile {
         bossKills += g.bossKills;
         games++;
         int reached = g.won ? g.wave : Math.max(0, g.wave - 1);
-        if (reached > best[g.stage]) best[g.stage] = reached;
+        if (g.challenge == 0 && reached > best[g.stage]) best[g.stage] = reached;
         firstClear = false;
         heroUnlocked = false;
-        if (g.won && g.stage != Defs.RAID) {
+        lastChallengeReward = null;
+        if (g.challenge != 0 && g.won) {
+            if (g.challenge == 1 && dailyReady()) {
+                dailyDone = today();
+                items[Items.STARDUST] += 8;
+                items[Items.NEBULA] += 1;
+                stars += 500;
+                lastChallengeReward = "8 Stardust • 1 Nebula Core • 500 Star";
+            } else if (g.challenge == 2 && weeklyReady()) {
+                weeklyDone = week();
+                items[Items.CATALYST] += 1;
+                items[Items.NEBULA] += 3;
+                oil += 40;
+                lastChallengeReward = "1 Evo Catalyst • 3 Nebula Core • 40 Crystal Oil";
+            }
+        }
+        if (g.won && g.stage != Defs.RAID && g.challenge == 0) {
             if (!clear[g.stage]) {
                 // first clear bonus
                 firstClear = true;
@@ -558,6 +792,14 @@ final class Profile {
                 autoEquip(Defs.HERO);
             }
         }
+        // daily missions
+        track(Missions.KILL, g.kills);
+        track(Missions.PLAY, 1);
+        if (g.won) track(Missions.WIN, 1);
+        track(Missions.BOSS, g.bossKills);
+        track(Missions.PLACE, g.placedCount);
+        if (g.stage == Defs.RAID) track(Missions.RAIDWAVE, g.won ? Defs.RAID_WAVES : g.wave);
+        if (firstClear) track(Missions.STAGE, 1);
         save();
     }
 }

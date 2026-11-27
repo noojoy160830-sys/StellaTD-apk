@@ -15,6 +15,8 @@ final class Planet {
     int spirits;
     /** King aura is on this planet / Hell Moon equipped */
     boolean king, hellMoon, evo;
+    int art = -1, overShots, chainShots;
+    float rangeMul = 1f;
     int evoShots;
     /** skin style shown on the map (-1 = none) */
     int skin = -1;

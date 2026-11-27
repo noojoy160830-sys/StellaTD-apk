@@ -121,3 +121,14 @@
 - Stella Console หน้าตาใหม่แบบแดชบอร์ด, ใส่รหัสครั้งเดียวแล้วเครื่องนั้นเข้าได้ทันทีทุกครั้ง (ล็อกได้ในแท็บเซิร์ฟเวอร์)
 - Stella Console ไม่ถูกปล่อยในหน้า Releases อีก: อยู่ใน StellaConsole-owner.zip (เข้ารหัส AES) ใน Actions เปิดได้ด้วยรหัส STELLA_KS_PASS ของเจ้าของเท่านั้น
 - database.rules.json ใหม่: มีแค่บัญชี console ที่แก้ข้อมูลผู้เล่น/เซิร์ฟเวอร์ได้
+
+## v3.5
+- กระเป๋าเป็นศูนย์รวมของ: Capsule (Raid / Artifact / Supply) แตะเลือกแล้วเปิดได้, ไอเทม + ระบบคราฟ, Artifact, สกิน
+- Artifact ใหม่ 4 ชิ้น (Frost, Storm, Gold, Void Moon) ใส่ได้ 1 ชิ้นต่อดาว และ 1 ชิ้นใส่ได้ดวงเดียว
+- ไอเทมใหม่: Stardust, Nebula Core, Evo Catalyst, Artifact Capsule, Supply Capsule
+- ร้านค้า Raid มีของเพิ่ม (Capsule ทุกแบบ, วัตถุดิบวิวัฒน์, Hell/Void Moon)
+- Enchant ใหม่ 3 (Frostbite, Overcharge, Nova) และ Material ใหม่ 3 (Mythril, Obsidian, Stellarium)
+- วิวัฒน์ได้ 5 ดวง (Earth, Mars, Neptune, Moon, Satellite) ใช้ Evo Catalyst
+- กิจกรรม: Daily / Weekly Challenge (มีตัวปรับความยาก), ภารกิจรายวัน, ปฏิทินล็อกอิน 7 วัน
+- โมเดล Smart / Savior / Commander Satellite ใหม่ไม่ซ้ำกัน
+- แบนเนอร์: ปุ่มสลับแบนเนอร์และปุ่มอัตราย้ายไปด้านล่าง

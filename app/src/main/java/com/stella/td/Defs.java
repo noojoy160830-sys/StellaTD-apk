@@ -151,26 +151,33 @@ final class Defs {
     static final int CAPSULE_OIL = 30, CAPSULE_OIL_10 = 270;
 
     // ---------- equipment: moons ----------
-    static final int MOON_HELL = 0, MOON_COUNT = 1;
-    static final String[] MOON_NAME = {"Hell Moon"};
-    static final String[] MOON_DESC = {"+10% ดาเมจไฟ และทุกการโจมตีติดไฟ 100%"};
-    static final String[] MOON_DESC_EN = {"+10% fire damage and every hit sets enemies on fire"};
-    static final int[] MOON_COLOR = {0xFFFF4B2B};
+    static final int MOON_HELL = 0, MOON_FROST = 1, MOON_STORM = 2, MOON_GOLD = 3, MOON_VOID = 4, MOON_COUNT = 5;
+    static final String[] MOON_NAME = {"Hell Moon", "Frost Moon", "Storm Moon", "Gold Moon", "Void Moon"};
+    static final String[] MOON_DESC = {"+10% ดาเมจไฟ และทุกการโจมตีติดไฟ 100%", "ทุกการโจมตีทำให้ศัตรูช้าลง 20% และ +10% ดาเมจใส่ศัตรูที่ช้าอยู่",
+            "+12% ความเร็วโจมตี", "+20% การผลิต SP, ฆ่าศัตรูมีโอกาส 10% ได้ 1 SP", "+25% ดาเมจใส่บอสและมินิบอส"};
+    static final String[] MOON_DESC_EN = {"+10% fire damage and every hit sets enemies on fire", "Every hit slows 20%; +10% damage to slowed enemies",
+            "+12% attack speed", "+20% SP production; kills have 10% to give 1 SP", "+25% damage to bosses and mini bosses"};
+    static final int[] MOON_COLOR = {0xFFFF4B2B, 0xFF7FE0FF, 0xFFB86BFF, 0xFFFFC83A, 0xFF8A4BFF};
+    /** recolour hue for each artifact's moon sprite (Hell uses its own lava art) */
+    static final float[] MOON_HUE = {0, 195, 275, 45, 265};
     /** Raid shop prices (Crystal Oil) */
     static final int SHOP_CAPSULE = 40, SHOP_HELLMOON = 350;
+    /** Raid shop: item id (Items) or -10 - artifact, price in Crystal Oil */
+    static final int[][] RAID_SHOP = {{-100, 40}, {Items.ART_CAPSULE, 150}, {Items.SUPPLY, 60}, {Items.NEBULA, 80}, {Items.CATALYST, 260},
+            {-10 - MOON_HELL, 350}, {-10 - MOON_VOID, 300}};
 
     // ---------- enchants (Factory, rolled with Millite) ----------
     static final int EN_STRONG = 0, EN_REACH = 1, EN_MOVING = 2, EN_LIGHTNING = 3, EN_STORM = 4, EN_TECH = 5,
             EN_MIDAS = 6, EN_ELECTRO = 7, EN_CRYSTALRAIN = 8, EN_MOON = 9, EN_GALACIA = 10, EN_LAVA = 11,
-            EN_MEGALONIA = 12, EN_GIANTTIC = 13, EN_GALAXIA = 14;
-    static final int EN_COUNT = 15;
+            EN_MEGALONIA = 12, EN_GIANTTIC = 13, EN_GALAXIA = 14, EN_FROSTBITE = 15, EN_OVERCHARGE = 16, EN_NOVA = 17;
+    static final int EN_COUNT = 18;
     static final String[] EN_NAME = {"Strong", "Reach", "Moving", "Lightning", "Storm", "Technology", "Midas", "Electro",
-            "Crystal Rain", "Moon", "Galacia", "Lava", "Megalonia", "Gianttic", "Galaxia"};
+            "Crystal Rain", "Moon", "Galacia", "Lava", "Megalonia", "Gianttic", "Galaxia", "Frostbite", "Overcharge", "Nova"};
     static final int[] EN_RARITY = {COMMON, COMMON, COMMON, RARE, RARE, RARE, EPIC, EPIC, EPIC, LEGEND, LEGEND, LEGEND,
-            MYTHIC, MYTHIC, GALAXY};
+            MYTHIC, MYTHIC, GALAXY, RARE, EPIC, LEGEND};
     /** number of tiers (0 = no tiers) */
-    static final int[] EN_TIERS = {3, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    static final float[] EN_CHANCE = {20f, 20f, 20f, 8.33f, 8.33f, 8.34f, 3.33f, 3.33f, 3.34f, 1.33f, 1.33f, 1.34f, 0.45f, 0.45f, 0.1f};
+    static final int[] EN_TIERS = {3, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    static final float[] EN_CHANCE = {16.74f, 16.73f, 16.73f, 8f, 8f, 8f, 3f, 3f, 3f, 1.2f, 1.2f, 1.2f, 0.45f, 0.45f, 0.1f, 8f, 3f, 1.2f};
     static final float[] STRONG_T = {0.05f, 0.07f, 0.10f}, REACH_T = {0.06f, 0.12f}, MOVING_T = {0.04f, 0.08f, 0.12f};
     static final String[] EN_DESC = {
             "+5 / 7 / 10% ดาเมจ", "+6 / 12% ระยะ", "+4 / 8 / 12% ความเร็วโจมตี",
@@ -180,7 +187,8 @@ final class Defs {
             "+10% ดาเมจ น้ำแข็ง stun นานและบ่อยขึ้น", "+10% ดาเมจ ไฟแรงขึ้นและติดนานขึ้น",
             "+17% ดาเมจ ระยะ ความเร็ว ถ้าเป็นไฟ/น้ำแข็ง สถานะแรงขึ้น 15% และนานขึ้น",
             "+30% ดาเมจ -15% ความเร็ว ฆ่าบอสแต่ละตัว +5% ดาเมจ",
-            "+50% ดาเมจ +20% ความเร็ว ฆ่าบอสจะเรียกบอสตัวนั้นมาสู้ให้ (เลือด 50%)"};
+            "+50% ดาเมจ +20% ความเร็ว ฆ่าบอสจะเรียกบอสตัวนั้นมาสู้ให้ (เลือด 50%)",
+            "+10% ดาเมจ ทุกการโจมตีทำให้ศัตรูช้าลง 15%", "ทุกการโจมตีครั้งที่ 5 แรงขึ้น x2.5", "+12% ดาเมจ +12% ระยะ ศัตรูที่ตายระเบิดใส่รอบ ๆ 30%"};
     static final String[] EN_DESC_EN = {
             "+5 / 7 / 10% damage", "+6 / 12% range", "+4 / 8 / 12% attack speed",
             "+15% attack speed", "+15% range", "+15% damage",
@@ -189,28 +197,33 @@ final class Defs {
             "+10% damage; ice stuns longer and more often", "+10% damage; fire burns harder and longer",
             "+17% damage, range, speed; fire/ice status +15% and longer",
             "+30% damage -15% speed; each boss kill +5% damage",
-            "+50% damage +20% speed; boss kills summon that boss as an ally (50% HP)"};
+            "+50% damage +20% speed; boss kills summon that boss as an ally (50% HP)",
+            "+10% damage; every hit slows 15%", "Every 5th attack hits x2.5", "+12% damage +12% range; kills explode for 30% around them"};
 
     // ---------- materials (Lab, rolled with Crystal) ----------
     static final int MAT_IRON = 0, MAT_COPPER = 1, MAT_QUARTZ = 2, MAT_TITANIUM = 3, MAT_COBALT = 4, MAT_GOLD = 5,
-            MAT_PLATINUM = 6, MAT_URANIUM = 7, MAT_GRAPHENE = 8, MAT_DIAMOND = 9;
-    static final int MAT_COUNT = 10;
-    static final String[] MAT_NAME = {"Iron", "Copper", "Quartz", "Titanium", "Cobalt", "Gold", "Platinum", "Uranium", "Graphene", "Diamond"};
-    static final String[] MAT_NAME_TH = {"เหล็ก", "ทองแดง", "ควอตซ์", "ไทเทเนียม", "โคบอลต์", "ทองคำ", "แพลทินัม", "ยูเรเนียม", "กราฟีน", "เพชร"};
-    static final String[] MAT_SYM = {"Fe", "Cu", "Si", "Ti", "Co", "Au", "Pt", "U", "C", ""};
-    static final int[] MAT_RARITY = {COMMON, COMMON, COMMON, RARE, RARE, EPIC, EPIC, LEGEND, LEGEND, MYTHIC};
+            MAT_PLATINUM = 6, MAT_URANIUM = 7, MAT_GRAPHENE = 8, MAT_DIAMOND = 9, MAT_MYTHRIL = 10, MAT_OBSIDIAN = 11, MAT_STELLARIUM = 12;
+    static final int MAT_COUNT = 13;
+    static final String[] MAT_NAME = {"Iron", "Copper", "Quartz", "Titanium", "Cobalt", "Gold", "Platinum", "Uranium", "Graphene", "Diamond",
+            "Mythril", "Obsidian", "Stellarium"};
+    static final String[] MAT_NAME_TH = {"เหล็ก", "ทองแดง", "ควอตซ์", "ไทเทเนียม", "โคบอลต์", "ทองคำ", "แพลทินัม", "ยูเรเนียม", "กราฟีน", "เพชร",
+            "มิธริล", "ออบซิเดียน", "สเตลลาเรียม"};
+    static final String[] MAT_SYM = {"Fe", "Cu", "Si", "Ti", "Co", "Au", "Pt", "U", "C", "", "Mi", "Ob", "St"};
+    static final int[] MAT_RARITY = {COMMON, COMMON, COMMON, RARE, RARE, EPIC, EPIC, LEGEND, LEGEND, MYTHIC, RARE, LEGEND, MYTHIC};
     static final int[] MAT_COLOR = {0xFF9AA3B5, 0xFFE07A3C, 0xFFF6C8EA, 0xFFB8C8E0, 0xFF3F66E0, 0xFFFFC83A, 0xFFE8EEF8,
-            0xFF7CFF4A, 0xFF4A505E, 0xFF9EF6FF};
-    static final float[] MAT_DMG = {0.15f, 0f, 0f, 0.25f, 0f, 0.10f, 0.20f, 0.40f, 0f, 0.35f};
-    static final float[] MAT_RNG = {0f, 0f, 0.15f, 0.10f, 0f, 0f, 0.20f, 0f, 0.20f, 0.35f};
-    static final float[] MAT_SPA = {0f, 0.15f, 0f, 0f, 0.30f, 0f, 0.20f, 0f, 0.40f, 0.35f};
-    static final float[] MAT_CHANCE = {17.33f, 17.33f, 17.34f, 14f, 14f, 6.5f, 6.5f, 3f, 3f, 1f};
+            0xFF7CFF4A, 0xFF4A505E, 0xFF9EF6FF, 0xFF8FE8D8, 0xFF3A1E4A, 0xFFFF7AE0};
+    static final float[] MAT_DMG = {0.15f, 0f, 0f, 0.25f, 0f, 0.10f, 0.20f, 0.40f, 0f, 0.35f, 0.15f, 0.30f, 0.30f};
+    static final float[] MAT_RNG = {0f, 0f, 0.15f, 0.10f, 0f, 0f, 0.20f, 0f, 0.20f, 0.35f, 0f, 0.10f, 0.30f};
+    static final float[] MAT_SPA = {0f, 0.15f, 0f, 0f, 0.30f, 0f, 0.20f, 0f, 0.40f, 0.35f, 0.15f, 0f, 0.30f};
+    static final float[] MAT_CHANCE = {16.17f, 16.17f, 16.16f, 12f, 12f, 6f, 6f, 2.5f, 2.5f, 1f, 6f, 2.5f, 1f};
     static final String[] MAT_DESC = {"+15% ดาเมจ", "+15% ความเร็วโจมตี", "+15% ระยะ", "+25% ดาเมจ +10% ระยะ", "+30% ความเร็วโจมตี",
             "+10% ดาเมจ ผลิต SP +60% ฆ่าศัตรู 25% ได้ SP", "+20% ดาเมจ ระยะ ความเร็ว", "+40% ดาเมจ ยิงโดนติดกัมมันตรังสี (ติดได้แม้ Hell Planet)",
-            "+40% ความเร็วโจมตี +20% ระยะ", "+35% ทุกค่า และ 15% คริติคอล x2"};
+            "+40% ความเร็วโจมตี +20% ระยะ", "+35% ทุกค่า และ 15% คริติคอล x2",
+            "+15% ดาเมจ +15% ความเร็วโจมตี", "+30% ดาเมจ +10% ระยะ ทะลุโล่ศัตรู 50%", "+30% ทุกค่า ทุกการโจมตีครั้งที่ 6 ยิงกระดอนไปอีก 2 ตัว"};
     static final String[] MAT_DESC_EN = {"+15% damage", "+15% attack speed", "+15% range", "+25% damage +10% range", "+30% attack speed",
             "+10% damage, +60% SP production, kills 25% give SP", "+20% damage, range, speed", "+40% damage, hits irradiate (even Hell Planet)",
-            "+40% attack speed +20% range", "+35% everything and 15% critical x2"};
+            "+40% attack speed +20% range", "+35% everything and 15% critical x2",
+            "+15% damage +15% attack speed", "+30% damage +10% range; ignores 50% of shields", "+30% everything; every 6th attack chains to 2 more enemies"};
 
     // ---------- enemies ----------
     static final int E_METEOR = 0, E_SHOOT = 1, E_MEGA = 2, E_EXOMOON = 3, E_ALTMOON = 4,
@@ -251,11 +264,54 @@ final class Defs {
     static final float[][] ST_PATH = new float[ST_COUNT + 1][], ST_SLOTS = new float[ST_COUNT + 1][];
 
     // ---- evolution: a few planets can evolve once they reach max level
-    static boolean canEvolve(int t) { return t == EARTH; }
-    static final int EVO_STARS = 5000, EVO_MILLITE = 30;
-    static String evoName(int t) { return t == EARTH ? "Gaia Earth" : P_NAME[t]; }
-    static final String EVO_DESC_TH = "ร่างวิวัฒน์: ดาเมจ +60%, ระยะ +15%, ยิงเร็วขึ้น 15% และทุกนัดที่ 4 เป็นแผ่นดินไหว สตันศัตรูรอบเป้า";
-    static final String EVO_DESC_EN = "Evolved: +60% damage, +15% range, 15% faster, every 4th shot is a quake that stuns nearby enemies";
+    static boolean canEvolve(int t) { return t == EARTH || t == MARS || t == NEPTUNE || t == MOON || t == SATELLITE; }
+    static final int EVO_STARS = 3000, EVO_MILLITE = 0;
+    /** Evo Catalysts needed: more for rarer planets */
+    static int evoCatalysts(int t) { return 1 + Math.min(3, P_RARITY[t]); }
+    static String evoName(int t) {
+        switch (t) {
+            case EARTH: return "Gaia Earth";
+            case MARS: return "Inferno Mars";
+            case NEPTUNE: return "Abyss Neptune";
+            case MOON: return "Eclipse Moon";
+            case SATELLITE: return "Satellite Mk-II";
+            default: return P_NAME[t];
+        }
+    }
+    static String evoDesc(int t) {
+        if (P_KIND[t] == K_PRODUCE)
+            return L.t("ร่างวิวัฒน์: ผลิต SP +60% และเร็วขึ้น 15%", "Evolved: +60% SP production and 15% faster");
+        String base = L.t("ร่างวิวัฒน์: ดาเมจ +60% ระยะ +15% ยิงเร็วขึ้น 15% • ทุกนัดที่ 4: ", "Evolved: +60% damage, +15% range, 15% faster • every 4th shot: ");
+        switch (t) {
+            case EARTH: return base + L.t("แผ่นดินไหว สตันศัตรูรอบเป้า", "a quake that stuns nearby enemies");
+            case MARS: return base + L.t("ระเบิดเพลิง เผาศัตรูรอบเป้า", "a fire burst that burns nearby enemies");
+            case NEPTUNE: return base + L.t("คลื่นยักษ์ ทำให้ศัตรูรอบเป้าช้าลง 50%", "a tidal wave that slows nearby enemies 50%");
+            case MOON: return base + L.t("สุริยุปราคา คริติคอล x3", "an eclipse critical hit x3");
+            case SATELLITE: return base + L.t("ยิงเลเซอร์คู่ ดาเมจ x2", "a twin laser for x2 damage");
+            default: return base;
+        }
+    }
+    /** hue (degrees) the evolved sprite is painted toward */
+    static float evoHue(int t) {
+        switch (t) {
+            case MARS: return 12;
+            case NEPTUNE: return 192;
+            case MOON: return 275;
+            case SATELLITE: return 45;
+            default: return 125;
+        }
+    }
+    static final String EVO_DESC_TH = "ร่างวิวัฒน์", EVO_DESC_EN = "Evolved form";
+
+    // ---- daily / weekly challenges
+    static final String[] CH_MOD = {"Swift", "Armored", "Short Sight", "Swarm"};
+    static final String[] CH_MOD_TH = {"ศัตรูเร็ว +35%", "ศัตรูเลือด +60%", "ระยะดาว -20%", "บอสทุก 5 เวฟ"};
+    static final String[] CH_MOD_EN = {"Enemies +35% speed", "Enemies +60% HP", "Planet range -20%", "Bosses every 5 waves"};
+    static final int DAILY_WAVES = 20, WEEKLY_WAVES = 30;
+    static int dailyMod(int day) { return Math.floorMod(day, CH_MOD.length); }
+    static int dailyStage(int day) { return 2 + Math.floorMod(day * 7, 16); }
+    static int[] weeklyMods(int week) { int a = Math.floorMod(week, CH_MOD.length); return new int[]{a, (a + 1 + Math.floorMod(week / 4, 3)) % CH_MOD.length}; }
+    static int weeklyStage(int week) { return 15 + Math.floorMod(week * 5, 20); }
 
     static int galaxyOf(int st) { return Math.min(GALAXIES - 1, st / PER_GALAXY); }
 
