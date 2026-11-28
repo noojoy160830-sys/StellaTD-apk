@@ -12,15 +12,17 @@ final class Skins {
     private Skins() {}
 
     static final int GOLDEN = 0, GRAVEYARD = 1, WHITE = 2, AURORA = 3, RED = 4, ELITE = 5, SHINY_PURPLE = 6, SHINY = 7,
-            MADNESS = 8, KING = 9, ANNIV = 10;
-    static final int STYLES = 11;
+            MADNESS = 8, KING = 9, ANNIV = 10, NEON = 11, FROZEN = 12, GALAXY = 13, INFERNO = 14, CELESTIAL = 15, ADMIN = 16;
+    static final int STYLES = 17;
     static final String[] NAME = {"Golden", "Graveyard", "White", "Aurora", "Red", "Elite", "Shiny Purple", "Shiny",
-            "Madness", "King", "1st Anniversary King Elite Gold Shine"};
+            "Madness", "King", "1st Anniversary King Elite Gold Shine", "Neon", "Frozen", "Galaxy", "Inferno", "Celestial", "Admin"};
     static final String[] NAME_TH = {"ทองคำ", "สุสาน", "ขาว", "ออโรร่า", "แดง", "อีลีท", "ม่วงประกาย", "ประกาย",
-            "คลั่ง", "ราชา", "ครบรอบ 1 ปี ราชาอีลีททองประกาย"};
+            "คลั่ง", "ราชา", "ครบรอบ 1 ปี ราชาอีลีททองประกาย", "นีออน", "น้ำแข็ง", "กาแล็กซี", "อินเฟอร์โน", "เซเลสเชียล", "แอดมิน"};
     /** capsule tier of each style: Common, Rare, Epic, Legend, Mythic, Exclusive */
     static final int[] TIER = {Defs.COMMON, Defs.COMMON, Defs.RARE, Defs.RARE, Defs.RARE, Defs.EPIC, Defs.EPIC, Defs.EPIC,
-            Defs.LEGEND, Defs.MYTHIC, Defs.EXCLUSIVE};
+            Defs.LEGEND, Defs.MYTHIC, Defs.EXCLUSIVE, Defs.EPIC, Defs.RARE, Defs.LEGEND, Defs.EPIC, Defs.EXCLUSIVE, Defs.EXCLUSIVE};
+    /** event skins never come out of capsules: 1st Anniversary (anniversary event), Admin (Admin Abuse capsule) */
+    static boolean event(int style) { return style == ANNIV || style == ADMIN; }
     /** capsule chance of each tier (%) */
     static final int[] TIER_ORDER = {Defs.COMMON, Defs.RARE, Defs.EPIC, Defs.LEGEND, Defs.MYTHIC, Defs.EXCLUSIVE};
     static final float[] TIER_RATE = {55f, 27f, 12.5f, 4f, 1.3f, 0.2f};
@@ -36,8 +38,11 @@ final class Skins {
             case AURORA: return planet == Defs.NEPTUNE || planet == Defs.URANUS;
             case RED: return planet == Defs.EARTH;
             case SHINY: return planet == Defs.PLUTO || planet == Defs.MARS || planet == Defs.MERCURY;
-            case MADNESS: return Defs.P_CATEGORY[planet] == Defs.CAT_SOLAR;
-            case KING: case ANNIV: return true;
+            case MADNESS: case GALAXY: return Defs.P_CATEGORY[planet] == Defs.CAT_SOLAR;
+            case NEON: return planet == Defs.SATELLITE || planet == Defs.SMART_SAT || planet == Defs.SAVIOR_SAT || planet == Defs.COMMANDER;
+            case FROZEN: return planet == Defs.NEPTUNE || planet == Defs.URANUS || planet == Defs.PLUTO || planet == Defs.MOON;
+            case INFERNO: return planet == Defs.SUN || planet == Defs.MARS || planet == Defs.VENUS || planet == Defs.MERCURY;
+            case KING: case ANNIV: case CELESTIAL: case ADMIN: return true;
             default: return false;
         }
     }
@@ -69,7 +74,14 @@ final class Skins {
             if (x < acc) { tier = TIER_ORDER[i]; break; }
         }
         List<Integer> pool = new ArrayList<>();
-        for (int k : all()) if (TIER[styleOf(k)] == tier) pool.add(k);
+        for (int k : all()) if (TIER[styleOf(k)] == tier && !event(styleOf(k))) pool.add(k);
+        return pool.get(r.nextInt(pool.size()));
+    }
+
+    /** an Admin skin for a random planet (Admin Capsule prize) */
+    static int rollAdmin(Random r) {
+        List<Integer> pool = new ArrayList<>();
+        for (int k : all()) if (styleOf(k) == ADMIN) pool.add(k);
         return pool.get(r.nextInt(pool.size()));
     }
 }

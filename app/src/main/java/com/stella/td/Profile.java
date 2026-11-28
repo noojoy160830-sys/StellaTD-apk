@@ -26,6 +26,17 @@ final class Profile {
     final int[] moons = new int[Defs.MOON_COUNT];
     final int[] moonOn = new int[Defs.P_COUNT];
     final boolean[] evolved = new boolean[Defs.P_COUNT];
+    /** Admin Abuse effect worn by each planet (-1 = none) */
+    final int[] effect = new int[Defs.P_COUNT];
+    /** Gold Coin: earned by trading / selling in the Plaza, spent in the Gold shop */
+    int gold;
+    /** Admin Abuse claims: event id + bitmask of cleared effect stages, last claimed gift id, last boss reward id */
+    String abuseId = "";
+    int abuseMask;
+    String giftClaimed = "", bossClaimed = "";
+    /** my damage on the current Admin boss */
+    String bossDmgId = "";
+    long bossDmg;
     // daily missions + login calendar
     int missionDay, loginStreak;
     // bag items (Items), challenge completion stamps
@@ -118,6 +129,15 @@ final class Profile {
         }
         int[] ev = ints(sp.getString("evolved", null), Defs.P_COUNT, 0);
         for (int i = 0; i < Defs.P_COUNT; i++) evolved[i] = ev[i] == 1 && Defs.canEvolve(i);
+        int[] efx = ints(sp.getString("effect", null), Defs.P_COUNT, -1);
+        for (int i = 0; i < Defs.P_COUNT; i++) effect[i] = efx[i] >= 0 && efx[i] < Defs.EFF_COUNT ? efx[i] : -1;
+        gold = sp.getInt("gold", 0);
+        abuseId = sp.getString("abuseId", "");
+        abuseMask = sp.getInt("abuseMask", 0);
+        giftClaimed = sp.getString("giftClaimed", "");
+        bossClaimed = sp.getString("bossClaimed", "");
+        bossDmgId = sp.getString("bossDmgId", "");
+        try { bossDmg = Long.parseLong(sp.getString("bossDmg", "0")); } catch (NumberFormatException e) { bossDmg = 0; }
         int[] mq = ints(sp.getString("moonOn", null), Defs.P_COUNT, -1);
         System.arraycopy(mq, 0, moonOn, 0, Defs.P_COUNT);
         photo = sp.getString("photo", null);
@@ -203,6 +223,14 @@ final class Profile {
         int[] evs = new int[Defs.P_COUNT];
         for (int i = 0; i < Defs.P_COUNT; i++) evs[i] = evolved[i] ? 1 : 0;
         m.put("evolved", str(evs));
+        m.put("effect", str(effect));
+        m.put("gold", gold);
+        m.put("abuseId", abuseId == null ? "" : abuseId);
+        m.put("abuseMask", abuseMask);
+        m.put("giftClaimed", giftClaimed == null ? "" : giftClaimed);
+        m.put("bossClaimed", bossClaimed == null ? "" : bossClaimed);
+        m.put("bossDmgId", bossDmgId == null ? "" : bossDmgId);
+        m.put("bossDmg", String.valueOf(bossDmg));
         m.put("photo", photo == null ? "" : photo);
         m.put("owned", str(own));
         m.put("copies", str(copies));
@@ -252,7 +280,190 @@ final class Profile {
 
     int sellValue(int t) {
         int base = SELL_BASE[Defs.P_RARITY[t]];
-        return base + base * (level[t] - 1) / 3 + base * copies[t] / 2;
+        int v = base + base * (level[t] - 1) / 3 + base * copies[t] / 2;
+        return effect[t] >= 0 ? Math.round(v * Defs.EFF_VALUE[effect[t]]) : v;
+    }
+
+    /** Gold Coin a planet is worth in the Plaza (rarity, level, copies, effect multiplier) */
+    static final int[] GOLD_BASE = {1, 3, 8, 18, 40, 90, 150, 150};
+
+    int goldValue(int t) {
+        int base = GOLD_BASE[Defs.P_RARITY[t]];
+        float v = base * (1f + (level[t] - 1) * 0.25f + copies[t] * 0.3f) * (evolved[t] ? 1.5f : 1f);
+        if (effect[t] >= 0) v *= Defs.EFF_VALUE[effect[t]];
+        return Math.max(1, Math.round(v));
+    }
+
+    /** sell a planet to the system for Gold Coin (Plaza quick-sell) */
+    int sellForGold(int t) {
+        if (!canSell(t)) return 0;
+        int v = goldValue(t);
+        strip(t);
+        gold += v;
+        save();
+        return v;
+    }
+
+    /** remove a planet with everything on it (sold / traded away) */
+    void strip(int t) {
+        owned[t] = false;
+        copies[t] = 0;
+        level[t] = 1;
+        enchant[t] = -1;
+        tier[t] = 0;
+        material[t] = -1;
+        moonOn[t] = -1;
+        evolved[t] = false;
+        effect[t] = -1;
+        skinOn[t] = -1;
+        for (int i = 0; i < deck.length; i++) if (deck[i] == t) deck[i] = -1;
+        if (deckCount() == 0) for (int k = 0; k < Defs.P_COUNT; k++) if (owned[k]) { deck[0] = k; break; }
+    }
+
+    /** buy from the Gold shop; returns the text of what was bought, or null */
+    String buyGold(int i) {
+        int[] it = Defs.GOLD_SHOP[i];
+        if (gold < it[2]) return null;
+        gold -= it[2];
+        String s;
+        if (it[0] == 9) { millite += it[1]; s = it[1] + " Millite"; }
+        else s = grant(it[0], it[1]);
+        save();
+        return s;
+    }
+
+    /** Gold paid by the system for one of a bag item (Plaza quick-sell); 0 = can't be sold */
+    static int itemGold(int id) {
+        switch (id) {
+            case Items.STARDUST: return 1;
+            case Items.NEBULA: return 4;
+            case Items.CATALYST: return 18;
+            case Items.ART_CAPSULE: return 10;
+            case Items.SUPPLY: return 3;
+            case Items.ADMIN_CAPSULE: return 40;
+            default: return Items.isEffect(id) ? Math.round(30 * Defs.EFF_VALUE[id - Items.EFF_TOKEN]) : 0;
+        }
+    }
+
+    boolean sellItemForGold(int id) {
+        int v = itemGold(id);
+        if (v <= 0 || items[id] <= 0) return false;
+        items[id]--;
+        gold += v;
+        save();
+        return true;
+    }
+
+    /** put an effect token on a planet (replaces the old effect) */
+    boolean applyEffect(int t, int e) {
+        int id = Items.EFF_TOKEN + e;
+        if (!owned[t] || items[id] <= 0) return false;
+        items[id]--;
+        effect[t] = e;
+        save();
+        return true;
+    }
+
+    // ---------------------------------------------------------------- tradeable things
+    // "g:n" gold, "i:id:n" item, "a:m:n" artifact, "s:key" skin, "p:t:level:copies:effect:evolved" planet
+    String describe(String th) {
+        String[] p = th.split(":");
+        try {
+            switch (p[0]) {
+                case "g": return p[1] + " Gold";
+                case "i": return p[2] + "x " + Items.NAME[Integer.parseInt(p[1])];
+                case "a": return p[2] + "x " + Defs.MOON_NAME[Integer.parseInt(p[1])];
+                case "s": return Skins.name(Integer.parseInt(p[1])) + " skin";
+                case "p": {
+                    int e = Integer.parseInt(p[4]);
+                    return (e >= 0 ? Defs.EFF_NAME[e] + " " : "") + Defs.P_NAME[Integer.parseInt(p[1])] + " Lv" + p[2];
+                }
+            }
+        } catch (RuntimeException ignored) { }
+        return th;
+    }
+
+    /** can this profile give the thing away now? */
+    boolean canGive(String th) {
+        String[] p = th.split(":");
+        try {
+            switch (p[0]) {
+                case "g": int n = Integer.parseInt(p[1]); return n > 0 && gold >= n;
+                case "i": int c = Integer.parseInt(p[2]); return c > 0 && items[Integer.parseInt(p[1])] >= c;
+                case "a": {
+                    int m = Integer.parseInt(p[1]), k = Integer.parseInt(p[2]);
+                    int used = 0;
+                    for (int x : moonOn) if (x == m) used++;
+                    return k > 0 && moons[m] - used >= k;
+                }
+                case "s": {
+                    int key = Integer.parseInt(p[1]);
+                    return skins.contains(key) && Skins.styleOf(key) != Skins.ANNIV;
+                }
+                case "p": return canSell(Integer.parseInt(p[1]));
+            }
+        } catch (RuntimeException ignored) { }
+        return false;
+    }
+
+    /** encode one of this profile's planets as a tradeable thing */
+    String planetThing(int t) {
+        return "p:" + t + ":" + level[t] + ":" + copies[t] + ":" + effect[t] + ":" + (evolved[t] ? 1 : 0);
+    }
+
+    /** remove a thing from this profile (escrow); returns false if it can't be given */
+    boolean giveAway(String th) {
+        if (!canGive(th)) return false;
+        String[] p = th.split(":");
+        switch (p[0]) {
+            case "g": gold -= Integer.parseInt(p[1]); break;
+            case "i": items[Integer.parseInt(p[1])] -= Integer.parseInt(p[2]); break;
+            case "a": moons[Integer.parseInt(p[1])] -= Integer.parseInt(p[2]); break;
+            case "s": {
+                int key = Integer.parseInt(p[1]);
+                skins.remove(key);
+                int pl = Skins.planetOf(key);
+                if (skinOn[pl] == Skins.styleOf(key)) skinOn[pl] = -1;
+                break;
+            }
+            case "p": strip(Integer.parseInt(p[1])); break;
+        }
+        save();
+        return true;
+    }
+
+    /** add a thing to this profile (trade / market delivery); returns the text shown */
+    String receive(String th) {
+        String[] p = th.split(":");
+        try {
+            switch (p[0]) {
+                case "g": gold += Integer.parseInt(p[1]); break;
+                case "i": items[Integer.parseInt(p[1])] += Integer.parseInt(p[2]); break;
+                case "a": moons[Integer.parseInt(p[1])] += Integer.parseInt(p[2]); break;
+                case "s": skins.add(Integer.parseInt(p[1])); break;
+                case "p": {
+                    int t = Integer.parseInt(p[1]);
+                    int lv = Math.max(1, Math.min(MAX_LV, Integer.parseInt(p[2])));
+                    int cp = Math.max(0, Integer.parseInt(p[3]));
+                    int e = Integer.parseInt(p[4]);
+                    if (owned[t]) {
+                        // already owned: keep the better copy, fold the rest into copies
+                        level[t] = Math.max(level[t], lv);
+                        copies[t] += cp + 1;
+                        if (e >= 0 && (effect[t] < 0 || Defs.EFF_VALUE[e] > Defs.EFF_VALUE[effect[t]])) effect[t] = e;
+                    } else {
+                        owned[t] = true;
+                        level[t] = lv;
+                        copies[t] = cp;
+                        effect[t] = e >= 0 && e < Defs.EFF_COUNT ? e : -1;
+                    }
+                    if ("1".equals(p[5]) && Defs.canEvolve(t)) evolved[t] = true;
+                    break;
+                }
+            }
+        } catch (RuntimeException ignored) { return ""; }
+        save();
+        return describe(th);
     }
 
     /** exclusives can't be sold, and you must keep at least one planet */
@@ -266,16 +477,7 @@ final class Profile {
         if (!canSell(t)) return 0;
         int v = sellValue(t);
         stars += v;
-        owned[t] = false;
-        copies[t] = 0;
-        level[t] = 1;
-        enchant[t] = -1;
-        tier[t] = 0;
-        material[t] = -1;
-        moonOn[t] = -1;
-        evolved[t] = false;
-        for (int i = 0; i < deck.length; i++) if (deck[i] == t) deck[i] = -1;
-        if (deckCount() == 0) for (int k = 0; k < Defs.P_COUNT; k++) if (owned[k]) { deck[0] = k; break; }
+        strip(t);
         save();
         return v;
     }
@@ -333,6 +535,33 @@ final class Profile {
         track(Missions.PULL, 1);
         save();
         return new int[]{pick[0], n};
+    }
+
+    /** open an Admin Capsule; returns the text of what came out, or null */
+    String openAdminCapsule() {
+        if (items[Items.ADMIN_CAPSULE] <= 0) return null;
+        items[Items.ADMIN_CAPSULE]--;
+        int sum = 0;
+        for (int[] row : Items.ADMIN_TABLE) sum += row[1];
+        int x = rnd.nextInt(sum);
+        int[] pick = Items.ADMIN_TABLE[0];
+        for (int[] row : Items.ADMIN_TABLE) { x -= row[1]; if (x < 0) { pick = row; break; } }
+        int n = pick[2] + rnd.nextInt(pick[3] - pick[2] + 1);
+        String s;
+        switch (pick[0]) {
+            case 0: gold += n; s = n + " Gold"; break;
+            case 1: { int e = rnd.nextInt(Defs.EFF_COUNT); items[Items.EFF_TOKEN + e]++; s = Items.NAME[Items.EFF_TOKEN + e]; break; }
+            case 2: { int a = Items.rollArtifact(rnd); moons[a]++; s = Defs.MOON_NAME[a]; break; }
+            case 3: items[Items.CATALYST] += n; s = n + " Evo Catalyst"; break;
+            default: {
+                int k = Skins.rollAdmin(rnd);
+                if (skins.contains(k)) { gold += 60; s = Skins.name(k) + " (ซ้ำ → 60 Gold)"; }
+                else { skins.add(k); s = Skins.name(k); }
+            }
+        }
+        track(Missions.PULL, 1);
+        save();
+        return s;
     }
 
     int have(int id) {
@@ -400,6 +629,10 @@ final class Profile {
             case 2: oil += n; return n + " Crystal Oil";
             case 3: raidCapsules += n; return n + " Raid Capsule";
             case 4: case 5: case 6: case 7: case 8: items[kind - 4] += n; return n + " " + Items.NAME[kind - 4];
+            case 10: gold += n; return n + " Gold";
+            case 11: items[Items.ADMIN_CAPSULE] += n; return n + " Admin Capsule";
+            case 12: case 13: case 14: case 15: case 16:
+                items[Items.EFF_TOKEN + kind - 12] += n; return n + " " + Items.NAME[Items.EFF_TOKEN + kind - 12];
             default: stars += n; return n + " Star";
         }
     }
@@ -777,6 +1010,14 @@ final class Profile {
                 items[Items.NEBULA] += 1;
                 stars += 500;
                 lastChallengeReward = "8 Stardust • 1 Nebula Core • 500 Star";
+            } else if (g.effectStage()) {
+                int e = g.challenge - Game.CH_EFFECT;
+                if ((abuseMask & (1 << e)) == 0 && abuseId != null && !abuseId.isEmpty()) {
+                    abuseMask |= 1 << e;
+                    items[Items.EFF_TOKEN + e]++;
+                    gold += 25;
+                    lastChallengeReward = Items.NAME[Items.EFF_TOKEN + e] + " • 25 Gold";
+                } else lastChallengeReward = L.t("รับรางวัลด่านนี้ไปแล้วในอีเวนต์นี้", "Already claimed in this event");
             } else if (g.challenge == 2 && weeklyReady()) {
                 weeklyDone = week();
                 items[Items.CATALYST] += 1;

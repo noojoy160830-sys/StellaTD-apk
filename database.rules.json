@@ -94,6 +94,52 @@
           }
         }
       }
+    },
+    "bossDmg": {
+      "$boss": {
+        ".read": "auth != null",
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid && newData.isNumber()"
+        }
+      },
+      ".write": "auth != null && auth.token.email === 'console@console.stellatd.game'"
+    },
+    "market": {
+      ".read": "auth != null",
+      "$id": {
+        ".write": "auth != null && ((!data.exists() && newData.child('seller').val() === auth.uid && !newData.child('buyer').exists()) || (!newData.exists() && (data.child('buyer').val() === auth.uid || auth.token.email === 'console@console.stellatd.game')))",
+        "buyer": {
+          ".write": "auth != null && !data.exists() && newData.val() === auth.uid"
+        }
+      }
+    },
+    "mail": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$id": {
+          ".write": "auth != null && ((!data.exists() && newData.child('from').val() === auth.uid) || (auth.uid === $uid && !newData.exists()) || auth.token.email === 'console@console.stellatd.game')"
+        }
+      }
+    },
+    "tradeIn": {
+      "$to": {
+        ".read": "auth != null && auth.uid === $to",
+        "$id": {
+          ".read": "auth != null && data.child('from').val() === auth.uid",
+          ".write": "auth != null && ((!data.exists() && newData.child('from').val() === auth.uid && newData.child('to').val() === $to && !newData.child('state').exists()) || (!newData.exists() && data.child('state').exists() && (auth.uid === $to || data.child('from').val() === auth.uid)))",
+          "state": {
+            ".write": "auth != null && !data.exists() && newData.isString() && (auth.uid === $to || data.parent().child('from').val() === auth.uid)"
+          }
+        }
+      }
+    },
+    "tradeOut": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$id": {
+          ".write": "auth != null && auth.uid === $uid"
+        }
+      }
     }
   }
 }

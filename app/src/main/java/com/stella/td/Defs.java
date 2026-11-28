@@ -303,6 +303,35 @@ final class Defs {
     }
     static final String EVO_DESC_TH = "ร่างวิวัฒน์", EVO_DESC_EN = "Evolved form";
 
+    // ---- planet effects (Admin Abuse): stronger planet, multiplied trade value
+    static final int EFF_GOLDEN = 0, EFF_SILVER = 1, EFF_RAINBOW = 2, EFF_SHINY = 3, EFF_BLAZE = 4, EFF_COUNT = 5;
+    static final String[] EFF_NAME = {"Golden", "Silver", "Rainbow", "Shiny", "Blaze"};
+    static final int[] EFF_COLOR = {0xFFFFD23F, 0xFFE0E8F0, 0xFFFF7AE0, 0xFF9EF6FF, 0xFFFF6A2B};
+    static final float[] EFF_DMG = {0.15f, 0.08f, 0.25f, 0.20f, 0.20f};
+    static final float[] EFF_SPD = {0.10f, 0.08f, 0.20f, 0.05f, 0.10f};
+    static final float[] EFF_RNG = {0f, 0.08f, 0.10f, 0.10f, 0f};
+    /** value multiplier for trading / selling */
+    static final float[] EFF_VALUE = {2f, 1.5f, 4f, 2.5f, 3f};
+    static final String[] EFF_DESC = {"+15% ดาเมจ +10% ความเร็ว • ราคา x2", "+8% ทุกค่า • ราคา x1.5", "+25% ดาเมจ +20% ความเร็ว +10% ระยะ • ราคา x4",
+            "+20% ดาเมจ +10% ระยะ • 10% คริติคอล x2 • ราคา x2.5", "+20% ดาเมจ +10% ความเร็ว • ทุกการโจมตีติดไฟ • ราคา x3"};
+    static final String[] EFF_DESC_EN = {"+15% damage +10% speed • value x2", "+8% everything • value x1.5", "+25% damage +20% speed +10% range • value x4",
+            "+20% damage +10% range • 10% crit x2 • value x2.5", "+20% damage +10% speed • every hit burns • value x3"};
+    /** Admin Abuse effect stages: map and difficulty mods per effect */
+    static int effStage(int e) { return 22 + e * 4; }
+    static int[] effMods(int e) {
+        switch (e) {
+            case EFF_GOLDEN: return new int[]{1};
+            case EFF_SILVER: return new int[]{0};
+            case EFF_RAINBOW: return new int[]{0, 1};
+            case EFF_SHINY: return new int[]{3, 1};
+            default: return new int[]{0, 3};
+        }
+    }
+    static final int EFF_WAVES = 25, BOSS_WAVES = 10;
+
+    /** Gold shop: {grant kind (Profile.grant, 9 Millite), amount, price in Gold} */
+    static final int[][] GOLD_SHOP = {{8, 1, 10}, {3, 1, 12}, {7, 1, 30}, {6, 1, 45}, {5, 1, 12}, {0, 2000, 10}, {1, 10, 20}, {9, 5, 15}};
+
     // ---- daily / weekly challenges
     static final String[] CH_MOD = {"Swift", "Armored", "Short Sight", "Swarm"};
     static final String[] CH_MOD_TH = {"ศัตรูเร็ว +35%", "ศัตรูเลือด +60%", "ระยะดาว -20%", "บอสทุก 5 เวฟ"};
@@ -356,9 +385,9 @@ final class Defs {
             ST_NAME[s] = SEC_TH[i];
             ST_NAME_EN[s] = SEC_EN[i];
             ST_WAVES[s] = 12 + (i * 2) / 3 + g * 2;
-            // enemy HP grows ~6.5% per stage and gets an extra push in each new galaxy
-            ST_HP[s] = 0.5f * (float) Math.pow(1.065, s) * (1f + 0.25f * g);
-            ST_SPEED[s] = 1f + g * 0.08f + i * 0.004f;
+            // v3.8: tougher — enemy HP grows ~7% per stage and gets a bigger push in each new galaxy
+            ST_HP[s] = 0.55f * (float) Math.pow(1.068, s) * (1f + 0.3f * g);
+            ST_SPEED[s] = 1f + g * 0.09f + i * 0.005f;
             ST_DIFF[s] = Math.min(5, (int) ((g * 15 + i) / 7.5f));
             ST_COLOR[s] = GAL_COLOR[g];
             int pth = (i + g * 3) % PATHS.length;
@@ -368,7 +397,7 @@ final class Defs {
         ST_NAME[RAID] = "เรด: ประตูมิติ";
         ST_NAME_EN[RAID] = "Raid: Void Gate";
         ST_WAVES[RAID] = RAID_WAVES;
-        ST_HP[RAID] = 0.55f;
+        ST_HP[RAID] = 0.65f;
         ST_SPEED[RAID] = 1.05f;
         ST_DIFF[RAID] = 5;
         ST_COLOR[RAID] = 0xFFFF3B6B;

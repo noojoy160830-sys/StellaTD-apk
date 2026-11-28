@@ -49,8 +49,13 @@ final class Game {
     int bannerColor = 0xFFFFFFFF;
     final float[] tmp = new float[2];
 
-    /** 0 normal, 1 daily challenge, 2 weekly challenge */
+    /** 0 normal, 1 daily challenge, 2 weekly challenge, 10+e Admin Abuse effect stage, 20 Admin boss event */
     final int challenge;
+    static final int CH_EFFECT = 10, CH_BOSS = 20;
+    /** damage dealt to Admin bosses this game (boss event) */
+    float bossDamage;
+
+    boolean effectStage() { return challenge >= CH_EFFECT && challenge < CH_EFFECT + Defs.EFF_COUNT; }
     final boolean[] mod = new boolean[Defs.CH_MOD.length];
 
     Game(int stage, Profile pf) { this(stage, pf, 0); }
@@ -62,7 +67,9 @@ final class Game {
         this.deck = pf.deck.clone();
         if (challenge == 1) mod[Defs.dailyMod(Profile.today())] = true;
         if (challenge == 2) for (int m : Defs.weeklyMods(Profile.week())) mod[m] = true;
-        this.maxWave = challenge == 1 ? Defs.DAILY_WAVES : challenge == 2 ? Defs.WEEKLY_WAVES : Defs.ST_WAVES[stage];
+        if (effectStage()) for (int m : Defs.effMods(challenge - CH_EFFECT)) mod[m] = true;
+        this.maxWave = challenge == 1 ? Defs.DAILY_WAVES : challenge == 2 ? Defs.WEEKLY_WAVES
+                : effectStage() ? Defs.EFF_WAVES : challenge == CH_BOSS ? Defs.BOSS_WAVES : Defs.ST_WAVES[stage];
         float[] p = Defs.ST_PATH[stage];
         int n = p.length / 2;
         px = new float[n];
@@ -217,17 +224,19 @@ final class Game {
 
     static float dmgOf(Planet p) {
         return Defs.P_DMG[p.type] * (1f + 0.3f * (p.level - 1)) * (1f + 0.12f * (p.plv - 1))
-                * (1f + enchDmg(p)) * (1f + matDmg(p)) * (1f + p.bonusDmg) * (1f + p.buff) * (p.evo ? 1.6f : 1f);
+                * (1f + enchDmg(p)) * (1f + matDmg(p)) * (1f + p.bonusDmg) * (1f + p.buff) * (p.evo ? 1.6f : 1f)
+                * (p.eff >= 0 ? 1f + Defs.EFF_DMG[p.eff] : 1f);
     }
 
     static float rangeOf(Planet p) {
-        return Defs.P_RANGE[p.type] * (1f + enchRng(p)) * (1f + matRng(p)) * (p.king ? 1.1f : 1f) * (p.evo ? 1.15f : 1f) * p.rangeMul;
+        return Defs.P_RANGE[p.type] * (1f + enchRng(p)) * (1f + matRng(p)) * (p.king ? 1.1f : 1f) * (p.evo ? 1.15f : 1f) * p.rangeMul
+                * (p.eff >= 0 ? 1f + Defs.EFF_RNG[p.eff] : 1f);
     }
 
     /** the persistent upgrade level (Lv 1-10) speeds up attacks 4% and production 5% per level */
     static float cdOf(Planet p) {
         float c = Defs.P_CD[p.type];
-        float k = p.king ? 1.1f : 1f;
+        float k = (p.king ? 1.1f : 1f) * (p.eff >= 0 ? 1f + Defs.EFF_SPD[p.eff] : 1f);
         if (isProducer(p)) return c / ((1f + 0.2f * (p.level - 1)) * (1f + 0.05f * (p.plv - 1)) * k * (p.evo ? 1.15f : 1f));
         return c / ((1f + enchSpa(p)) * (1f + matSpa(p)) * (1f + 0.04f * (p.plv - 1)) * k * (p.evo ? 1.15f : 1f) * (p.art == Defs.MOON_STORM ? 1.12f : 1f));
     }
@@ -239,6 +248,7 @@ final class Game {
         if (p.material == Defs.MAT_GOLD) a *= 1.6f;
         if (p.art == Defs.MOON_GOLD) a *= 1.2f;
         if (p.evo) a *= 1.6f;
+        if (p.eff >= 0) a *= 1f + Defs.EFF_DMG[p.eff] * 0.5f;
         return a;
     }
 
@@ -300,6 +310,7 @@ final class Game {
         p.hellMoon = p.art == Defs.MOON_HELL;
         if (mod[2]) p.rangeMul = 0.8f; // challenge: short sight
         p.evo = pf.evolved[type];
+        p.eff = pf.effect[type];
         p.skin = pf.skinOn[type];
         p.ax = p.x;
         p.ay = p.y;
@@ -353,7 +364,14 @@ final class Game {
         for (int i = 0; i < n; i++) queue.add(pickEnemy(w));
         boolean boss = wave % 10 == 0 || wave == maxWave || (mod[3] && wave % 5 == 0);
         boolean mini = !boss && wave % 10 == 5;
-        if (stage == Defs.RAID && boss) {
+        if (challenge == CH_BOSS) {
+            // Admin boss event: an Admin Titan every wave with a small escort
+            queue.clear();
+            for (int i = 0; i < 3 + wave; i++) queue.add(pickEnemyBase(6 + wave));
+            queue.add(Defs.E_TITAN);
+            if (wave % 3 == 0) queue.add(MINI_FLAG + Defs.E_WRAITH);
+            showBanner(L.t("ADMIN BOSS • เวฟ ", "ADMIN BOSS • wave ") + wave, 0xFFFF2B5B);
+        } else if (stage == Defs.RAID && boss) {
             queue.add(Defs.E_TITAN);
             showBanner(L.t("บอส Raid: Void Titan!", "Raid boss: Void Titan!"), 0xFFFF2B5B);
         } else if (stage == Defs.RAID && mini) {
@@ -435,8 +453,10 @@ final class Game {
         e.speed = Defs.E_SPEED[type] * (1f + Math.min(0.25f, wave * 0.006f)) * Defs.ST_SPEED[stage];
         if (mod[0]) e.speed *= 1.35f;
         if (mod[1]) { e.maxHp *= 1.6f; e.hp = e.maxHp; e.maxShield *= 1.6f; e.shield = e.maxShield; }
+        if (effectStage()) { e.maxHp *= 1.35f + 0.1f * (challenge - CH_EFFECT); e.hp = e.maxHp; e.maxShield *= 1.4f; e.shield = e.maxShield; }
         e.radius = Defs.E_RADIUS[type];
         e.baseDmg = Defs.E_BASEDMG[type];
+        if (challenge == CH_BOSS && type == Defs.E_TITAN) { e.maxHp *= 2.2f; e.hp = e.maxHp; e.admin = true; e.baseDmg = 4; }
         e.abilT = rnd.nextFloat() * 2f;
         e.angle = rnd.nextFloat() * 360f;
         return e;
@@ -710,7 +730,8 @@ final class Game {
                 HeatWave h = new HeatWave();
                 h.d = total;
                 // each wave is a bit stronger than the last, capped so the Sun can't snowball forever
-                h.maxHp = dmgOf(p) * 20f * (1f + 0.15f * Math.min(sunCount, 8)) * fireMul(p);
+                // v3.8 nerf: weaker waves, smaller ramp
+                h.maxHp = dmgOf(p) * 13f * (1f + 0.1f * Math.min(sunCount, 5)) * fireMul(p);
                 h.hp = h.maxHp;
                 h.src = p;
                 sunCount++;
@@ -883,11 +904,16 @@ final class Game {
                 ring(e.x, e.y, 0xFFFFE27A, 120);
             }
             if (src.evo && ++src.evoShots % 4 == 0) dmg = evoStrike(e, dmg, src);
+            if (src.eff == Defs.EFF_SHINY && rnd.nextFloat() < 0.10f) {
+                dmg *= 2f;
+                text(e.x, e.y - 50, "SHINY!", 0xFF9EF6FF);
+            }
         }
         if (src != null && src.material == Defs.MAT_OBSIDIAN && e.shield > 0) {
             // obsidian cuts through half of the shield
             float pierce = Math.min(e.shield, dmg * 0.5f);
             e.hp -= pierce;
+            if (e.admin) bossDamage += pierce;
             dmg -= pierce;
         }
         damage(e, dmg, s.src);
@@ -898,6 +924,7 @@ final class Game {
         }
         if (s.burnDps > 0) applyBurn(e, s.burnDps, s.burnDur);
         else if (s.src != null && s.src.hellMoon) applyBurn(e, dmg * 0.6f * fireMul(s.src), 2.5f); // Hell Moon: every hit burns
+        else if (s.src != null && s.src.eff == Defs.EFF_BLAZE) applyBurn(e, dmg * 0.4f * fireMul(s.src), 2f); // Blaze effect
         if (s.slowAmt > 0) applySlow(e, s.slowAmt, s.slowDur);
         if (s.stunCh > 0 && rnd.nextFloat() < s.stunCh && !e.boss && !e.mini) {
             e.stunT = Math.max(e.stunT, s.stunDur);
@@ -997,6 +1024,7 @@ final class Game {
     void damage(Enemy e, float amt, Planet src) {
         if (e.dead || amt <= 0) return;
         e.noDmgT = 0;
+        if (e.admin) bossDamage += Math.min(amt, Math.max(0, e.hp + e.shield));
         if (e.shield > 0) {
             float a = Math.min(e.shield, amt);
             e.shield -= a;
@@ -1261,8 +1289,8 @@ final class Game {
                 float dmg = Math.min(h.hp, need);
                 damage(e, dmg, ally ? null : h.src);
                 if (!ally) {
-                    applyBurn(e, dmgOf(h.src) * 0.5f * fireMul(h.src), 3f * fireDurMul(h.src));
-                    h.hp -= dmg * 0.5f;
+                    applyBurn(e, dmgOf(h.src) * 0.35f * fireMul(h.src), 3f * fireDurMul(h.src));
+                    h.hp -= dmg * 0.8f;
                 } else {
                     h.hp -= dmg;
                     ring(e.x, e.y, h.summon == -2 ? 0xFFFFD23F : 0xFF5EF2FF, 80);

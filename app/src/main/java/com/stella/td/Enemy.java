@@ -13,4 +13,6 @@ final class Enemy {
     /** Savior's Haunted mark; split children don't split again; stopped at a wall */
     float hauntT;
     boolean child, blocked;
+    /** Admin boss (boss event): damage on it is reported to the server */
+    boolean admin;
 }

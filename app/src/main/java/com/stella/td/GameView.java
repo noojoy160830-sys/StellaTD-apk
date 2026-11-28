@@ -20,16 +20,17 @@ import java.util.Locale;
 /** Renders every screen and handles touch. Match rules live in {@link Game}, saved data in {@link Profile}. */
 public final class GameView extends View {
 
-    static final String VERSION = "v3.7";
+    static final String VERSION = "v3.8";
     /** must match versionCode in app/build.gradle */
-    static final int VERSION_CODE = 19;
+    static final int VERSION_CODE = 20;
 
     // hub screens
     static final int S_LOBBY = 0, S_SHOP = 1, S_PLANET = 2, S_PLAYMENU = 3, S_BANNER = 4, S_ENCHANT = 5, S_GAME = 6,
-            S_LOGIN = 7, S_ADMIN = 8, S_LEADER = 9, S_TERM = 10, S_STAFF = 11, S_SERVER = 12, S_LOGS = 13, S_INV = 14, S_EVENTS = 15, S_SOCIAL = 16;
+            S_LOGIN = 7, S_ADMIN = 8, S_LEADER = 9, S_TERM = 10, S_STAFF = 11, S_SERVER = 12, S_LOGS = 13, S_INV = 14, S_EVENTS = 15, S_SOCIAL = 16, S_PLAZA = 17, S_ABUSE = 18;
     // popups
     static final int P_NONE = 0, P_PLAYER = 1, P_SETTINGS = 2, P_GACHA = 3, P_INDEX = 4, P_AUTO = 5, P_GIVE = 6,
-            P_AVATAR = 7, P_CONSOLE = 8, P_BULKRES = 9, P_ROLE = 10, P_EQUIP = 11, P_INV = 12, P_RSHOP = 13, P_ITEMS = 14, P_RATES = 15, P_CRATES = 16, P_REVEAL = 17, P_LOGIN = 18;
+            P_AVATAR = 7, P_CONSOLE = 8, P_BULKRES = 9, P_ROLE = 10, P_EQUIP = 11, P_INV = 12, P_RSHOP = 13, P_ITEMS = 14, P_RATES = 15, P_CRATES = 16, P_REVEAL = 17, P_LOGIN = 18,
+            P_EFFECT = 19, P_GIFT = 20, P_LIST = 21, P_TRADE = 22, P_ADDID = 23;
 
     static final class Btn {
         final RectF r;
@@ -311,6 +312,8 @@ public final class GameView extends View {
                 bcMsg = b.broadcast;
                 if (System.currentTimeMillis() - bcTime < 86400000L) bcShowT = 9f;
             } else if (b.broadcast == null) bcMsg = null;
+            if (b.serverTime > 0) clockSkew = b.serverTime - System.currentTimeMillis();
+            onAbuse(b.abuse);
             if (consoleApp) {
                 if (b.role < Roles.STAFF) { net = NET_NOSTAFF; return; }
                 if (net == NET_NOSTAFF) net = NET_ONLINE;
@@ -493,9 +496,13 @@ public final class GameView extends View {
     void go(int s) {
         autoOn = false;
         screen = s;
+        if (s == S_PLAZA) plazaRefresh(true);
+        if (s == S_ABUSE) abusePoll = 99f;
     }
 
     void startChallenge(int kind) {
+        if (kind >= Game.CH_EFFECT && kind < Game.CH_EFFECT + Defs.EFF_COUNT) { startEffectStage(kind - Game.CH_EFFECT); return; }
+        if (kind == Game.CH_BOSS) { startBossRun(); return; }
         int s = kind == 1 ? Defs.dailyStage(Profile.today()) : Defs.weeklyStage(Profile.week());
         startStage(s, kind);
     }
@@ -524,6 +531,7 @@ public final class GameView extends View {
         if (resultSaved || game == null) return;
         resultSaved = true;
         pf.addRewards(game);
+        if (game.challenge == Game.CH_BOSS) bossResult(game);
         pushNow();
     }
 
@@ -737,6 +745,8 @@ public final class GameView extends View {
             case S_INV: drawInvScreen(c); break;
             case S_EVENTS: drawEvents(c); break;
             case S_SOCIAL: drawSocial(c); break;
+            case S_PLAZA: drawPlaza(c); break;
+            case S_ABUSE: drawAbuse(c); break;
             default:
                 if (game != null) drawPlay(c);
                 else screen = S_PLAYMENU;
@@ -773,6 +783,10 @@ public final class GameView extends View {
             case P_ITEMS: drawGiveItems(c); break;
             case P_RATES: drawRates(c); break;
             case P_REVEAL: drawReveal(c); break;
+            case P_EFFECT: drawEffectPick(c); break;
+            case P_GIFT: drawAbuseGift(c); break;
+            case P_LIST: drawListPick(c); break;
+            case P_TRADE: drawTradeMake(c); break;
             case P_LOGIN: drawLoginPopup(c); break;
             default: break;
         }
@@ -1380,11 +1394,12 @@ public final class GameView extends View {
         p.setShader(null);
         sp.setPathEffect(null);
         sp.setStrokeWidth(3 * u);
-        sp.setColor(kind == 1 ? 0x99C58CFF : kind == 2 ? 0x995EF2FF : kind == 3 ? 0x99FF9A3B : 0x99FFD23F);
+        sp.setColor(kind == 1 ? 0x99C58CFF : kind == 2 ? 0x995EF2FF : kind == 3 ? 0x99FF9A3B : kind == 4 ? 0x99FFC21F : 0x99FFD23F);
         c.drawRoundRect(rf, 36 * u, 36 * u, sp);
         float ix = rf.left + 38 * u;
         glowCircle(c, ix, cy, 40 * u, kind == 1 ? 0x77C58CFF : kind == 2 ? 0x775EF2FF : kind == 3 ? 0x77FF9A3B : 0x77FFD23F);
         if (kind == 0) star(c, ix, cy, 24 * u);
+        else if (kind == 4) goldIcon(c, ix, cy, 22 * u);
         else if (kind == 1) milliteIcon(c, ix, cy, 24 * u);
         else if (kind == 3) oilIcon(c, ix, cy, 26 * u);
         else crystalIcon(c, ix, cy, 26 * u);
@@ -1784,15 +1799,20 @@ public final class GameView extends View {
         }
         // currencies on their own row so nothing overlaps
         tp.setTextSize(40 * u);
-        float wA = tp.measureText(String.valueOf(pf.stars)) + 120 * u, wB = tp.measureText(String.valueOf(pf.millite)) + 120 * u, wC = tp.measureText(String.valueOf(pf.oil)) + 120 * u;
-        float cx0 = W / 2 - (wA + wB + wC + 28 * u) / 2;
+        float wA = tp.measureText(String.valueOf(pf.stars)) + 120 * u, wB = tp.measureText(String.valueOf(pf.millite)) + 120 * u, wC = tp.measureText(String.valueOf(pf.oil)) + 120 * u,
+                wD = tp.measureText(String.valueOf(pf.gold)) + 120 * u;
+        float cx0 = W / 2 - (wA + wB + wC + wD + 42 * u) / 2;
         chip(c, cx0 + wA / 2, 225 * u, 0, pf.stars);
         chip(c, cx0 + wA + 14 * u + wB / 2, 225 * u, 1, pf.millite);
         chip(c, cx0 + wA + wB + 28 * u + wC / 2, 225 * u, 3, pf.oil);
-        logo(c, W / 2, 420 * u, 150 * u);
-        RectF tag = new RectF(W / 2 - 250 * u, 450 * u, W / 2 + 250 * u, 510 * u);
-        panel(c, tag, 0xCC1A0F3D, 30 * u);
-        plain(c, L.t("สถานีอวกาศ Stella • ผู้บัญชาการ ", "Stella Station • Commander ") + user, W / 2, 490 * u, 30 * u, 0xFFE6E0FF, Paint.Align.CENTER, 480 * u);
+        chip(c, cx0 + wA + wB + wC + 42 * u + wD / 2, 225 * u, 4, pf.gold);
+        if (abuseOn()) abuseBanner(c, new RectF(40 * u, 290 * u, W - 40 * u, 520 * u));
+        else {
+            logo(c, W / 2, 420 * u, 150 * u);
+            RectF tag = new RectF(W / 2 - 250 * u, 450 * u, W / 2 + 250 * u, 510 * u);
+            panel(c, tag, 0xCC1A0F3D, 30 * u);
+            plain(c, L.t("สถานีอวกาศ Stella • ผู้บัญชาการ ", "Stella Station • Commander ") + user, W / 2, 490 * u, 30 * u, 0xFFE6E0FF, Paint.Align.CENTER, 480 * u);
+        }
         netPill(c, W / 2, 545 * u);
         if (bcMsg != null && System.currentTimeMillis() - bcTime < 86400000L) ticker(c, 600 * u);
         lobbyCards(c, Math.max(900 * u, navTop - 790 * u));
@@ -2041,27 +2061,24 @@ public final class GameView extends View {
 
     // ================================================================== shop
     void drawShop(Canvas c) {
-        header(c, L.t("ร้านค้า", "Shop"));
-        float cw = (W - 140 * u) / 2f, ch = 420 * u, y0 = 220 * u;
-        // top-up is left out until the game is on Google Play
-        String[] names = {L.t("ของขวัญรายวัน", "Daily gift"), "Star Pass", L.t("สกินดวงดาว", "Planet skins")};
-        int[] cols = {0xFF33C6A6, 0xFFB86BFF, 0xFF4FA3FF};
-        int[] icon = {0, 2, 3};
+        header(c, L.t("ร้านค้า", "Shop"), 0, pf.stars, 4, pf.gold);
+        float cw = (W - 140 * u) / 2f, ch = 340 * u, y0 = 220 * u;
+        String[] names = {L.t("ของขวัญรายวัน", "Daily gift"), L.t("พลาซ่า (เทรด/ขาย)", "Plaza (trade / sell)"), L.t("สกินดวงดาว", "Planet skins")};
+        int[] cols = {0xFF33C6A6, 0xFFFFC21F, 0xFF4FA3FF};
+        int[] icon = {0, 4, 3};
         for (int i = 0; i < 3; i++) {
             float appear = ease(Math.min(1f, Math.max(0f, (transT - i * 0.06f) / 0.35f)));
-            // the daily gift spans the whole first row
             float x = i == 0 ? 50 * u : 50 * u + ((i - 1) % 2) * (cw + 40 * u);
-            float y = y0 + (i == 0 ? 0 : ch + 40 * u) + (1f - appear) * 60 * u;
+            float y = y0 + (i == 0 ? 0 : ch + 30 * u) + (1f - appear) * 60 * u;
             RectF q = new RectF(x, y, i == 0 ? W - 50 * u : x + cw, y + ch);
-            boolean live = i != 1;
-            rarityCard(c, q, cols[i], live, false, 36 * u);
-            float ix = q.centerX(), iy = q.top + ch * 0.36f + (float) Math.sin(anim * 2.2f + i) * 10 * u;
-            glowCircle(c, ix, iy, 130 * u, alpha(cols[i], 0x55));
-            shopIcon(c, icon[i], ix, iy, 80 * u);
-            text(c, names[i], q.centerX(), q.bottom - 120 * u, 40 * u, 0xFFFFFFFF, Paint.Align.CENTER, cw - 30 * u);
+            rarityCard(c, q, cols[i], true, false, 36 * u);
+            float ix = q.centerX(), iy = q.top + ch * 0.34f + (float) Math.sin(anim * 2.2f + i) * 8 * u;
+            glowCircle(c, ix, iy, 110 * u, alpha(cols[i], 0x55));
+            shopIcon(c, icon[i], ix, iy, 68 * u);
+            text(c, names[i], q.centerX(), q.bottom - 110 * u, 38 * u, 0xFFFFFFFF, Paint.Align.CENTER, cw - 30 * u);
             if (i == 0) {
                 boolean ready = pf.giftReady();
-                rf.set(q.left + 30 * u, q.bottom - 95 * u, q.right - 30 * u, q.bottom - 25 * u);
+                rf.set(q.left + 30 * u, q.bottom - 90 * u, q.right - 30 * u, q.bottom - 22 * u);
                 button(c, rf, ready ? L.t("รับของล็อกอิน", "Claim login reward") : L.t("ปฏิทินล็อกอิน", "Login calendar"),
                         0xFF2E9A6A, true, () -> popup = P_LOGIN);
             } else if (i == 2) {
@@ -2071,9 +2088,41 @@ public final class GameView extends View {
                     else showToast(L.t("ชนะให้ครบ " + RAID_WINS + " ครั้งเพื่อปลดล็อกร้าน Raid", "Win " + RAID_WINS + " games to unlock the Raid shop"));
                 }));
             } else {
-                plain(c, L.t("เร็ว ๆ นี้", "Coming soon"), q.centerX(), q.bottom - 50 * u, 30 * u, 0xFFB8B2CC, Paint.Align.CENTER, 0);
-                btns.add(new Btn(q, () -> showToast(L.t("เร็ว ๆ นี้", "Coming soon"))));
+                plain(c, L.t("หา Gold Coin จากการขายและเทรด", "Earn Gold Coins by selling and trading"), q.centerX(), q.bottom - 50 * u, 24 * u, 0xFFFFE9A0, Paint.Align.CENTER, cw - 20 * u);
+                btns.add(new Btn(q, () -> go(S_PLAZA)));
             }
+        }
+        // ---- Gold shop
+        float gy = y0 + 2 * ch + 70 * u;
+        goldIcon(c, 74 * u, gy + 26 * u, 22 * u);
+        text(c, L.t("ร้าน Gold Coin", "Gold Coin shop"), 110 * u, gy + 42 * u, 40 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        int n = Defs.GOLD_SHOP.length, cols4 = 4;
+        float gw = (W - 100 * u) / cols4, gh = Math.min(300 * u, (navTop - gy - 90 * u) / 2f);
+        for (int k = 0; k < n; k++) {
+            final int ki = k;
+            int[] it = Defs.GOLD_SHOP[k];
+            float x = 50 * u + (k % cols4) * gw, y = gy + 70 * u + (k / cols4) * gh;
+            RectF q = new RectF(x + 6 * u, y + 6 * u, x + gw - 6 * u, y + gh - 6 * u);
+            boolean can = pf.gold >= it[2];
+            rarityCard(c, q, 0xFFFFC21F, can, false, 22 * u);
+            float ix = q.centerX(), iy = q.top + gh * 0.33f, rr = gh * 0.15f;
+            switch (it[0]) {
+                case 0: star(c, ix, iy, rr); break;
+                case 1: crystalIcon(c, ix, iy, rr); break;
+                case 3: capsuleIcon(c, ix, iy, rr * 1.1f); break;
+                case 9: milliteIcon(c, ix, iy, rr); break;
+                default: itemIcon(c, it[0] - 4, ix, iy, rr * 1.15f);
+            }
+            String nm = it[0] == 0 ? "Star" : it[0] == 1 ? "Crystal" : it[0] == 3 ? "Raid Capsule" : it[0] == 9 ? "Millite" : Items.NAME[it[0] - 4];
+            plain(c, (it[1] > 1 ? it[1] + " " : "") + nm, q.centerX(), q.bottom - gh * 0.3f, 21 * u, 0xFFFFFFFF, Paint.Align.CENTER, gw - 20 * u);
+            pill(c, q.centerX(), q.bottom - gh * 0.12f, it[2] + " Gold", 22 * u, 0xFF3A2400, can ? 0xFFFFD23F : 0xFF8A84A0);
+            btns.add(new Btn(q, () -> {
+                String s = pf.buyGold(ki);
+                if (s == null) { showToast(L.t("Gold ไม่พอ • ขายของใน Plaza เพื่อหา Gold", "Not enough Gold • sell things in the Plaza")); return; }
+                Sfx.play(Sfx.GACHA);
+                showToast(L.t("ซื้อแล้ว: ", "Bought: ") + s);
+                pushNow();
+            }));
         }
     }
 
@@ -2118,6 +2167,11 @@ public final class GameView extends View {
                 c.restore();
                 break;
             }
+            case 4: // a pile of gold coins
+                goldIcon(c, x - r * 0.45f, y + r * 0.3f, r * 0.45f);
+                goldIcon(c, x + r * 0.45f, y + r * 0.3f, r * 0.45f);
+                goldIcon(c, x, y - r * 0.2f, r * 0.55f);
+                break;
             default: // a planet wearing a skin ring
                 sprite(c, pBmp[Defs.EARTH], x, y, r * 0.9f, 255);
                 sp.setStrokeWidth(8 * u);
@@ -2316,7 +2370,14 @@ public final class GameView extends View {
         RectF r = new RectF(40 * u, 160 * u, W - 40 * u, H - 160 * u);
         popupFrame(c, r, L.t("อุปกรณ์: ", "Equipment: ") + Defs.P_NAME[t]);
         float y = r.top + 160 * u;
+        if (pf.effect[t] >= 0) effectAura(c, pf.effect[t], r.centerX(), y + 110 * u, 110 * u);
         sprite(c, pbmp(t), r.centerX(), y + 110 * u, 110 * u, 255);
+        rf.set(r.right - 280 * u, y + 70 * u, r.right - 30 * u, y + 160 * u);
+        int ef = pf.effect[t];
+        button(c, rf, ef >= 0 ? "Effect: " + Defs.EFF_NAME[ef] : L.t("ใส่ Effect", "Add effect"), ef >= 0 ? Defs.EFF_COLOR[ef] : 0xFF3A3360, true, () -> {
+            effPick = pf.effect[t] >= 0 ? pf.effect[t] : 0;
+            popup = P_EFFECT;
+        });
         if (pf.moonOn[t] >= 0) {
             double ma = anim * 1.4;
             sprite(c, moonBmp(pf.moonOn[t]), r.centerX() + (float) Math.cos(ma) * 160 * u, y + 110 * u + (float) Math.sin(ma) * 40 * u, 26 * u, 255);
@@ -2368,6 +2429,88 @@ public final class GameView extends View {
         rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 30 * u);
         button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
     }
+
+    /** effect token being applied in the effect popup */
+    int effPick;
+
+    /** a coloured aura behind a planet that wears an effect */
+    void effectAura(Canvas c, int e, float x, float y, float r) {
+        int col = Defs.EFF_COLOR[e];
+        glowCircle(c, x, y, r * 1.55f, alpha(col, 0x70));
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(r * 0.06f);
+        for (int k = 0; k < 3; k++) {
+            int cc = e == Defs.EFF_RAINBOW ? Art.hsvToRgb(new float[]{(anim * 120 + k * 120) % 360, 0.75f, 1f}) : col;
+            sp.setColor(alpha(cc, 0xCC));
+            rf2.set(x - r * 1.18f, y - r * 1.18f, x + r * 1.18f, y + r * 1.18f);
+            c.drawArc(rf2, anim * (e == Defs.EFF_BLAZE ? 220 : 90) + k * 120, 60, false, sp);
+        }
+        int n = e == Defs.EFF_SHINY ? 6 : 3;
+        for (int k = 0; k < n; k++) {
+            double a = -anim * 1.2 + k * 6.283 / n;
+            float sx = x + (float) Math.cos(a) * r * 1.3f, sy = y + (float) Math.sin(a) * r * 1.3f;
+            float s = r * (0.09f + 0.04f * (float) Math.sin(anim * 5 + k));
+            c.save();
+            c.translate(sx, sy);
+            c.scale(s, s);
+            p.setShader(null);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(e == Defs.EFF_BLAZE ? 0xFFFFB040 : 0xFFFFFFFF);
+            c.drawPath(Art.starPath(0, 0, 1f, 0.35f, 4), p);
+            c.restore();
+        }
+    }
+
+    /** put an effect token on one of your planets */
+    void drawEffectPick(Canvas c) {
+        RectF r = new RectF(30 * u, 150 * u, W - 30 * u, H - 150 * u);
+        popupFrame(c, r, L.t("ใส่ Effect ให้ดาว", "Give a planet an effect"));
+        float y = r.top + 140 * u;
+        float tw = (r.width() - 60 * u) / Defs.EFF_COUNT;
+        for (int e = 0; e < Defs.EFF_COUNT; e++) {
+            final int ee = e;
+            RectF q = new RectF(r.left + 30 * u + e * tw + 5 * u, y, r.left + 30 * u + (e + 1) * tw - 5 * u, y + 200 * u);
+            int n = pf.items[Items.EFF_TOKEN + e];
+            rarityCard(c, q, Defs.EFF_COLOR[e], n > 0, effPick == e, 18 * u);
+            effectIcon(c, e, q.centerX(), q.top + 75 * u, 42 * u);
+            plain(c, Defs.EFF_NAME[e], q.centerX(), q.bottom - 52 * u, 22 * u, 0xFFFFFFFF, Paint.Align.CENTER, tw);
+            text(c, "x" + n, q.centerX(), q.bottom - 14 * u, 26 * u, n > 0 ? 0xFFFFE27A : 0xFF8A84A0, Paint.Align.CENTER, 0);
+            btns.add(new Btn(q, () -> effPick = ee));
+        }
+        y += 225 * u;
+        plain(c, L.en ? Defs.EFF_DESC_EN[effPick] : Defs.EFF_DESC[effPick], r.centerX(), y + 10 * u, 26 * u, Defs.EFF_COLOR[effPick], Paint.Align.CENTER, r.width() - 60 * u);
+        plain(c, L.t("แตะดาวเพื่อใส่ (ใส่ทับ Effect เดิมได้) • ได้ Effect จากด่าน Admin Abuse", "Tap a planet to apply (replaces its old effect) • win effects in Admin Abuse stages"),
+                r.centerX(), y + 50 * u, 22 * u, 0xFFC9C2E6, Paint.Align.CENTER, r.width() - 60 * u);
+        y += 80 * u;
+        RectF view = new RectF(r.left + 10 * u, y, r.right - 10 * u, r.bottom - 140 * u);
+        java.util.ArrayList<Integer> mine = new java.util.ArrayList<>();
+        for (int t = 0; t < Defs.P_COUNT; t++) if (pf.owned[t]) mine.add(t);
+        float cell = (r.width() - 60 * u) / 5f, rowH = cell + 44 * u;
+        beginScroll(c, 3500, view, (float) Math.ceil(mine.size() / 5f) * rowH + 20 * u, 0.016f);
+        for (int k = 0; k < mine.size(); k++) {
+            final int t = mine.get(k);
+            float x = r.left + 30 * u + (k % 5) * cell, yy = view.top + (k / 5) * rowH;
+            RectF cr = new RectF(x + 6 * u, yy + 6 * u, x + cell - 6 * u, yy + cell - 6 * u);
+            int ef = pf.effect[t];
+            rarityCard(c, cr, Defs.RARITY_COLOR[Defs.P_RARITY[t]], true, ef >= 0, 18 * u);
+            if (ef >= 0) effectAura(c, ef, cr.centerX(), cr.centerY(), cell * 0.26f);
+            sprite(c, pbmp(t), cr.centerX(), cr.centerY(), cell * 0.3f, 255);
+            plain(c, ef >= 0 ? Defs.EFF_NAME[ef] : Defs.P_NAME[t], cr.centerX(), cr.bottom + 28 * u, 20 * u, ef >= 0 ? Defs.EFF_COLOR[ef] : 0xFFE6E0FF, Paint.Align.CENTER, cell);
+            scrollBtn(cr, () -> {
+                if (pf.items[Items.EFF_TOKEN + effPick] <= 0) { showToast(L.t("ไม่มี ", "No ") + Items.NAME[Items.EFF_TOKEN + effPick]); return; }
+                if (pf.applyEffect(t, effPick)) {
+                    Sfx.play(Sfx.RARE);
+                    showToast(Defs.EFF_NAME[effPick] + " " + Defs.P_NAME[t] + L.t(" • ราคา x", " • value x") + fmtMul(Defs.EFF_VALUE[effPick]));
+                    pushNow();
+                }
+            });
+        }
+        endScroll(c);
+        rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 30 * u);
+        button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
+    }
+
+    static String fmtMul(float f) { return f == (int) f ? String.valueOf((int) f) : String.valueOf(f); }
 
     // ------------------------------------------------------------------ inventory screen: capsules | skins | artifacts
     int invReveal = Integer.MIN_VALUE, invTab;
@@ -2513,21 +2656,25 @@ public final class GameView extends View {
     boolean friendOnline(Social.Friend f) { return f.seen > 0 && Math.abs(System.currentTimeMillis() - f.seen) < 60000; }
 
     void socFriends(Canvas c) {
-        rf.set(40 * u, 310 * u, W - 40 * u, 410 * u);
-        button(c, rf, L.t("+ เพิ่มเพื่อนด้วยชื่อไอดี", "+ Add a friend by name"), 0xFF4F8BFF, true, () ->
-                Dialogs.ask(ctx, L.t("เพิ่มเพื่อน", "Add friend"), L.t("พิมพ์ชื่อไอดีของเพื่อน", "Your friend's account name"),
-                        new String[]{L.t("ชื่อ", "Name")}, new int[]{Dialogs.TEXT}, new String[]{""}, L.t("ส่งคำขอ", "Send request"), v -> {
-                            String nm = v[0].trim();
-                            if (nm.isEmpty()) return L.t("ใส่ชื่อ", "Enter a name");
-                            if (Accounts.norm(nm).equals(Accounts.norm(user))) return L.t("เพิ่มตัวเองไม่ได้", "That's you");
+        RectF idr = new RectF(40 * u, 300 * u, W - 40 * u, 420 * u);
+        panel(c, idr, 0xEE1A1440, 24 * u);
+        plain(c, L.t("Player ID ของฉัน", "My Player ID"), idr.left + 30 * u, idr.top + 44 * u, 24 * u, 0xFFC9C2E6, Paint.Align.LEFT, 0);
+        title(c, Social.pid(cloud.uid), idr.left + 30 * u, idr.top + 100 * u, 48 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        rf.set(idr.right - 380 * u, idr.top + 15 * u, idr.right - 15 * u, idr.bottom - 15 * u);
+        button(c, rf, L.t("+ เพิ่มด้วย ID", "+ Add by ID"), 0xFF4F8BFF, true, () ->
+                Dialogs.ask(ctx, L.t("เพิ่มเพื่อน", "Add friend"), L.t("ใส่ Player ID 8 หลักของเพื่อน (ดูได้ที่หน้าโปรไฟล์)", "Your friend's 8-digit Player ID (shown on their profile)"),
+                        new String[]{"Player ID"}, new int[]{Dialogs.TEXT}, new String[]{""}, L.t("ส่งคำขอ", "Send request"), v -> {
+                            String id = v[0].replaceAll("[^0-9]", "");
+                            if (id.length() != 8) return L.t("Player ID มี 8 หลัก", "A Player ID has 8 digits");
+                            if (id.equals(Social.pid(cloud.uid))) return L.t("นี่คือ ID ของคุณเอง", "That's your own ID");
                             cloud.players((list, err) -> {
                                 if (err != null) { showToast(err); return; }
                                 for (Cloud.Player pl : list)
-                                    if (Accounts.norm(pl.name).equals(Accounts.norm(nm))) {
+                                    if (Social.pid(pl.uid).equals(id)) {
                                         social.sendRequest(pl.uid, user, (ok, e2) -> showToast(e2 != null ? e2 : L.t("ส่งคำขอเป็นเพื่อนถึง ", "Friend request sent to ") + pl.name));
                                         return;
                                     }
-                                showToast(L.t("ไม่พบผู้เล่นชื่อ ", "No player named ") + nm);
+                                showToast(L.t("ไม่พบผู้เล่น ID ", "No player with ID ") + id);
                             });
                             return null;
                         }));
@@ -2561,7 +2708,10 @@ public final class GameView extends View {
             p.setShader(null);
             p.setColor(on ? 0xFF7CFF8A : 0xFF6A6488);
             c.drawCircle(row.left + 40 * u, row.centerY(), 12 * u, p);
-            text(c, f.name, row.left + 70 * u, row.centerY() - 2 * u, 34 * u, 0xFFFFFFFF, Paint.Align.LEFT, row.width() - 520 * u);
+            text(c, f.name, row.left + 70 * u, row.centerY() - 2 * u, 34 * u, 0xFFFFFFFF, Paint.Align.LEFT, row.width() - 750 * u);
+            RectF b0 = new RectF(row.right - 690 * u, row.top + 15 * u, row.right - 480 * u, row.bottom - 15 * u);
+            flatOrButton(c, b0, L.t("เทรด", "Trade"), 0xFFFFA01F, true);
+            scrollBtn(b0, () -> openTrade(f));
             plain(c, on ? L.t("ออนไลน์", "online") : L.t("ออฟไลน์", "offline"), row.left + 70 * u, row.centerY() + 34 * u, 22 * u, on ? 0xFF7CFF8A : 0xFF8A84A0, Paint.Align.LEFT, 0);
             RectF b1 = new RectF(row.right - 460 * u, row.top + 15 * u, row.right - 250 * u, row.bottom - 15 * u);
             boolean inRoom = social.roomCode != null;
@@ -2575,7 +2725,7 @@ public final class GameView extends View {
             scrollBtn(b2, () -> Dialogs.confirm(ctx, L.t("ลบเพื่อน", "Remove friend"), f.name + "?", L.t("ลบ", "Remove"), () -> social.unfriend(f, (ok, e) -> socialRefresh())));
             yy += 125 * u;
         }
-        if (fr.isEmpty()) plain(c, L.t("ยังไม่มีเพื่อน • เพิ่มด้วยชื่อไอดี", "No friends yet • add one by name"), W / 2, view.top + 80 * u, 28 * u, 0xFF8A84A0, Paint.Align.CENTER, 0);
+        if (fr.isEmpty()) plain(c, L.t("ยังไม่มีเพื่อน • เพิ่มด้วย Player ID", "No friends yet • add one by Player ID"), W / 2, view.top + 80 * u, 28 * u, 0xFF8A84A0, Paint.Align.CENTER, 0);
         endScroll(c);
     }
 
@@ -2960,7 +3110,7 @@ public final class GameView extends View {
         return e == 0 ? L.t("สุ่มสกินดวงดาว Common > Exclusive", "Random planet skin, Common > Exclusive") : L.en ? Items.DESC_EN[e - 1] : Items.DESC[e - 1];
     }
 
-    boolean bagUsable(int e) { return e == 0 || e - 1 == Items.ART_CAPSULE || e - 1 == Items.SUPPLY; }
+    boolean bagUsable(int e) { return e == 0 || Items.isCapsule(e - 1) || Items.isEffect(e - 1); }
 
     int bagRarity(int e) { return e == 0 ? Defs.LEGEND : Items.RARITY[e - 1]; }
 
@@ -2972,22 +3122,24 @@ public final class GameView extends View {
     /** one bag for everything: tap an item, then Use it */
     void invBag(Canvas c) {
         // order: capsules first, then materials
-        int[] order = {0, 1 + Items.ART_CAPSULE, 1 + Items.SUPPLY, 1 + Items.STARDUST, 1 + Items.NEBULA, 1 + Items.CATALYST};
-        float cell = (W - 100 * u) / 4f;
+        int[] order = {0, 1 + Items.ART_CAPSULE, 1 + Items.SUPPLY, 1 + Items.ADMIN_CAPSULE, 1 + Items.STARDUST, 1 + Items.NEBULA, 1 + Items.CATALYST,
+                1 + Items.EFF_TOKEN, 2 + Items.EFF_TOKEN, 3 + Items.EFF_TOKEN, 4 + Items.EFF_TOKEN, 5 + Items.EFF_TOKEN};
+        int cols = 6;
+        float cell = (W - 100 * u) / cols;
         for (int k = 0; k < order.length; k++) {
             final int e = order[k];
             int n = bagCount(e);
-            float x = 50 * u + (k % 4) * cell, y = 310 * u + (k / 4) * (cell + 10 * u);
+            float x = 50 * u + (k % cols) * cell, y = 310 * u + (k / cols) * (cell + 10 * u);
             RectF q = new RectF(x + 6 * u, y + 6 * u, x + cell - 6 * u, y + cell - 6 * u);
             rarityCard(c, q, Defs.RARITY_COLOR[bagRarity(e)], n > 0, bagSel == e, 22 * u);
-            bagIconOf(c, e, q.centerX(), q.centerY() - 10 * u, cell * 0.28f);
-            text(c, "x" + n, q.right - 14 * u, q.bottom - 14 * u, 28 * u, n > 0 ? 0xFFFFFFFF : 0xFF8A84A0, Paint.Align.RIGHT, 0);
-            if (bagUsable(e) && n > 0) pill(c, q.left + 46 * u, q.top + 24 * u, L.t("ใช้ได้", "USE"), 16 * u, 0xFF0B2A14, 0xFF7CFF8A);
+            bagIconOf(c, e, q.centerX(), q.centerY() - 8 * u, cell * 0.27f);
+            text(c, "x" + n, q.right - 12 * u, q.bottom - 12 * u, 24 * u, n > 0 ? 0xFFFFFFFF : 0xFF8A84A0, Paint.Align.RIGHT, 0);
+            if (bagUsable(e) && n > 0) pill(c, q.left + 38 * u, q.top + 20 * u, L.t("ใช้ได้", "USE"), 14 * u, 0xFF0B2A14, 0xFF7CFF8A);
             btns.add(new Btn(q, () -> bagSel = e));
         }
         // detail panel
         int e = bagSel, n = bagCount(e);
-        float top = 310 * u + 2 * (cell + 10 * u) + 20 * u;
+        float top = 310 * u + (float) Math.ceil(order.length / (float) cols) * (cell + 10 * u) + 20 * u;
         RectF box = new RectF(40 * u, top, W - 40 * u, navTop - 30 * u);
         int col = Defs.RARITY_COLOR[bagRarity(e)];
         modeCard(c, box, col, 0xEE1A0F30);
@@ -3003,15 +3155,23 @@ public final class GameView extends View {
             rf.set(box.left + 30 * u, by, box.left + 30 * u + bw, by + 100 * u);
             button(c, rf, n > 0 ? L.t("ใช้", "Use") : L.t("ไม่มี", "None"), 0xFF2FB86A, n > 0, () -> useBagItem(e));
             rf.set(box.right - 30 * u - bw, by, box.right - 30 * u, by + 100 * u);
-            button(c, rf, L.t("อัตรา", "Rates"), 0xFF4F8BFF, true, () -> { capSel = e == 0 ? 0 : e - 1 == Items.ART_CAPSULE ? 1 : 2; popup = P_CRATES; });
+            if (Items.isEffect(e - 1)) button(c, rf, L.t("Effect ที่ใส่อยู่", "Planets with effects"), 0xFF4F8BFF, true, () -> { effPick = e - 1 - Items.EFF_TOKEN; popup = P_EFFECT; });
+            else button(c, rf, L.t("อัตรา", "Rates"), 0xFF4F8BFF, true, () -> { capSel = capOf(e); popup = P_CRATES; });
         } else {
             rf.set(box.left + 30 * u, by, box.right - 30 * u, by + 100 * u);
             button(c, rf, L.t("ไปที่คราฟ", "Go to Craft"), 0xFF33C6A6, true, () -> invTab = 1);
         }
     }
 
+    int capOf(int e) { return e == 0 ? 0 : e - 1 == Items.ART_CAPSULE ? 1 : e - 1 == Items.ADMIN_CAPSULE ? 3 : 2; }
+
+    int bagOfCap(int cs) { return cs == 0 ? 0 : cs == 1 ? 1 + Items.ART_CAPSULE : cs == 3 ? 1 + Items.ADMIN_CAPSULE : 1 + Items.SUPPLY; }
+
+    String revealText = "";
+
     void useBagItem(int e) {
-        capSel = e == 0 ? 0 : e - 1 == Items.ART_CAPSULE ? 1 : 2;
+        if (e > 0 && Items.isEffect(e - 1)) { effPick = e - 1 - Items.EFF_TOKEN; popup = P_EFFECT; return; }
+        capSel = capOf(e);
         revealKind = -1;
         openSelectedCapsule();
         if (revealKind >= 0) popup = P_REVEAL;
@@ -3039,6 +3199,12 @@ public final class GameView extends View {
             sub = L.en ? Defs.MOON_DESC_EN[revealA] : Defs.MOON_DESC[revealA];
             rays(c, cx, cy, rc, e);
             sprite(c, moonBmp(revealA), cx, cy, 150 * u * backOut(e), 255);
+        } else if (revealKind == 3) {
+            rc = 0xFFFF2B4B;
+            nm = revealText;
+            sub = L.t("จาก Admin Capsule", "from an Admin Capsule");
+            rays(c, cx, cy, rc, e);
+            capsulePod(c, cx, cy, 130 * u * backOut(e), 0xFF2A0008, 0xFFFF2B4B, 0xFFFFE0E0, 3);
         } else {
             rc = 0xFF5EC8FF;
             String[] kn = {"Star", "Millite", "Crystal", "Stardust", "Nebula Core"};
@@ -3054,9 +3220,9 @@ public final class GameView extends View {
         title(c, nm, cx, cy + 300 * u, 64 * u, rc, Paint.Align.CENTER, W - 80 * u);
         plain(c, sub, cx, cy + 370 * u, 32 * u, 0xFFFFFFFF, Paint.Align.CENTER, W - 100 * u);
         float bw = (W - 180 * u) / 2f, by = H - 420 * u;
-        int left = bagCount(capSel == 0 ? 0 : capSel == 1 ? 1 + Items.ART_CAPSULE : 1 + Items.SUPPLY);
+        int left = bagCount(bagOfCap(capSel));
         rf.set(60 * u, by, 60 * u + bw, by + 120 * u);
-        button(c, rf, L.t("ใช้อีก", "Use again") + " (" + left + ")", 0xFF2FB86A, left > 0, () -> useBagItem(capSel == 0 ? 0 : capSel == 1 ? 1 + Items.ART_CAPSULE : 1 + Items.SUPPLY));
+        button(c, rf, L.t("ใช้อีก", "Use again") + " (" + left + ")", 0xFF2FB86A, left > 0, () -> useBagItem(bagOfCap(capSel)));
         rf.set(W - 60 * u - bw, by, W - 60 * u, by + 120 * u);
         button(c, rf, "OK", 0xFF6B5BD6, true, () -> popup = P_NONE);
     }
@@ -3096,6 +3262,12 @@ public final class GameView extends View {
             revealA = a;
             revealKind = 1;
             Sfx.play(a == Defs.MOON_HELL || a == Defs.MOON_VOID ? Sfx.RARE : Sfx.GACHA);
+        } else if (capSel == 3) {
+            String s = pf.openAdminCapsule();
+            if (s == null) return;
+            revealText = s;
+            revealKind = 3;
+            Sfx.play(Sfx.RARE);
         } else {
             int[] r = pf.openSupply();
             if (r == null) return;
@@ -3212,10 +3384,16 @@ public final class GameView extends View {
                 rarityCard(c, cr, rc, own, on, 18 * u);
                 sprite(c, skinBmp(pt, st), cr.centerX(), cr.centerY(), cell * 0.36f, own ? 255 : 40);
                 if (!own) text(c, "?", cr.centerX(), cr.centerY() + 16 * u, 48 * u, 0x996A6488);
+                if (Skins.event(st)) pill(c, cr.centerX(), cr.bottom - 16 * u, "EVENT", 16 * u, 0xFF3A0010, 0xFFFF6A8B);
                 if (on) pill(c, cr.centerX(), cr.top + 18 * u, L.t("ใส่อยู่", "ON"), 18 * u, 0xFF0B2A14, 0xFF7CFF8A);
                 plain(c, Defs.P_NAME[pt], cr.centerX(), cr.bottom + 26 * u, 20 * u, own ? 0xFFE6E0FF : 0xFF6A6488, Paint.Align.CENTER, cell);
                 scrollBtn(cr, () -> {
-                    if (!pf.skins.contains(key)) { showToast(Skins.name(key) + L.t(" • ยังไม่มี (สุ่มจาก Raid Capsule)", " • not owned yet (Raid Capsule)")); return; }
+                    if (!pf.skins.contains(key)) {
+                        showToast(Skins.name(key) + (st == Skins.ANNIV ? L.t(" • ได้จากอีเวนต์ครบรอบเท่านั้น", " • anniversary event only")
+                                : st == Skins.ADMIN ? L.t(" • ได้จาก Admin Capsule (Admin Abuse)", " • from Admin Capsules (Admin Abuse)")
+                                : L.t(" • ยังไม่มี (สุ่มจาก Raid Capsule)", " • not owned yet (Raid Capsule)")));
+                        return;
+                    }
                     if (!pf.owned[pt]) { showToast(L.t("ยังไม่มีดาว ", "You don't own ") + Defs.P_NAME[pt]); return; }
                     pf.equipSkin(pt, pf.skinOn[pt] == st ? -1 : st);
                     showToast(pf.skinOn[pt] == st ? L.t("ใส่สกิน ", "Equipped ") + Skins.name(key) : L.t("ถอดสกินแล้ว", "Skin removed"));
@@ -3251,7 +3429,37 @@ public final class GameView extends View {
     }
 
     /** Artifact / Supply capsule contents with chances */
+    void drawAdminRates(Canvas c) {
+        RectF r = new RectF(40 * u, 360 * u, W - 40 * u, H - 360 * u);
+        popupFrame(c, r, L.t("อัตรา: Admin Capsule", "Rates: Admin Capsule"));
+        float sum = 0;
+        for (int[] row : Items.ADMIN_TABLE) sum += row[1];
+        String[] kn = {"Gold Coin", L.t("Effect (สุ่ม 1 จาก 5)", "Effect (1 of 5)"), L.t("Artifact (สุ่ม)", "Artifact (random)"), "Evo Catalyst", L.t("สกิน Admin (สุ่มดาว)", "Admin skin (random planet)")};
+        int n = Items.ADMIN_TABLE.length;
+        float rowH = Math.min(150 * u, (r.height() - 330 * u) / n), y = r.top + 160 * u;
+        for (int i = 0; i < n; i++) {
+            int[] t = Items.ADMIN_TABLE[i];
+            RectF row = new RectF(r.left + 30 * u, y, r.right - 30 * u, y + rowH - 12 * u);
+            p.setShader(null);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(alpha(0xFFFF2B4B, 0x30));
+            c.drawRoundRect(row, 18 * u, 18 * u, p);
+            float ix = row.left + 70 * u, iy = row.centerY();
+            if (t[0] == 0) goldIcon(c, ix, iy, rowH * 0.24f);
+            else if (t[0] == 1) effectIcon(c, (int) (anim * 0.8f) % Defs.EFF_COUNT, ix, iy, rowH * 0.28f);
+            else if (t[0] == 2) sprite(c, moonBmp(Defs.MOON_HELL), ix, iy, rowH * 0.3f, 255);
+            else if (t[0] == 3) itemIcon(c, Items.CATALYST, ix, iy, rowH * 0.28f);
+            else sprite(c, skinBmp(Defs.SUN, Skins.ADMIN), ix, iy, rowH * 0.34f, 255);
+            text(c, kn[t[0]] + (t[2] != t[3] || t[0] == 0 ? "  " + t[2] + "-" + t[3] : ""), row.left + 140 * u, iy + 12 * u, 32 * u, 0xFFFFFFFF, Paint.Align.LEFT, row.width() - 330 * u);
+            text(c, fmtPct(t[1] * 100f / sum), row.right - 30 * u, iy + 12 * u, 36 * u, 0xFFFF6A8B, Paint.Align.RIGHT, 0);
+            y += rowH;
+        }
+        rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 30 * u);
+        button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
+    }
+
     void drawItemCapsuleRates(Canvas c) {
+        if (capSel == 3) { drawAdminRates(c); return; }
         boolean art = capSel == 1;
         RectF r = new RectF(40 * u, 300 * u, W - 40 * u, H - 300 * u);
         popupFrame(c, r, L.t("อัตรา: ", "Rates: ") + (art ? "Artifact Capsule" : "Supply Capsule"));
@@ -3294,6 +3502,7 @@ public final class GameView extends View {
         RectF r = new RectF(30 * u, 110 * u, W - 30 * u, H - 110 * u);
         popupFrame(c, r, L.t("อัตรา: Raid Capsule", "Rates: Raid Capsule"));
         java.util.List<Integer> all = Skins.all();
+        all.removeIf(k -> Skins.event(Skins.styleOf(k))); // event skins never drop from capsules
         float cell = (r.width() - 80 * u) / 5f, rowH = cell + 44 * u, headH = 90 * u, contentH = 0;
         for (int tier : Skins.TIER_ORDER) {
             int n = 0;
@@ -3430,6 +3639,13 @@ public final class GameView extends View {
             c.drawCircle(x, ey, r * 0.15f, p);
             p.setColor(darken(light, 0.3f));
             c.drawCircle(x + r * 0.06f, ey - r * 0.04f, r * 0.13f, p);
+        } else if (emblem == 3) {
+            p.setColor(0xFFFFFFFF);
+            p.setTextAlign(Paint.Align.CENTER);
+            p.setTextSize(r * 0.34f);
+            p.setFakeBoldText(true);
+            c.drawText("A", x, ey + r * 0.12f, p);
+            p.setFakeBoldText(false);
         } else star(c, x, ey, r * 0.16f);
         // specular shine
         p.setColor(0x66FFFFFF);
@@ -3918,6 +4134,79 @@ public final class GameView extends View {
     }
 
     /** icons for bag items */
+    /** an effect orb: Golden, Silver, Rainbow, Shiny, Blaze */
+    void effectIcon(Canvas c, int e, float x, float y, float r) {
+        int col = Defs.EFF_COLOR[e];
+        p.setStyle(Paint.Style.FILL);
+        glowCircle(c, x, y, r * 1.35f, alpha(col, 0x66));
+        if (e == Defs.EFF_RAINBOW) {
+            p.setColor(0xFFFFFFFF);
+            p.setShader(new android.graphics.SweepGradient(x, y, new int[]{0xFFFF4B5B, 0xFFFFD23F, 0xFF7CFF8A, 0xFF3BD8FF, 0xFFB86BFF, 0xFFFF4B5B}, null));
+            c.save();
+            c.rotate(anim * 90, x, y);
+            c.drawCircle(x, y, r * 0.72f, p);
+            c.restore();
+        } else {
+            p.setColor(0xFFFFFFFF);
+            p.setShader(new RadialGradient(x - r * 0.25f, y - r * 0.3f, r, new int[]{0xFFFFFFFF, col, darken(col, 0.55f)}, new float[]{0f, 0.45f, 1f}, Shader.TileMode.CLAMP));
+            c.drawCircle(x, y, r * 0.72f, p);
+        }
+        p.setShader(null);
+        if (e == Defs.EFF_BLAZE) {
+            // flame crown
+            p.setColor(0xEEFFE070);
+            for (int k = -1; k <= 1; k++) {
+                Path d = new Path();
+                float bx = x + k * r * 0.3f, hh = r * (k == 0 ? 0.6f : 0.4f) * (0.9f + 0.1f * (float) Math.sin(anim * 9 + k));
+                d.moveTo(bx - r * 0.15f, y - r * 0.5f);
+                d.quadTo(bx - r * 0.08f, y - r * 0.6f - hh * 0.5f, bx, y - r * 0.55f - hh);
+                d.quadTo(bx + r * 0.08f, y - r * 0.6f - hh * 0.5f, bx + r * 0.15f, y - r * 0.5f);
+                d.close();
+                c.drawPath(d, p);
+            }
+        }
+        // facet shine + sparkles
+        p.setColor(0x88FFFFFF);
+        c.drawCircle(x - r * 0.26f, y - r * 0.28f, r * 0.16f, p);
+        int n = e == Defs.EFF_SHINY ? 4 : 2;
+        for (int k = 0; k < n; k++) {
+            double a = anim * 1.4 + k * 6.283 / n;
+            float sx = x + (float) Math.cos(a) * r * 0.95f, sy = y + (float) Math.sin(a) * r * 0.95f;
+            c.save();
+            c.translate(sx, sy);
+            c.scale(r * 0.16f, r * 0.16f);
+            p.setColor(0xFFFFFFFF);
+            c.drawPath(Art.starPath(0, 0, 1f, 0.35f, 4), p);
+            c.restore();
+        }
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(r * 0.06f);
+        sp.setColor(0xFF140A2A);
+        c.drawCircle(x, y, r * 0.72f, sp);
+    }
+
+    /** a Gold Coin */
+    void goldIcon(Canvas c, float x, float y, float r) {
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0xFFFFFFFF);
+        p.setShader(new RadialGradient(x - r * 0.3f, y - r * 0.35f, r * 1.3f, new int[]{0xFFFFF6C0, 0xFFFFC21F, 0xFFB07000}, null, Shader.TileMode.CLAMP));
+        c.drawCircle(x, y, r, p);
+        p.setShader(null);
+        sp.setPathEffect(null);
+        sp.setStrokeWidth(r * 0.12f);
+        sp.setColor(0xFF8A5200);
+        c.drawCircle(x, y, r * 0.95f, sp);
+        sp.setStrokeWidth(r * 0.07f);
+        sp.setColor(0xFFFFE27A);
+        c.drawCircle(x, y, r * 0.7f, sp);
+        p.setColor(0xFF8A5200);
+        p.setTextAlign(Paint.Align.CENTER);
+        p.setTextSize(r * 0.95f);
+        p.setFakeBoldText(true);
+        c.drawText("G", x, y + r * 0.34f, p);
+        p.setFakeBoldText(false);
+    }
+
     void itemIcon(Canvas c, int id, float x, float y, float r) {
         p.setShader(null);
         p.setStyle(Paint.Style.FILL);
@@ -3980,6 +4269,12 @@ public final class GameView extends View {
                 break;
             case Items.SUPPLY:
                 capsulePod(c, x, y, r, 0xFF06203A, 0xFF5EC8FF, 0xFFB8FFFF, 2);
+                break;
+            case Items.ADMIN_CAPSULE:
+                capsulePod(c, x, y, r, 0xFF2A0008, 0xFFFF2B4B, 0xFFFFE0E0, 3);
+                break;
+            case 6: case 7: case 8: case 9: case 10:
+                effectIcon(c, id - Items.EFF_TOKEN, x, y, r);
                 break;
             default:
         }
@@ -5024,8 +5319,7 @@ public final class GameView extends View {
         c.drawLine(rf.left + 18 * u, rf.bottom - 18 * u, rf.right - 18 * u, rf.top + 18 * u, sp);
         btns.add(new Btn(new RectF(acx - 92 * u, acy - 92 * u, acx + 92 * u, acy + 92 * u), () -> popup = P_AVATAR));
         title(c, user, acx, acy + 160 * u, 56 * u, 0xFFFFFFFF, Paint.Align.CENTER, r.width() - 80 * u);
-        int role = cloud.myRole();
-        pill(c, acx, acy + 215 * u, role > 0 ? Roles.NAME[role].toUpperCase(Locale.US) : L.t("ผู้เล่น", "PLAYER"), 26 * u, 0xFF140A2A, role > 0 ? Roles.COLOR[role] : 0xFF9C94C8);
+        pill(c, acx, acy + 215 * u, "ID " + Social.pid(cloud.uid), 30 * u, 0xFF140A2A, 0xFFFFD23F);
         int cleared = 0;
         for (int i = 0; i < Defs.ST_COUNT; i++) if (pf.clear[i]) cleared++;
         int rate = pf.games > 0 ? Math.round(pf.wins * 100f / pf.games) : 0;
@@ -5243,8 +5537,7 @@ public final class GameView extends View {
         panel(c, acct, 0xFF1C1240, 22 * u);
         avatar(c, acct.left + 70 * u, acct.centerY(), 42 * u, pf.avatar);
         text(c, user, acct.left + 140 * u, acct.top + 58 * u, 38 * u, 0xFFFFFFFF, Paint.Align.LEFT, acct.width() - 360 * u);
-        int role = cloud.myRole();
-        plain(c, role > 0 ? Roles.NAME[role] : L.t("ผู้เล่น", "Player"), acct.left + 140 * u, acct.top + 100 * u, 26 * u, role > 0 ? Roles.COLOR[role] : 0xFF9C94C8, Paint.Align.LEFT, 0);
+        plain(c, "ID " + Social.pid(cloud.uid), acct.left + 140 * u, acct.top + 100 * u, 26 * u, 0xFF9C94C8, Paint.Align.LEFT, 0);
         netPill(c, acct.right - 175 * u, acct.centerY());
         y += 150 * u;
         rf.set(x0, y, x0 + bw, y + 95 * u);
@@ -6065,6 +6358,9 @@ public final class GameView extends View {
     Cloud.Player playerByName(String n) {
         String k = Accounts.norm(n);
         for (Cloud.Player q : players) if (Accounts.norm(q.name).equals(k)) return q;
+        // a Player ID works too
+        String id = n.replace("#", "");
+        if (id.matches("[0-9]{8}")) for (Cloud.Player q : players) if (Social.pid(q.uid).equals(id)) return q;
         return null;
     }
 
@@ -6293,15 +6589,19 @@ public final class GameView extends View {
             case "help":
                 log("# view:    list [text] • online • whois <u> • info <u> • logs [n] • server • refresh • clear");
                 log("# players: ban <u> [hours|perm] [reason] • tempban <u> <hours> [reason] • unban <u> • kick <u>");
-                log("# items:   give|take|set <u> <star|millite|crystal|oil|wins|bosskills> <n>");
-                log("#         skin <u> <style> <planet|all> • unskin <u> <style> <planet|all>   (styles: golden graveyard white aurora red elite shinypurple shiny madness king anniv)");
-                log("#         item <u> <capsule|stardust|nebula|catalyst|artcapsule|supply|hellmoon|frostmoon|stormmoon|goldmoon|voidmoon> <n> • evolve <u> <planet> [off]");
+                log("#  <u> = name or 8-digit Player ID");
+                log("# items:   give|take|set <u> <star|millite|crystal|oil|gold|wins|bosskills> <n>");
+                log("#         skin <u> <style> <planet|all> • unskin <u> <style> <planet|all>   (styles: " + styleList() + ")");
+                log("#         item <u> <capsule|stardust|nebula|catalyst|artcapsule|supply|admincapsule|golden|silver|rainbow|shiny|blaze|hellmoon|frostmoon|stormmoon|goldmoon|voidmoon> <n> • evolve <u> <planet> [off]");
+                log("#         effect <u> <planet> <golden|silver|rainbow|shiny|blaze|none>");
+                log("# abuse:   abuse on <minutes> • abuse off • abuse gift <reward:n,...> [message] • abuse boss <hp> [minutes] • abuse");
                 log("#         planet <u> <name|all> • unplanet <u> <name> • level <u> <name|all> <1-10>");
                 log("#         enchant <u> <planet> <enchant|none> [tier] • material <u> <planet> <material|none>");
                 log("#         unlock <u> [stage] • maxlevel <u> • reset <u> • wipe <u>");
                 log("#         giveall <star|millite|crystal> <n>");
                 log("# server:  maintenance on|off • broadcast <msg>|clear • minver <n>" + (consoleApp ? "" : " • infsp on|off"));
                 log("# codes:   code create <CODE> <star:500,supply:1,...> [uses] [days] • code delete <CODE>");
+                log("# rewards: " + String.join(" ", REWARD_NAMES));
 
                 return;
             case "clear": consoleLog.clear(); return;
@@ -6361,22 +6661,11 @@ public final class GameView extends View {
                 }
                 if (a.length < 4 || !a[1].equalsIgnoreCase("create")) {
                     log("! code create <CODE> <reward:n,...> [uses 0=unlimited] [days 0=forever] • code delete <CODE>");
-                    log("  rewards: star crystal oil capsule stardust nebula catalyst artcapsule supply millite   e.g. star:500,supply:1");
+                    log("  rewards: " + String.join(" ", REWARD_NAMES) + "   e.g. star:500,supply:1");
                     return;
                 }
-                String[] names = {"star", "crystal", "oil", "capsule", "stardust", "nebula", "catalyst", "artcapsule", "supply", "millite"};
-                StringBuilder rw = new StringBuilder();
-                for (String part : a[3].split(",")) {
-                    String[] kv = part.split(":");
-                    if (kv.length != 2) { log("! bad reward " + part); return; }
-                    int kind = -1;
-                    for (int k = 0; k < names.length; k++) if (names[k].equalsIgnoreCase(kv[0].trim())) kind = k;
-                    if (kind < 0) { log("! unknown reward " + kv[0]); return; }
-                    int n;
-                    try { n = Integer.parseInt(kv[1].trim()); } catch (NumberFormatException e) { log("! bad amount " + kv[1]); return; }
-                    if (n <= 0 || n > 100000) { log("! amount 1..100000"); return; }
-                    rw.append(rw.length() > 0 ? "," : "").append(kind).append(':').append(n);
-                }
+                String rw = parseRewards(a[3]);
+                if (rw == null) return;
                 int uses = 0, days = 0;
                 try {
                     if (a.length > 4) uses = Integer.parseInt(a[4]);
@@ -6393,6 +6682,45 @@ public final class GameView extends View {
                 if (a.length < 2) { log("! broadcast <message> | broadcast clear"); return; }
                 final String msg = a[1].equalsIgnoreCase("clear") ? null : line.substring(line.indexOf(' ') + 1).trim();
                 cloud.setBroadcast(msg, (ok, err) -> log(err != null ? "! " + err : "ok: broadcast " + (msg == null ? "cleared" : "sent")));
+                return;
+            }
+            case "abuse": {
+                if (!need(Roles.DEV)) return;
+                String sub = a.length > 1 ? a[1].toLowerCase(Locale.US) : "";
+                if (sub.equals("on")) {
+                    int min = 60;
+                    try { if (a.length > 2) min = Integer.parseInt(a[2]); } catch (NumberFormatException e) { log("! minutes"); return; }
+                    if (min < 1 || min > 10080) { log("! 1 .. 10080 minutes"); return; }
+                    final int fm = min;
+                    cloud.abuseStart(min, (ok, err) -> log(err != null ? "! " + err : "ok: ADMIN ABUSE on for " + fm + " min • effect stages are open"));
+                } else if (sub.equals("off")) {
+                    cloud.abuseStop((ok, err) -> log(err != null ? "! " + err : "ok: Admin Abuse ended"));
+                } else if (sub.equals("gift")) {
+                    if (a.length < 3) { log("! abuse gift <reward:n,...> [message]   rewards: " + String.join(" ", REWARD_NAMES)); return; }
+                    String rw = parseRewards(a[2]);
+                    if (rw == null) return;
+                    StringBuilder msg = new StringBuilder();
+                    for (int i = 3; i < a.length; i++) msg.append(i > 3 ? " " : "").append(a[i]);
+                    cloud.abuseGift(rw, msg.toString(), (ok, err) -> log(err != null ? "! " + err : "ok: gift sent to everyone: " + Social.rewardsText(rw)));
+                } else if (sub.equals("boss")) {
+                    if (a.length < 3) { log("! abuse boss <hp> [minutes]   e.g. abuse boss 5000000 30"); return; }
+                    long hp;
+                    int min = 30;
+                    try { hp = Long.parseLong(a[2]); if (a.length > 3) min = Integer.parseInt(a[3]); } catch (NumberFormatException e) { log("! numbers"); return; }
+                    if (hp < 1000 || min < 1) { log("! hp >= 1000, minutes >= 1"); return; }
+                    final long fh = hp;
+                    final int fm = min;
+                    cloud.abuseBoss(hp, min, (ok, err) -> log(err != null ? "! " + err : "ok: Admin boss spawned • " + fh + " HP • " + fm + " min"));
+                } else {
+                    cloud.server((s, err) -> {
+                        if (err != null) { log("! " + err); return; }
+                        Cloud.Abuse ab = s.abuse;
+                        long now = System.currentTimeMillis();
+                        if (ab == null || !ab.on(now)) { log("Admin Abuse: off   (abuse on <minutes>)"); return; }
+                        log("Admin Abuse: ON • ends in " + clock(ab.until - now) + " • gift: " + (ab.giftId.isEmpty() ? "-" : Social.rewardsText(ab.giftRewards)));
+                        if (ab.bossOn(now)) cloud.bossTotal(ab.bossId, (t, e2) -> { if (t != null) log("  boss: " + fmtBig(t[0]) + " / " + fmtBig(ab.bossHp) + " dmg by " + t[1] + " players • " + clock(ab.bossUntil - now) + " left"); });
+                    });
+                }
                 return;
             }
             case "minver": {
@@ -6517,6 +6845,33 @@ public final class GameView extends View {
 
     static String lineOf(String[] a) { return String.join(" ", a); }
 
+    /** reward names by Profile.grant kind (9 = Millite) */
+    static final String[] REWARD_NAMES = {"star", "crystal", "oil", "capsule", "stardust", "nebula", "catalyst", "artcapsule", "supply", "millite",
+            "gold", "admincapsule", "golden", "silver", "rainbow", "shiny", "blaze"};
+
+    static String styleList() {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < Skins.STYLES; i++) b.append(i > 0 ? " " : "").append(i == Skins.ANNIV ? "anniv" : Skins.NAME[i].replace(" ", "").toLowerCase(Locale.US));
+        return b.toString();
+    }
+
+    /** "star:500,gold:20" -> "0:500,10:20", or null (with an error logged) */
+    String parseRewards(String s) {
+        StringBuilder rw = new StringBuilder();
+        for (String part : s.split(",")) {
+            String[] kv = part.split(":");
+            if (kv.length != 2) { log("! bad reward " + part); return null; }
+            int kind = -1;
+            for (int k = 0; k < REWARD_NAMES.length; k++) if (REWARD_NAMES[k].equalsIgnoreCase(kv[0].trim())) kind = k;
+            if (kind < 0) { log("! unknown reward " + kv[0] + " (" + String.join(" ", REWARD_NAMES) + ")"); return null; }
+            int n;
+            try { n = Integer.parseInt(kv[1].trim()); } catch (NumberFormatException e) { log("! bad amount " + kv[1]); return null; }
+            if (n <= 0 || n > 100000) { log("! amount 1..100000"); return null; }
+            rw.append(rw.length() > 0 ? "," : "").append(kind).append(':').append(n);
+        }
+        return rw.toString();
+    }
+
     /** rank gate for console commands */
     boolean need(int rank) {
         if (cloud.myRole() >= rank) return true;
@@ -6549,8 +6904,9 @@ public final class GameView extends View {
                     case "crystal": case "crystals": q.crystals = Math.max(0, set ? v : q.crystals + sign * v); return "ok: crystal = " + q.crystals;
                     case "wins": q.wins = Math.max(0, set ? v : q.wins + sign * v); return "ok: wins = " + q.wins;
                     case "oil": q.oil = Math.max(0, set ? v : q.oil + sign * v); return "ok: crystal oil = " + q.oil;
+                    case "gold": q.gold = Math.max(0, set ? v : q.gold + sign * v); return "ok: gold = " + q.gold;
                     case "bosskills": q.bossKills = Math.max(0, set ? v : q.bossKills + sign * v); return "ok: boss kills = " + q.bossKills;
-                    default: return "! star | millite | crystal | oil | wins | bosskills";
+                    default: return "! star | millite | crystal | oil | gold | wins | bosskills";
                 }
             }
             case "planet": {
@@ -6625,7 +6981,7 @@ public final class GameView extends View {
             case "unskin": {
                 int st = -1;
                 for (int i = 0; i < Skins.STYLES; i++) if (Skins.NAME[i].replace(" ", "").equalsIgnoreCase(a[2]) || (i == Skins.ANNIV && a[2].equalsIgnoreCase("anniv"))) st = i;
-                if (st < 0) return "! style: golden graveyard white aurora red elite shinypurple shiny madness king anniv";
+                if (st < 0) return "! style: " + styleList();
                 boolean all = a[3].equalsIgnoreCase("all");
                 int t = all ? -1 : planetByName(a[3]);
                 if (!all && t < 0) return "! " + L.t("ไม่พบดวงดาว ", "unknown planet ") + a[3];
@@ -6652,14 +7008,23 @@ public final class GameView extends View {
                     q.save();
                     return "ok: " + Defs.MOON_NAME[m] + " = " + q.moons[m];
                 }
-                String[] keys = {"stardust", "nebula", "catalyst", "artcapsule", "supply"};
+                String[] keys = {"stardust", "nebula", "catalyst", "artcapsule", "supply", "admincapsule", "golden", "silver", "rainbow", "shiny", "blaze"};
                 for (int id = 0; id < keys.length; id++) {
                     if (!what.equals(keys[id]) && !Items.NAME[id].replace(" ", "").equalsIgnoreCase(what)) continue;
                     q.items[id] = Math.max(0, q.items[id] + v);
                     q.save();
                     return "ok: " + Items.NAME[id] + " = " + q.items[id];
                 }
-                return "! capsule | stardust | nebula | catalyst | artcapsule | supply | hellmoon | frostmoon | stormmoon | goldmoon | voidmoon";
+                return "! capsule | stardust | nebula | catalyst | artcapsule | supply | admincapsule | golden | silver | rainbow | shiny | blaze | hellmoon | frostmoon | stormmoon | goldmoon | voidmoon";
+            }
+            case "effect": {
+                int t = planetByName(a[2]);
+                if (t < 0) return "! " + L.t("ไม่พบดวงดาว ", "unknown planet ") + a[2];
+                if (!q.owned[t]) return "! " + L.t("ยังไม่มีดาวนี้ (ใช้ planet ก่อน)", "doesn't own it (use planet first)");
+                if (a[3].equalsIgnoreCase("none")) { q.effect[t] = -1; q.save(); return "ok: " + Defs.P_NAME[t] + " effect removed"; }
+                for (int e = 0; e < Defs.EFF_COUNT; e++)
+                    if (Defs.EFF_NAME[e].equalsIgnoreCase(a[3])) { q.effect[t] = e; q.save(); return "ok: " + Defs.EFF_NAME[e] + " " + Defs.P_NAME[t]; }
+                return "! golden | silver | rainbow | shiny | blaze | none";
             }
             case "evolve": {
                 int t = planetByName(a[2]);
@@ -7037,17 +7402,17 @@ public final class GameView extends View {
         float y = r.top + 150 * u;
         text(c, L.t("สกิน (สไตล์)", "Skin style"), r.left + 40 * u, y + 30 * u, 34 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
         y += 50 * u;
-        float cw = (r.width() - 80 * u - 3 * 12 * u) / 4f, chh = 70 * u;
+        float cw = (r.width() - 80 * u - 4 * 10 * u) / 5f, chh = 62 * u;
         for (int s = 0; s < Skins.STYLES; s++) {
             final int ss = s;
-            float x = r.left + 40 * u + (s % 4) * (cw + 12 * u), yy = y + (s / 4) * (chh + 12 * u);
+            float x = r.left + 40 * u + (s % 5) * (cw + 10 * u), yy = y + (s / 5) * (chh + 10 * u);
             rf.set(x, yy, x + cw, yy + chh);
             button(c, rf, s == Skins.ANNIV ? "1st Anniv" : L.en ? Skins.NAME[s] : Skins.NAME_TH[s], giveStyle == s ? Defs.RARITY_COLOR[Skins.TIER[s]] : 0xFF3A3360, true, () -> {
                 giveStyle = ss;
                 if (giveSkinPlanet >= 0 && !Skins.fits(ss, giveSkinPlanet)) giveSkinPlanet = -1;
             });
         }
-        y += 3 * (chh + 12 * u) + 20 * u;
+        y += (float) Math.ceil(Skins.STYLES / 5f) * (chh + 10 * u) + 14 * u;
         text(c, L.t("ดวงดาว", "Planet"), r.left + 40 * u, y + 30 * u, 34 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
         y += 50 * u;
         float cell = (r.width() - 80 * u) / 7f;
@@ -7351,6 +7716,39 @@ public final class GameView extends View {
         y += bh + 20 * u;
         rf.set(40 * u, y, W - 40 * u, y + bh);
         button(c, rf, L.t("รีเฟรช", "Refresh"), 0xFF33A8D0, !serverLoading, this::refreshServer);
+        y += bh + 30 * u;
+        // ---- Admin Abuse controls
+        final boolean ab = s != null && s.abuse != null && s.abuse.on(System.currentTimeMillis());
+        text(c, "Admin Abuse" + (ab ? "  •  ON " + clock(s.abuse.until - System.currentTimeMillis()) : "  •  off"), 50 * u, y + 40 * u, 36 * u, ab ? 0xFFFF4B6B : C_DIM, Paint.Align.LEFT, 0);
+        y += 60 * u;
+        float hb = 100 * u;
+        rf.set(40 * u, y, 40 * u + bw, y + hb);
+        button(c, rf, ab ? L.t("จบอีเวนต์", "End event") : L.t("เริ่มอีเวนต์...", "Start event..."), ab ? 0xFF5A1E2E : 0xFFE0102E, dev, () -> {
+            if (ab) cloud.abuseStop((ok, err) -> { showToast(err != null ? err : "Admin Abuse off"); refreshServer(); });
+            else Dialogs.ask(ctx, "Admin Abuse", L.t("เปิดด่าน Effect + ของแจก + บอส ได้กี่นาที?", "How many minutes? (effect stages, gifts, boss)"),
+                    new String[]{L.t("นาที", "Minutes")}, new int[]{Dialogs.NUMBER}, new String[]{"60"}, L.t("เริ่ม", "Start"), v -> {
+                        try { runCommand("abuse on " + Integer.parseInt(v[0].trim()), false); refreshServer(); return null; }
+                        catch (NumberFormatException e) { return L.t("ใส่ตัวเลข", "Numbers only"); }
+                    });
+        });
+        rf.set(70 * u + bw, y, W - 40 * u, y + hb);
+        button(c, rf, L.t("แจกของ...", "Giveaway..."), 0xFFE0A020, dev && ab, () ->
+                Dialogs.ask(ctx, L.t("แจกของทุกคน", "Gift everyone"), L.t("เช่น gold:50,admincapsule:1 • ", "e.g. gold:50,admincapsule:1 • ") + String.join(" ", REWARD_NAMES),
+                        new String[]{L.t("ของ", "Rewards"), L.t("ข้อความ", "Message")}, new int[]{Dialogs.TEXT, Dialogs.TEXT}, new String[]{"admincapsule:1,gold:50", ""}, L.t("แจก", "Send"), v -> {
+                            if (parseRewards(v[0].trim()) == null) return L.t("รูปแบบของไม่ถูกต้อง", "Bad rewards");
+                            runCommand("abuse gift " + v[0].trim().replace(" ", "") + " " + v[1].trim(), false);
+                            return null;
+                        }));
+        y += hb + 16 * u;
+        rf.set(40 * u, y, 40 * u + bw, y + hb);
+        button(c, rf, L.t("เสกบอส...", "Spawn boss..."), 0xFFB0102E, dev && ab, () ->
+                Dialogs.ask(ctx, L.t("บอส Admin", "Admin boss"), L.t("HP รวมที่ผู้เล่นทุกคนต้องตีให้หมด และเวลา (นาที)", "Total HP everyone must deal, and minutes"),
+                        new String[]{"HP", L.t("นาที", "Minutes")}, new int[]{Dialogs.NUMBER, Dialogs.NUMBER}, new String[]{"5000000", "30"}, L.t("เสก", "Spawn"), v -> {
+                            try { runCommand("abuse boss " + Long.parseLong(v[0].trim()) + " " + Integer.parseInt(v[1].trim()), false); return null; }
+                            catch (NumberFormatException e) { return L.t("ใส่ตัวเลข", "Numbers only"); }
+                        }));
+        rf.set(70 * u + bw, y, W - 40 * u, y + hb);
+        button(c, rf, L.t("สถานะบอส", "Boss status"), 0xFF33A8D0, ab, () -> { runCommand("abuse", false); showToast(L.t("ดูผลในเทอร์มินัล", "See the terminal")); });
         if (consoleApp) {
             // the console stays unlocked on this device; locking it asks for the password again
             rf.set(40 * u, navTopOr(H) - 150 * u, W - 40 * u, navTopOr(H) - 60 * u);
@@ -7846,6 +8244,7 @@ public final class GameView extends View {
             }
         }
         if (pl.material >= 0) materialAura(c, x, y, 46 * sc, pl.material);
+        if (pl.eff >= 0) effectAura(c, pl.eff, x, y, 50 * sc);
         if (Defs.P_KIND[pl.type] == Defs.K_COMMANDER) {
             // its circling route
             sp.setPathEffect(new DashPathEffect(new float[]{14, 12}, anim * 30));
@@ -8544,7 +8943,8 @@ public final class GameView extends View {
             rf.set(r.left + 70 * u, r.top + 610 * u, r.right - 70 * u, r.top + 720 * u);
             button(c, rf, L.t("เล่นอีกครั้ง", "Play again"), 0xFFFF8A2B, true, () -> startChallenge(ck));
             rf.set(r.left + 70 * u, r.top + 760 * u, r.right - 70 * u, r.top + 870 * u);
-            button(c, rf, L.t("กลับไปกิจกรรม", "Back to events"), 0xFF6B5BD6, true, () -> { game = null; evTab = 0; go(S_EVENTS); });
+            if (ck >= Game.CH_EFFECT) button(c, rf, "Admin Abuse", 0xFFE0102E, true, () -> { game = null; go(S_ABUSE); });
+            else button(c, rf, L.t("กลับไปกิจกรรม", "Back to events"), 0xFF6B5BD6, true, () -> { game = null; evTab = 0; go(S_EVENTS); });
             return;
         }
         boolean hasNext = g.won && st != Defs.RAID && st + 1 < Defs.ST_COUNT && st + 1 < pf.unlocked;
@@ -8554,5 +8954,546 @@ public final class GameView extends View {
         else button(c, rf, L.t("เล่นอีกครั้ง", "Play again"), 0xFFFF8A2B, true, () -> startStage(st));
         rf.set(r.left + 70 * u, r.top + 760 * u, r.right - 70 * u, r.top + 870 * u);
         button(c, rf, L.t("เลือกด่าน", "Stage select"), 0xFF6B5BD6, true, () -> { game = null; screen = S_PLAYMENU; });
+    }
+
+    // ================================================================== Admin Abuse
+    Cloud.Abuse abuse;
+    long clockSkew;
+    float abusePoll;
+    long bossTotalDmg, bossPlayers;
+
+    long nowS() { return System.currentTimeMillis() + clockSkew; }
+
+    boolean abuseOn() { return abuse != null && abuse.on(nowS()); }
+
+    void onAbuse(Cloud.Abuse a) {
+        abuse = a;
+        if (pf == null || a == null || !a.on(nowS())) return;
+        if (!a.id.equals(pf.abuseId)) {
+            // a new event: effect stages can be won again
+            pf.abuseId = a.id;
+            pf.abuseMask = 0;
+            pf.save();
+            showToast(L.t("ADMIN ABUSE เริ่มแล้ว!", "ADMIN ABUSE has started!"));
+        }
+        if (!a.giftId.isEmpty() && !a.giftId.equals(pf.giftClaimed) && popup == P_NONE && screen != S_GAME && !consoleApp) popup = P_GIFT;
+    }
+
+    static String clock(long ms) {
+        long s = Math.max(0, ms / 1000);
+        return s >= 3600 ? String.format(Locale.US, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String.format(Locale.US, "%02d:%02d", s / 60, s % 60);
+    }
+
+    /** glitchy red title text */
+    void glitchTitle(Canvas c, String s, float x, float y, float size) {
+        float j = (float) Math.sin(anim * 23) > 0.85f ? 6 * u : 0;
+        title(c, s, x - 4 * u - j, y, size, 0xAA00FFE0, Paint.Align.CENTER, W - 120 * u);
+        title(c, s, x + 4 * u + j, y, size, 0xAAFF2B4B, Paint.Align.CENTER, W - 120 * u);
+        title(c, s, x, y, size, 0xFFFFFFFF, Paint.Align.CENTER, W - 120 * u);
+    }
+
+    void abuseBg(Canvas c, RectF b) {
+        modeCard(c, b, 0xFFFF2B4B, 0xEE2A0410);
+        c.save();
+        c.clipRect(b.left, b.top, b.right, b.bottom);
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        for (int k = 0; k < 7; k++) {
+            float yy = b.top + ((anim * 60 + k * 53) % b.height());
+            p.setColor((k & 1) == 0 ? 0x22FF2B4B : 0x1800FFE0);
+            c.drawRect(b.left, yy, b.right, yy + 6 * u + k % 3 * 4 * u, p);
+        }
+        c.restore();
+    }
+
+    void abuseBanner(Canvas c, RectF b) {
+        abuseBg(c, b);
+        glitchTitle(c, "ADMIN ABUSE", b.centerX(), b.top + 100 * u, 76 * u);
+        long left = abuse.until - nowS();
+        plain(c, L.t("อีเวนต์จากแอดมิน • เหลือ ", "Admin event • ends in ") + clock(left) + (abuse.bossOn(nowS()) ? L.t(" • บอสมาแล้ว!", " • BOSS is here!") : ""),
+                b.centerX(), b.top + 150 * u, 26 * u, 0xFFFFD0D8, Paint.Align.CENTER, b.width() - 40 * u);
+        rf.set(b.centerX() - 200 * u, b.bottom - 72 * u, b.centerX() + 200 * u, b.bottom - 14 * u);
+        button(c, rf, L.t("เข้าร่วม", "Join"), 0xFFE0102E, true, () -> go(S_ABUSE));
+        btns.add(new Btn(new RectF(b), () -> go(S_ABUSE)));
+    }
+
+    void startEffectStage(int e) {
+        if (!abuseOn()) { showToast(L.t("อีเวนต์ Admin Abuse จบแล้ว", "The Admin Abuse event is over")); return; }
+        onAbuse(abuse);
+        startStage(Defs.effStage(e), Game.CH_EFFECT + e);
+    }
+
+    void startBossRun() {
+        if (abuse == null || !abuse.bossOn(nowS())) { showToast(L.t("ตอนนี้ไม่มีบอส Admin", "No Admin boss right now")); return; }
+        startStage(Defs.PER_GALAXY * 2 - 1, Game.CH_BOSS);
+    }
+
+    /** add this run's boss damage and report it */
+    void bossResult(Game g) {
+        if (abuse == null || abuse.bossId.isEmpty() || cloud.uid == null) return;
+        long d = (long) g.bossDamage;
+        if (d <= 0) return;
+        if (!abuse.bossId.equals(pf.bossDmgId)) {
+            pf.bossDmgId = abuse.bossId;
+            pf.bossDmg = 0;
+            pf.items[Items.ADMIN_CAPSULE]++; // thanks for joining the fight
+            pf.lastChallengeReward = L.t("ร่วมสู้บอส: 1 Admin Capsule", "Joined the boss fight: 1 Admin Capsule");
+        }
+        pf.bossDmg += d;
+        pf.save();
+        cloud.reportBoss(abuse.bossId, pf.bossDmg, null);
+    }
+
+    void drawAbuse(Canvas c) {
+        header(c, "Admin Abuse", 0, pf.stars, 4, pf.gold);
+        if (!abuseOn()) {
+            RectF b = new RectF(40 * u, 240 * u, W - 40 * u, 600 * u);
+            abuseBg(c, b);
+            glitchTitle(c, "ADMIN ABUSE", b.centerX(), b.top + 140 * u, 70 * u);
+            plain(c, L.t("ยังไม่มีอีเวนต์ตอนนี้ • รอแอดมินเปิดผ่าน Stella Console", "No event right now • the admin starts it from Stella Console"),
+                    b.centerX(), b.top + 220 * u, 28 * u, 0xFFFFD0D8, Paint.Align.CENTER, b.width() - 60 * u);
+            return;
+        }
+        abusePoll += 0.016f;
+        if (abusePoll > 4f && abuse.bossOn(nowS())) {
+            abusePoll = 0;
+            final String bid = abuse.bossId;
+            cloud.bossTotal(bid, (r, err) -> { if (r != null && abuse != null && bid.equals(abuse.bossId)) { bossTotalDmg = r[0]; bossPlayers = r[1]; } });
+        }
+        long now = nowS();
+        RectF top = new RectF(40 * u, 210 * u, W - 40 * u, 420 * u);
+        abuseBg(c, top);
+        glitchTitle(c, "ADMIN ABUSE", top.centerX(), top.top + 100 * u, 70 * u);
+        plain(c, L.t("เหลือเวลา ", "Ends in ") + clock(abuse.until - now), top.centerX(), top.top + 160 * u, 30 * u, 0xFFFFD0D8, Paint.Align.CENTER, 0);
+        RectF view = new RectF(30 * u, 440 * u, W - 30 * u, navTop - 20 * u);
+        float giftH = abuse.giftId.isEmpty() ? 0 : 230 * u, bossH = abuse.bossOn(now) ? 360 * u : 0, rowH = 190 * u;
+        beginScroll(c, 6000, view, giftH + bossH + 90 * u + Defs.EFF_COUNT * rowH + 20 * u, 0.016f);
+        float y = view.top;
+        // ---- admin gift
+        if (giftH > 0) {
+            RectF b = new RectF(40 * u, y, W - 40 * u, y + giftH - 20 * u);
+            modeCard(c, b, 0xFFFFD23F, 0xEE2A1A06);
+            shopIcon(c, 0, b.left + 100 * u, b.centerY(), 56 * u);
+            text(c, L.t("ของแจกจากแอดมิน", "Admin giveaway"), b.left + 190 * u, b.top + 62 * u, 38 * u, 0xFFFFE27A, Paint.Align.LEFT, b.width() - 450 * u);
+            plain(c, Social.rewardsText(abuse.giftRewards), b.left + 190 * u, b.top + 110 * u, 24 * u, 0xFFFFFFFF, Paint.Align.LEFT, b.width() - 450 * u);
+            if (!abuse.giftMsg.isEmpty()) plain(c, "\"" + abuse.giftMsg + "\"", b.left + 190 * u, b.top + 150 * u, 22 * u, 0xFFE6E0FF, Paint.Align.LEFT, b.width() - 450 * u);
+            boolean got = abuse.giftId.equals(pf.giftClaimed);
+            RectF bt = new RectF(b.right - 240 * u, b.centerY() - 50 * u, b.right - 24 * u, b.centerY() + 50 * u);
+            flatOrButton(c, bt, got ? L.t("รับแล้ว", "Claimed") : L.t("รับ", "Claim"), 0xFF2FB86A, !got);
+            if (!got) scrollBtn(bt, this::claimAbuseGift);
+            y += giftH;
+        }
+        // ---- boss
+        if (bossH > 0) {
+            RectF b = new RectF(40 * u, y, W - 40 * u, y + bossH - 20 * u);
+            abuseBg(c, b);
+            sprite(c, eBmp[Defs.E_TITAN], b.left + 110 * u, b.top + 120 * u, 70 * u, 255);
+            text(c, L.t("บอส Admin Titan", "Admin Titan boss"), b.left + 210 * u, b.top + 70 * u, 40 * u, 0xFFFFFFFF, Paint.Align.LEFT, b.width() - 240 * u);
+            plain(c, L.t("ทุกคนช่วยกันตี • เหลือ ", "Everyone fights it together • ends in ") + clock(abuse.bossUntil - now), b.left + 210 * u, b.top + 115 * u, 24 * u, 0xFFFFD0D8, Paint.Align.LEFT, b.width() - 240 * u);
+            long hp = Math.max(1, abuse.bossHp), left = Math.max(0, hp - bossTotalDmg);
+            progressBar(c, b.left + 210 * u, b.top + 140 * u, b.width() - 250 * u, 26 * u, left / (float) hp, 0xFFFF2B4B);
+            plain(c, fmtBig(left) + " / " + fmtBig(hp) + " HP • " + bossPlayers + L.t(" คน", " players"), b.left + 210 * u, b.top + 200 * u, 24 * u, 0xFFFFFFFF, Paint.Align.LEFT, b.width() - 240 * u);
+            plain(c, L.t("ดาเมจของฉัน ", "My damage ") + fmtBig(abuse.bossId.equals(pf.bossDmgId) ? pf.bossDmg : 0), b.left + 210 * u, b.top + 236 * u, 24 * u, 0xFFFFE27A, Paint.Align.LEFT, 0);
+            boolean dead = bossTotalDmg >= hp, claimed = abuse.bossId.equals(pf.bossClaimed), joined = abuse.bossId.equals(pf.bossDmgId) && pf.bossDmg > 0;
+            RectF bt = new RectF(b.left + 30 * u, b.bottom - 100 * u, b.right - 30 * u, b.bottom - 20 * u);
+            if (dead) {
+                flatOrButton(c, bt, claimed ? L.t("รับรางวัลแล้ว", "Reward claimed") : joined ? L.t("รับรางวัล: 2 Admin Capsule + 100 Gold", "Claim: 2 Admin Capsules + 100 Gold") : L.t("บอสถูกล้มแล้ว", "The boss is down"), 0xFF2FB86A, !claimed && joined);
+                if (!claimed && joined) scrollBtn(bt, () -> {
+                    pf.bossClaimed = abuse.bossId;
+                    pf.items[Items.ADMIN_CAPSULE] += 2;
+                    pf.gold += 100;
+                    pf.save();
+                    pushNow();
+                    Sfx.play(Sfx.RARE);
+                    showToast(L.t("ได้ 2 Admin Capsule + 100 Gold!", "Got 2 Admin Capsules + 100 Gold!"));
+                });
+            } else {
+                flatOrButton(c, bt, L.t("สู้บอส (" + Defs.BOSS_WAVES + " เวฟ)", "Fight (" + Defs.BOSS_WAVES + " waves)"), 0xFFE0102E, true);
+                scrollBtn(bt, this::startBossRun);
+            }
+            y += bossH;
+        }
+        // ---- effect stages
+        text(c, L.t("ด่าน Effect", "Effect stages"), 50 * u, y + 50 * u, 40 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        plain(c, L.t("ชนะเพื่อรับ Effect (ครั้งละ 1 ต่ออีเวนต์) • ยากกว่าปกติ", "Win to get the effect (once per event) • harder than normal"), W - 50 * u, y + 50 * u, 22 * u, 0xFFC9C2E6, Paint.Align.RIGHT, 0);
+        y += 90 * u;
+        for (int e = 0; e < Defs.EFF_COUNT; e++) {
+            final int ee = e;
+            RectF b = new RectF(40 * u, y, W - 40 * u, y + rowH - 20 * u);
+            boolean done = (pf.abuseMask & (1 << e)) != 0;
+            modeCard(c, b, Defs.EFF_COLOR[e], 0xEE160E30);
+            effectIcon(c, e, b.left + 85 * u, b.centerY(), 46 * u);
+            int st = Defs.effStage(e);
+            text(c, Defs.EFF_NAME[e], b.left + 160 * u, b.top + 60 * u, 38 * u, Defs.EFF_COLOR[e], Paint.Align.LEFT, 0);
+            StringBuilder mods = new StringBuilder();
+            for (int m : Defs.effMods(e)) mods.append(mods.length() > 0 ? " + " : "").append(Defs.CH_MOD[m]);
+            plain(c, L.t("ด่าน ", "Stage ") + (Defs.galaxyOf(st) + 1) + "-" + (st % Defs.PER_GALAXY + 1) + " • " + Defs.EFF_WAVES + L.t(" เวฟ • ", " waves • ") + mods,
+                    b.left + 160 * u, b.top + 100 * u, 22 * u, 0xFFE6E0FF, Paint.Align.LEFT, b.width() - 420 * u);
+            plain(c, L.en ? Defs.EFF_DESC_EN[e] : Defs.EFF_DESC[e], b.left + 160 * u, b.top + 136 * u, 20 * u, 0xFFC9C2E6, Paint.Align.LEFT, b.width() - 420 * u);
+            RectF bt = new RectF(b.right - 230 * u, b.centerY() - 45 * u, b.right - 24 * u, b.centerY() + 45 * u);
+            flatOrButton(c, bt, done ? L.t("ผ่านแล้ว", "Cleared") : L.t("เล่น", "Play"), done ? 0xFF3A6A4A : 0xFFE0102E, true);
+            scrollBtn(bt, () -> startEffectStage(ee));
+            y += rowH;
+        }
+        endScroll(c);
+    }
+
+    static String fmtBig(long v) {
+        if (v >= 1_000_000_000L) return String.format(Locale.US, "%.2fB", v / 1e9);
+        if (v >= 1_000_000L) return String.format(Locale.US, "%.2fM", v / 1e6);
+        if (v >= 10_000L) return String.format(Locale.US, "%.1fK", v / 1e3);
+        return String.valueOf(v);
+    }
+
+    void claimAbuseGift() {
+        if (abuse == null || abuse.giftId.isEmpty() || abuse.giftId.equals(pf.giftClaimed)) { popup = P_NONE; return; }
+        pf.giftClaimed = abuse.giftId;
+        String s = Social.grantAll(pf, abuse.giftRewards);
+        pushNow();
+        Sfx.play(Sfx.RARE);
+        popup = P_NONE;
+        showToast(L.t("ได้รับ: ", "Got: ") + s);
+    }
+
+    /** the admin's giveaway pops up once */
+    void drawAbuseGift(Canvas c) {
+        dim(c);
+        if (abuse == null || abuse.giftId.isEmpty()) { popup = P_NONE; return; }
+        RectF b = new RectF(60 * u, H * 0.25f, W - 60 * u, H * 0.25f + 820 * u);
+        abuseBg(c, b);
+        glitchTitle(c, "ADMIN GIFT", b.centerX(), b.top + 110 * u, 70 * u);
+        float e = Math.min(1f, (anim % 100) * 2);
+        rays(c, b.centerX(), b.top + 330 * u, 0xFFFF2B4B, 0.6f);
+        shopIcon(c, 0, b.centerX(), b.top + 330 * u, 110 * u * (0.95f + 0.05f * (float) Math.sin(anim * 4)));
+        plain(c, Social.rewardsText(abuse.giftRewards), b.centerX(), b.top + 540 * u, 32 * u, 0xFFFFFFFF, Paint.Align.CENTER, b.width() - 60 * u);
+        if (!abuse.giftMsg.isEmpty()) plain(c, "\"" + abuse.giftMsg + "\"", b.centerX(), b.top + 600 * u, 26 * u, 0xFFFFD0D8, Paint.Align.CENTER, b.width() - 60 * u);
+        rf.set(b.left + 40 * u, b.bottom - 150 * u, b.right - 40 * u, b.bottom - 40 * u);
+        button(c, rf, L.t("รับของ", "Claim"), 0xFF2FB86A, true, this::claimAbuseGift);
+    }
+
+    // ================================================================== Plaza: market, quick sell, trades
+    int plazaTab;
+    float plazaPoll;
+    /** thing picker: 0 market listing, 1 trade give, 2 trade want */
+    int listMode;
+    Social.Friend tradeTo;
+    final java.util.ArrayList<String> tradeGive = new java.util.ArrayList<>(), tradeWant = new java.util.ArrayList<>();
+
+    void plazaRefresh(boolean mail) {
+        if (cloud.uid == null) return;
+        social.loadMarket(null);
+        social.loadTrades(null);
+        if (mail) social.collectMail(pf, (got, err) -> {
+            if (got != null && !got.isEmpty()) {
+                pushNow();
+                showToast(L.t("ได้รับ: ", "Received: ") + String.join(", ", got));
+            }
+        });
+    }
+
+    void thingIcon(Canvas c, String th, float x, float y, float r) {
+        String[] q = th.split(":");
+        try {
+            switch (q[0]) {
+                case "g": goldIcon(c, x, y, r * 0.8f); return;
+                case "i": itemIcon(c, Integer.parseInt(q[1]), x, y, r); return;
+                case "a": sprite(c, moonBmp(Integer.parseInt(q[1])), x, y, r * 0.8f, 255); return;
+                case "s": { int k = Integer.parseInt(q[1]); sprite(c, skinBmp(Skins.planetOf(k), Skins.styleOf(k)), x, y, r, 255); return; }
+                case "p": {
+                    int t = Integer.parseInt(q[1]), e = Integer.parseInt(q[4]);
+                    if (e >= 0) effectAura(c, e, x, y, r * 0.8f);
+                    sprite(c, pBmp[t], x, y, r, 255);
+                    return;
+                }
+            }
+        } catch (RuntimeException ignored) { }
+    }
+
+    void drawPlaza(Canvas c) {
+        header(c, L.t("พลาซ่า", "Plaza"), 0, pf.stars, 4, pf.gold);
+        String[] tabs = {L.t("ตลาด", "Market"), L.t("ขายด่วน", "Quick sell"), L.t("เทรด", "Trades")};
+        float tw = (W - 120 * u) / 3f;
+        java.util.List<Social.Trade> tin;
+        synchronized (social) { tin = new java.util.ArrayList<>(social.tradesIn); }
+        for (int i = 0; i < 3; i++) {
+            final int ti = i;
+            rf.set(50 * u + i * (tw + 10 * u), 190 * u, 50 * u + i * (tw + 10 * u) + tw, 280 * u);
+            button(c, rf, tabs[i], plazaTab == i ? 0xFFE0A020 : 0xFF3A3360, true, () -> plazaTab = ti);
+            if (i == 2 && !tin.isEmpty()) { p.setShader(null); p.setColor(0xFFFF3B5B); c.drawCircle(rf.right - 16 * u, rf.top + 14 * u, 12 * u, p); }
+        }
+        if (cloud.uid == null) { plain(c, L.t("ต้องออนไลน์ก่อน", "You need to be online"), W / 2, 600 * u, 32 * u, 0xFFE6E0FF, Paint.Align.CENTER, 0); return; }
+        plazaPoll += 0.016f;
+        if (plazaPoll > 6f) { plazaPoll = 0; plazaRefresh(true); }
+        if (plazaTab == 0) plazaMarket(c);
+        else if (plazaTab == 1) plazaSell(c);
+        else plazaTrades(c, tin);
+    }
+
+    void plazaMarket(Canvas c) {
+        rf.set(40 * u, 300 * u, W / 2 - 10 * u, 400 * u);
+        button(c, rf, L.t("+ ลงขาย", "+ Sell something"), 0xFF2FB86A, true, () -> { listMode = 0; popup = P_LIST; });
+        rf.set(W / 2 + 10 * u, 300 * u, W - 40 * u, 400 * u);
+        button(c, rf, L.t("รีเฟรช", "Refresh"), 0xFF4F8BFF, true, () -> plazaRefresh(true));
+        plain(c, L.t("ซื้อด้วย Gold • ผู้ขายได้ 95% (ค่าธรรมเนียม 5%) • ลงขายได้ " + Social.MAX_LISTINGS + " ชิ้น", "Pay with Gold • sellers get 95% (5% fee) • up to " + Social.MAX_LISTINGS + " listings"),
+                W / 2, 440 * u, 22 * u, 0xFFC9C2E6, Paint.Align.CENTER, W - 80 * u);
+        java.util.List<Social.Listing> l;
+        synchronized (social) { l = new java.util.ArrayList<>(social.market); }
+        RectF view = new RectF(30 * u, 470 * u, W - 30 * u, navTop - 20 * u);
+        float rowH = 150 * u;
+        beginScroll(c, 6100, view, l.size() * rowH + 20 * u, 0.016f);
+        float y = view.top;
+        for (final Social.Listing it : l) {
+            RectF row = new RectF(40 * u, y, W - 40 * u, y + rowH - 16 * u);
+            boolean mine = cloud.uid.equals(it.seller);
+            panel(c, row, mine ? 0xEE24183C : 0xEE1A1440, 24 * u);
+            thingIcon(c, it.thing, row.left + 75 * u, row.centerY(), 46 * u);
+            text(c, pf.describe(it.thing), row.left + 145 * u, row.top + 56 * u, 32 * u, 0xFFFFFFFF, Paint.Align.LEFT, row.width() - 450 * u);
+            plain(c, (mine ? L.t("ของฉัน", "Mine") : it.name), row.left + 145 * u, row.top + 100 * u, 22 * u, mine ? 0xFF7CFF8A : 0xFFC9C2E6, Paint.Align.LEFT, row.width() - 450 * u);
+            RectF bt = new RectF(row.right - 270 * u, row.top + 20 * u, row.right - 20 * u, row.bottom - 20 * u);
+            if (mine) {
+                flatOrButton(c, bt, L.t("เก็บคืน", "Take back"), 0xFF6A4A60, true);
+                scrollBtn(bt, () -> social.unlist(pf, it, (s, err) -> { showToast(err != null ? err : L.t("เก็บคืน: ", "Returned: ") + s); pushNow(); plazaRefresh(false); }));
+            } else {
+                flatOrButton(c, bt, it.price + " Gold", 0xFFE0A020, pf.gold >= it.price);
+                scrollBtn(bt, () -> Dialogs.confirm(ctx, L.t("ซื้อ", "Buy"), pf.describe(it.thing) + " • " + it.price + " Gold?", L.t("ซื้อ", "Buy"),
+                        () -> social.buy(pf, it, (s, err) -> {
+                            if (err != null) showToast(err);
+                            else { Sfx.play(Sfx.GACHA); showToast(L.t("ซื้อแล้ว: ", "Bought: ") + s); }
+                            pushNow();
+                            plazaRefresh(false);
+                        })));
+            }
+            y += rowH;
+        }
+        if (l.isEmpty()) plain(c, L.t("ยังไม่มีของขาย • ลงขายชิ้นแรกเลย!", "Nothing for sale yet • be the first!"), W / 2, view.top + 80 * u, 28 * u, 0xFF8A84A0, Paint.Align.CENTER, 0);
+        endScroll(c);
+    }
+
+    void plazaSell(Canvas c) {
+        plain(c, L.t("ขายให้ระบบรับ Gold ทันที • ดาวที่มี Effect ขายได้แพงขึ้นตามตัวคูณ", "Sell to the system for instant Gold • planets with effects sell for more"),
+                W / 2, 330 * u, 24 * u, 0xFFC9C2E6, Paint.Align.CENTER, W - 80 * u);
+        java.util.ArrayList<Integer> pl = new java.util.ArrayList<>();
+        for (int t = 0; t < Defs.P_COUNT; t++) if (pf.owned[t] && Defs.P_RARITY[t] < Defs.EXCLUSIVE) pl.add(t);
+        java.util.ArrayList<Integer> its = new java.util.ArrayList<>();
+        for (int i = 0; i < Items.COUNT; i++) if (pf.items[i] > 0 && Profile.itemGold(i) > 0) its.add(i);
+        float rowH = 140 * u;
+        RectF view = new RectF(30 * u, 370 * u, W - 30 * u, navTop - 20 * u);
+        beginScroll(c, 6200, view, (pl.size() + its.size()) * rowH + 140 * u, 0.016f);
+        float y = view.top;
+        text(c, L.t("ดวงดาว", "Planets"), 50 * u, y + 40 * u, 34 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        y += 60 * u;
+        for (final int t : pl) {
+            RectF row = new RectF(40 * u, y, W - 40 * u, y + rowH - 14 * u);
+            panel(c, row, 0xEE1A1440, 24 * u);
+            if (pf.effect[t] >= 0) effectAura(c, pf.effect[t], row.left + 75 * u, row.centerY(), 36 * u);
+            sprite(c, pbmp(t), row.left + 75 * u, row.centerY(), 42 * u, 255);
+            String nm = (pf.effect[t] >= 0 ? Defs.EFF_NAME[pf.effect[t]] + " " : "") + Defs.P_NAME[t] + "  Lv" + pf.level[t];
+            text(c, nm, row.left + 145 * u, row.top + 52 * u, 30 * u, pf.effect[t] >= 0 ? Defs.EFF_COLOR[pf.effect[t]] : 0xFFFFFFFF, Paint.Align.LEFT, row.width() - 440 * u);
+            plain(c, Defs.RARITY_NAME[Defs.P_RARITY[t]] + (pf.copies[t] > 0 ? " • +" + pf.copies[t] + L.t(" ซ้ำ", " copies") : ""), row.left + 145 * u, row.top + 92 * u, 22 * u, Defs.RARITY_COLOR[Defs.P_RARITY[t]], Paint.Align.LEFT, 0);
+            RectF bt = new RectF(row.right - 260 * u, row.top + 18 * u, row.right - 20 * u, row.bottom - 18 * u);
+            int v = pf.goldValue(t);
+            flatOrButton(c, bt, "+" + v + " Gold", 0xFFE0A020, pf.canSell(t));
+            scrollBtn(bt, () -> {
+                if (!pf.canSell(t)) { showToast(L.t("ต้องเหลือดาวอย่างน้อย 1 ดวง", "Keep at least one planet")); return; }
+                Dialogs.confirm(ctx, L.t("ขายดาว", "Sell planet"), Defs.P_NAME[t] + L.t(" จะหายไปพร้อมเลเวล/ของที่ใส่ • ได้ ", " goes away with its level and gear • for ") + pf.goldValue(t) + " Gold",
+                        L.t("ขาย", "Sell"), () -> { int g2 = pf.sellForGold(t); showToast("+" + g2 + " Gold"); pushNow(); });
+            });
+            y += rowH;
+        }
+        y += 20 * u;
+        text(c, L.t("ไอเทม", "Items"), 50 * u, y + 40 * u, 34 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        y += 60 * u;
+        for (final int i : its) {
+            RectF row = new RectF(40 * u, y, W - 40 * u, y + rowH - 14 * u);
+            panel(c, row, 0xEE1A1440, 24 * u);
+            itemIcon(c, i, row.left + 75 * u, row.centerY(), 40 * u);
+            text(c, Items.NAME[i] + "  x" + pf.items[i], row.left + 145 * u, row.centerY() + 10 * u, 30 * u, 0xFFFFFFFF, Paint.Align.LEFT, row.width() - 440 * u);
+            RectF bt = new RectF(row.right - 260 * u, row.top + 18 * u, row.right - 20 * u, row.bottom - 18 * u);
+            flatOrButton(c, bt, "+" + Profile.itemGold(i) + " Gold", 0xFFE0A020, true);
+            scrollBtn(bt, () -> { if (pf.sellItemForGold(i)) { showToast("+" + Profile.itemGold(i) + " Gold"); pushNow(); } });
+            y += rowH;
+        }
+        endScroll(c);
+    }
+
+    void plazaTrades(Canvas c, java.util.List<Social.Trade> tin) {
+        java.util.List<Social.Trade> tout;
+        synchronized (social) { tout = new java.util.ArrayList<>(social.tradesOut); }
+        plain(c, L.t("เทรดกับเพื่อน: กดปุ่ม \"เทรด\" ข้างชื่อเพื่อนในหน้าเพื่อน", "Trade with friends: tap \"Trade\" next to a friend in Friends"),
+                W / 2, 330 * u, 24 * u, 0xFFC9C2E6, Paint.Align.CENTER, W - 80 * u);
+        rf.set(W / 2 - 220 * u, 360 * u, W / 2 + 220 * u, 450 * u);
+        button(c, rf, L.t("ไปหน้าเพื่อน", "Go to Friends"), 0xFF4F8BFF, true, () -> { socTab = 0; go(S_SOCIAL); });
+        float rowH = 250 * u;
+        RectF view = new RectF(30 * u, 480 * u, W - 30 * u, navTop - 20 * u);
+        beginScroll(c, 6300, view, (tin.size() + tout.size()) * rowH + 160 * u, 0.016f);
+        float y = view.top;
+        text(c, L.t("ข้อเสนอที่ได้รับ ", "Offers for me ") + tin.size(), 50 * u, y + 40 * u, 34 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        y += 60 * u;
+        for (final Social.Trade t : tin) { tradeRow(c, t, y, false); y += rowH; }
+        y += 20 * u;
+        text(c, L.t("ข้อเสนอของฉัน ", "My offers ") + tout.size(), 50 * u, y + 40 * u, 34 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        y += 60 * u;
+        for (final Social.Trade t : tout) { tradeRow(c, t, y, true); y += rowH; }
+        endScroll(c);
+    }
+
+    void tradeRow(Canvas c, Social.Trade t, float y, boolean mine) {
+        RectF row = new RectF(40 * u, y, W - 40 * u, y + 234 * u);
+        panel(c, row, 0xEE1A1440, 24 * u);
+        text(c, mine ? L.t("ถึง ", "To ") + t.toName : L.t("จาก ", "From ") + t.fromName, row.left + 30 * u, row.top + 50 * u, 32 * u, 0xFFFFFFFF, Paint.Align.LEFT, row.width() - 300 * u);
+        StringBuilder gv = new StringBuilder(), wn = new StringBuilder();
+        for (String s : t.give) gv.append(gv.length() > 0 ? ", " : "").append(pf.describe(s));
+        for (String s : t.want) wn.append(wn.length() > 0 ? ", " : "").append(pf.describe(s));
+        String give = gv.length() == 0 ? "-" : gv.toString(), want = wn.length() == 0 ? "-" : wn.toString();
+        plain(c, (mine ? L.t("ฉันให้: ", "I give: ") : L.t("เขาให้: ", "They give: ")) + give, row.left + 30 * u, row.top + 100 * u, 24 * u, 0xFF7CFF8A, Paint.Align.LEFT, row.width() - 300 * u);
+        plain(c, (mine ? L.t("ฉันขอ: ", "I want: ") : L.t("เขาขอ: ", "They want: ")) + want, row.left + 30 * u, row.top + 140 * u, 24 * u, 0xFFFFB0A0, Paint.Align.LEFT, row.width() - 300 * u);
+        if (mine) {
+            RectF bt = new RectF(row.right - 250 * u, row.top + 70 * u, row.right - 20 * u, row.top + 160 * u);
+            flatOrButton(c, bt, L.t("ยกเลิก", "Cancel"), 0xFF6A4A60, true);
+            scrollBtn(bt, () -> social.closeTrade(pf, t, (ok, err) -> { showToast(err != null ? err : L.t("ยกเลิกแล้ว ของคืนแล้ว", "Cancelled, your things are back")); pushNow(); plazaRefresh(true); }));
+        } else {
+            RectF b1 = new RectF(row.right - 250 * u, row.top + 20 * u, row.right - 20 * u, row.top + 105 * u);
+            flatOrButton(c, b1, L.t("ตกลง", "Accept"), 0xFF2FB86A, true);
+            scrollBtn(b1, () -> Dialogs.confirm(ctx, L.t("ยืนยันการเทรด", "Confirm trade"), L.t("ได้: ", "Get: ") + give + "\n" + L.t("เสีย: ", "Pay: ") + want, L.t("ตกลง", "Accept"),
+                    () -> social.acceptTrade(pf, t, (s, err) -> {
+                        if (err != null) showToast(err);
+                        else { Sfx.play(Sfx.RARE); showToast(L.t("เทรดสำเร็จ: ", "Traded: ") + s); }
+                        pushNow();
+                        plazaRefresh(false);
+                    })));
+            RectF b2 = new RectF(row.right - 250 * u, row.top + 125 * u, row.right - 20 * u, row.top + 210 * u);
+            flatOrButton(c, b2, L.t("ปฏิเสธ", "Decline"), 0xFF6A4A60, true);
+            scrollBtn(b2, () -> social.closeTrade(pf, t, (ok, err) -> { showToast(err != null ? err : L.t("ปฏิเสธแล้ว", "Declined")); plazaRefresh(false); }));
+        }
+    }
+
+    void openTrade(Social.Friend f) {
+        tradeTo = f;
+        tradeGive.clear();
+        tradeWant.clear();
+        popup = P_TRADE;
+    }
+
+    /** build a trade offer for a friend */
+    void drawTradeMake(Canvas c) {
+        if (tradeTo == null) { popup = P_NONE; return; }
+        RectF r = new RectF(40 * u, 200 * u, W - 40 * u, H - 200 * u);
+        popupFrame(c, r, L.t("เทรดกับ ", "Trade with ") + tradeTo.name);
+        float colW = (r.width() - 90 * u) / 2f, top = r.top + 150 * u, bot = r.bottom - 300 * u;
+        for (int side = 0; side < 2; side++) {
+            final java.util.ArrayList<String> lst = side == 0 ? tradeGive : tradeWant;
+            final int sd = side;
+            RectF b = new RectF(r.left + 30 * u + side * (colW + 30 * u), top, r.left + 30 * u + side * (colW + 30 * u) + colW, bot);
+            panel(c, b, 0xEE141030, 24 * u);
+            text(c, side == 0 ? L.t("ฉันให้", "I give") : L.t("ฉันขอ", "I want"), b.centerX(), b.top + 56 * u, 36 * u, side == 0 ? 0xFF7CFF8A : 0xFFFFB0A0, Paint.Align.CENTER, 0);
+            float y = b.top + 90 * u;
+            for (int k = 0; k < lst.size(); k++) {
+                final int kk = k;
+                RectF row = new RectF(b.left + 14 * u, y, b.right - 14 * u, y + 100 * u);
+                panel(c, row, 0xEE221A48, 18 * u);
+                thingIcon(c, lst.get(k), row.left + 50 * u, row.centerY(), 32 * u);
+                plain(c, pf.describe(lst.get(k)), row.left + 95 * u, row.centerY() + 8 * u, 20 * u, 0xFFFFFFFF, Paint.Align.LEFT, row.width() - 160 * u);
+                RectF xb = new RectF(row.right - 66 * u, row.top + 20 * u, row.right - 10 * u, row.bottom - 20 * u);
+                button(c, xb, "x", 0xFF6A4A60, true, () -> lst.remove(kk));
+                y += 110 * u;
+                if (y > b.bottom - 220 * u) break;
+            }
+            if (lst.size() < 4) {
+                rf.set(b.left + 14 * u, b.bottom - 110 * u, b.right - 14 * u, b.bottom - 14 * u);
+                button(c, rf, L.t("+ เพิ่ม", "+ Add"), side == 0 ? 0xFF2FB86A : 0xFFE07A3B, true, () -> { listMode = sd + 1; popup = P_LIST; });
+            }
+        }
+        plain(c, L.t("ของที่ให้จะถูกพักไว้จนเพื่อนตอบ • ยกเลิกได้ที่ Plaza > เทรด", "What you give is held until they answer • cancel in Plaza > Trades"),
+                r.centerX(), bot + 50 * u, 22 * u, 0xFFC9C2E6, Paint.Align.CENTER, r.width() - 60 * u);
+        float bw = (r.width() - 90 * u) / 2f;
+        rf.set(r.left + 30 * u, r.bottom - 220 * u, r.left + 30 * u + bw, r.bottom - 110 * u);
+        button(c, rf, L.t("ยกเลิก", "Cancel"), 0xFF6B5BD6, true, () -> popup = P_NONE);
+        rf.set(r.right - 30 * u - bw, r.bottom - 220 * u, r.right - 30 * u, r.bottom - 110 * u);
+        button(c, rf, L.t("ส่งข้อเสนอ", "Send offer"), 0xFFE0A020, !tradeGive.isEmpty() || !tradeWant.isEmpty(), () -> {
+            final Social.Friend to = tradeTo;
+            social.offer(pf, to, new java.util.ArrayList<>(tradeGive), new java.util.ArrayList<>(tradeWant), user, (ok, err) -> {
+                if (err != null) { showToast(err); return; }
+                showToast(L.t("ส่งข้อเสนอถึง ", "Offer sent to ") + to.name);
+                pushNow();
+                plazaRefresh(false);
+            });
+            popup = P_NONE;
+        });
+    }
+
+    /** pick a thing: from my inventory (sell / give) or any kind (want) */
+    void drawListPick(Canvas c) {
+        RectF r = new RectF(30 * u, 150 * u, W - 30 * u, H - 150 * u);
+        popupFrame(c, r, listMode == 0 ? L.t("เลือกของที่จะขาย", "Pick something to sell") : listMode == 1 ? L.t("เลือกของที่จะให้", "Pick what you give") : L.t("เลือกของที่อยากได้", "Pick what you want"));
+        final boolean any = listMode == 2;
+        java.util.ArrayList<String> opts = new java.util.ArrayList<>();
+        if (listMode != 0) opts.add("g:0");
+        for (int i = 0; i < Items.COUNT; i++) if (any || pf.items[i] > 0) opts.add("i:" + i + ":0");
+        for (int m = 0; m < Defs.MOON_COUNT; m++) if (any || pf.moonsFree(m) > 0) opts.add("a:" + m + ":0");
+        if (!any) for (int k : pf.skins) if (pf.canGive("s:" + k)) opts.add("s:" + k);
+        for (int t = 0; t < Defs.P_COUNT; t++) {
+            if (Defs.P_RARITY[t] >= Defs.EXCLUSIVE) continue;
+            if (any) opts.add("p:" + t + ":1:0:-1:0");
+            else if (pf.canSell(t)) opts.add(pf.planetThing(t));
+        }
+        float cell = (r.width() - 60 * u) / 5f, rowH = cell + 50 * u;
+        RectF view = new RectF(r.left + 10 * u, r.top + 140 * u, r.right - 10 * u, r.bottom - 140 * u);
+        beginScroll(c, 6400, view, (float) Math.ceil(opts.size() / 5f) * rowH + 20 * u, 0.016f);
+        for (int k = 0; k < opts.size(); k++) {
+            final String th = opts.get(k);
+            float x = r.left + 30 * u + (k % 5) * cell, yy = view.top + (k / 5) * rowH;
+            RectF cr = new RectF(x + 6 * u, yy + 6 * u, x + cell - 6 * u, yy + cell - 6 * u);
+            rarityCard(c, cr, 0xFFE0A020, true, false, 18 * u);
+            thingIcon(c, th, cr.centerX(), cr.centerY(), cell * 0.28f);
+            String[] q = th.split(":");
+            String nm;
+            if (q[0].equals("g")) nm = "Gold" + (any ? "" : " (" + pf.gold + ")");
+            else if (q[0].equals("i")) nm = Items.NAME[Integer.parseInt(q[1])] + (any ? "" : " x" + pf.items[Integer.parseInt(q[1])]);
+            else if (q[0].equals("a")) nm = Defs.MOON_NAME[Integer.parseInt(q[1])] + (any ? "" : " x" + pf.moonsFree(Integer.parseInt(q[1])));
+            else if (q[0].equals("s")) nm = Skins.name(Integer.parseInt(q[1]));
+            else nm = any ? Defs.P_NAME[Integer.parseInt(q[1])] : pf.describe(th);
+            plain(c, nm, cr.centerX(), cr.bottom + 30 * u, 18 * u, 0xFFE6E0FF, Paint.Align.CENTER, cell);
+            scrollBtn(cr, () -> pickThing(th));
+        }
+        endScroll(c);
+        rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 30 * u);
+        button(c, rf, L.t("ย้อนกลับ", "Back"), 0xFF6B5BD6, true, () -> popup = listMode == 0 ? P_NONE : P_TRADE);
+    }
+
+    void pickThing(String th) {
+        String[] q = th.split(":");
+        boolean counted = q[0].equals("g") || q[0].equals("i") || q[0].equals("a");
+        if (counted) {
+            Dialogs.ask(ctx, L.t("จำนวน", "Amount"), pf.describe(q[0].equals("g") ? "g:?" : q[0] + ":" + q[1] + ":?"), new String[]{L.t("จำนวน", "Amount")},
+                    new int[]{Dialogs.NUMBER}, new String[]{q[0].equals("g") ? "10" : "1"}, "OK", v -> {
+                        int n;
+                        try { n = Integer.parseInt(v[0].trim()); } catch (NumberFormatException e) { return L.t("ใส่ตัวเลข", "Enter a number"); }
+                        if (n <= 0) return L.t("ต้องมากกว่า 0", "Must be above 0");
+                        String t2 = q[0].equals("g") ? "g:" + n : q[0] + ":" + q[1] + ":" + n;
+                        if (listMode != 2 && !pf.canGive(t2)) return L.t("มีไม่พอ", "You don't have that many");
+                        pickedThing(t2);
+                        return null;
+                    });
+        } else pickedThing(th);
+    }
+
+    void pickedThing(String th) {
+        if (listMode == 0) {
+            Dialogs.ask(ctx, L.t("ตั้งราคา", "Set a price"), pf.describe(th), new String[]{L.t("ราคา (Gold)", "Price (Gold)")}, new int[]{Dialogs.NUMBER}, new String[]{""},
+                    L.t("ลงขาย", "List it"), v -> {
+                        int price;
+                        try { price = Integer.parseInt(v[0].trim()); } catch (NumberFormatException e) { return L.t("ใส่ตัวเลข", "Enter a number"); }
+                        social.list(pf, th, price, user, (ok, err) -> {
+                            showToast(err != null ? err : L.t("ลงขายแล้ว: ", "Listed: ") + pf.describe(th));
+                            pushNow();
+                            plazaRefresh(false);
+                        });
+                        popup = P_NONE;
+                        return null;
+                    });
+        } else {
+            (listMode == 1 ? tradeGive : tradeWant).add(th);
+            popup = P_TRADE;
+        }
     }
 }

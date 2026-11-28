@@ -145,3 +145,17 @@
 - โค้ดของขวัญย้ายไปอยู่ในหน้าตั้งค่า
 - ปฏิทินล็อกอินเป็นปุ่มของตัวเองข้างปุ่มตั้งค่า และเด้งขึ้นมาทุกครั้งที่เข้าเกม
 - หน้า Enchant / Material Index และหน้าสุ่มหลายครั้ง เรียงตามระดับความหายาก
+
+## v3.8 — Admin Abuse
+- **Admin Abuse** (เปิดจาก Stella Console: `abuse on <นาที>`): แบนเนอร์ในล็อบบี้ + หน้าอีเวนต์
+  - **ด่าน Effect 5 ด่าน** Golden / Silver / Rainbow / Shiny / Blaze (ยากกว่าปกติ, ได้ Effect ด่านละครั้งต่ออีเวนต์)
+  - **ของแจกจากแอดมิน** `abuse gift admincapsule:1,gold:50 ข้อความ` — เด้งขึ้นให้ทุกคนรับได้คนละครั้ง
+  - **บอส Admin Titan** `abuse boss <hp> [นาที]` — ทุกคนช่วยกันตี HP รวม, ร่วมสู้ได้ 1 Admin Capsule, ล้มบอสได้ 2 Admin Capsule + 100 Gold
+- **Effect**: ใส่ให้ดาวจากกระเป๋า เพิ่มพลังและคูณราคาดาว (Silver x1.5, Golden x2, Shiny x2.5, Blaze x3, Rainbow x4)
+- **Admin Capsule**: สุ่ม Gold, Effect, Artifact, Evo Catalyst หรือสกิน Admin
+- **Gold Coin** สกุลเงินใหม่ + ร้าน Gold ในหน้าร้านค้า
+- **Plaza**: ตลาดซื้อขายระหว่างผู้เล่น (ค่าธรรมเนียม 5%), ขายด่วนให้ระบบ, เทรดกับเพื่อน (ของถูกพักไว้จนอีกฝ่ายตอบ)
+- **เพิ่มเพื่อนด้วย Player ID** 8 หลัก (ดูได้ที่หน้าโปรไฟล์) และเอาคำว่า Player/ยศออกจากโปรไฟล์
+- **สกินใหม่**: Neon, Frozen, Galaxy, Inferno, Celestial, Admin (อีเวนต์) • สกิน 1st Anniversary ทำใหม่และได้จากอีเวนต์เท่านั้น
+- **Balance**: Sun เบาลง, ด่านยากขึ้น (HP ศัตรูเพิ่มขึ้นตามด่าน/กาแล็กซี)
+- Database rules ใหม่: `market`, `mail`, `tradeIn`, `tradeOut`, `bossDmg` (อยู่ใน `database.rules.json`)

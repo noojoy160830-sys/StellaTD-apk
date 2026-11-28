@@ -291,19 +291,41 @@ final class Social {
             return Json.str(m, "rewards", "");
         }, (rewards, err) -> {
             if (err != null) { cb.done(null, err); return; }
-            StringBuilder got = new StringBuilder();
-            for (String part : rewards.split(",")) {
-                String[] kv = part.trim().split(":");
-                if (kv.length != 2) continue;
-                try {
-                    int kind = Integer.parseInt(kv[0].trim()), n = Integer.parseInt(kv[1].trim());
-                    String s = kind == 9 ? millite(pf, n) : pf.grant(kind, n);
-                    got.append(got.length() > 0 ? ", " : "").append(s);
-                } catch (NumberFormatException ignored) { }
-            }
-            pf.save();
-            cb.done(got.length() > 0 ? got.toString() : L.t("ไม่มีของ", "nothing"), null);
+            cb.done(grantAll(pf, rewards), null);
         });
+    }
+
+    /** give "kind:n,kind:n" rewards; returns what was given */
+    static String grantAll(Profile pf, String rewards) {
+        StringBuilder got = new StringBuilder();
+        for (String part : rewards.split(",")) {
+            String[] kv = part.trim().split(":");
+            if (kv.length != 2) continue;
+            try {
+                int kind = Integer.parseInt(kv[0].trim()), n = Integer.parseInt(kv[1].trim());
+                if (n <= 0 || n > 1000000) continue;
+                String s = kind == 9 ? millite(pf, n) : pf.grant(kind, n);
+                got.append(got.length() > 0 ? ", " : "").append(s);
+            } catch (NumberFormatException ignored) { }
+        }
+        pf.save();
+        return got.length() > 0 ? got.toString() : L.t("ไม่มีของ", "nothing");
+    }
+
+    /** human text of "kind:n,..." without giving it */
+    static String rewardsText(String rewards) {
+        String[] nm = {"Star", "Crystal", "Crystal Oil", "Raid Capsule", Items.NAME[0], Items.NAME[1], Items.NAME[2], Items.NAME[3], Items.NAME[4],
+                "Millite", "Gold", "Admin Capsule", Items.NAME[6], Items.NAME[7], Items.NAME[8], Items.NAME[9], Items.NAME[10]};
+        StringBuilder b = new StringBuilder();
+        for (String part : rewards.split(",")) {
+            String[] kv = part.trim().split(":");
+            if (kv.length != 2) continue;
+            try {
+                int k = Integer.parseInt(kv[0].trim());
+                if (k >= 0 && k < nm.length) b.append(b.length() > 0 ? " • " : "").append(kv[1].trim()).append(' ').append(nm[k]);
+            } catch (NumberFormatException ignored) { }
+        }
+        return b.toString();
     }
 
     static String millite(Profile pf, int n) { pf.millite += n; return n + " Millite"; }
@@ -323,5 +345,282 @@ final class Social {
 
     void deleteCode(String code, Cloud.Cb<Boolean> cb) {
         cloud.async(() -> { cloud.delete("codes/" + code.toUpperCase(java.util.Locale.US)); return true; }, cb);
+    }
+    // ---------------------------------------------------------------- player id
+    /** short public player id (8 digits) derived from the account uid */
+    static String pid(String uid) {
+        if (uid == null) return "--------";
+        long h = 1125899906842597L;
+        for (int i = 0; i < uid.length(); i++) h = 31 * h + uid.charAt(i);
+        return String.valueOf(Math.floorMod(h, 90000000L) + 10000000L);
+    }
+
+    // ---------------------------------------------------------------- Plaza: market + mail
+    //   market/<id> = {seller, name, thing, price, t, buyer?}
+    //   mail/<uid>/<id> = {from, name, thing, msg, t}
+    static final int MAX_LISTINGS = 5;
+    static final float FEE = 0.05f;
+
+    static final class Listing { String id, seller, name, thing, buyer; int price; long t; }
+    static final class Mail { String id, from, name, thing, msg; long t; }
+    static final class Trade {
+        String id, from, fromName, to, toName, state;
+        final List<String> give = new ArrayList<>(), want = new ArrayList<>();
+        long t;
+    }
+
+    final List<Listing> market = new ArrayList<>();
+    final List<Trade> tradesIn = new ArrayList<>(), tradesOut = new ArrayList<>();
+
+    void loadMarket(Cloud.Cb<Boolean> cb) {
+        cloud.async(() -> {
+            Map<String, Object> m = obj(cloud.get("market"));
+            List<Listing> l = new ArrayList<>();
+            for (Map.Entry<String, Object> e : m.entrySet()) {
+                Map<String, Object> x = obj(e.getValue());
+                Listing it = new Listing();
+                it.id = e.getKey();
+                it.seller = Json.str(x, "seller", "");
+                it.name = Json.str(x, "name", "?");
+                it.thing = Json.str(x, "thing", "");
+                it.buyer = Json.str(x, "buyer", null);
+                it.price = (int) num(x.get("price"));
+                it.t = num(x.get("t"));
+                if (!it.thing.isEmpty()) l.add(it);
+            }
+            l.sort((a, b) -> Long.compare(b.t, a.t));
+            synchronized (this) { market.clear(); market.addAll(l); }
+            return true;
+        }, cb);
+    }
+
+    int myListings() {
+        int n = 0;
+        synchronized (this) { for (Listing l : market) if (cloud.uid.equals(l.seller) && l.buyer == null) n++; }
+        return n;
+    }
+
+    /** list a thing for Gold (the thing is taken from the profile right away and held by the market) */
+    void list(Profile pf, String thing, int price, String myName, Cloud.Cb<Boolean> cb) {
+        if (price <= 0 || price > 1000000) { cb.done(null, L.t("ราคาไม่ถูกต้อง", "Invalid price")); return; }
+        if (myListings() >= MAX_LISTINGS) { cb.done(null, L.t("ลงขายได้สูงสุด 5 ชิ้น", "You can list up to 5 things")); return; }
+        if (!pf.giveAway(thing)) { cb.done(null, L.t("ไม่มีของชิ้นนี้", "You don't have that")); return; }
+        cloud.async(() -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("seller", cloud.uid);
+            m.put("name", myName);
+            m.put("thing", thing);
+            m.put("price", price);
+            m.put("t", System.currentTimeMillis());
+            cloud.put("market/M" + Long.toString(System.currentTimeMillis(), 36) + newCode(), m);
+            return true;
+        }, (ok, err) -> {
+            if (err != null) pf.receive(thing); // give it back
+            cb.done(ok, err);
+        });
+    }
+
+    /** buy a listing: the first buyer to claim it wins; the seller is paid through mail */
+    void buy(Profile pf, Listing l, Cloud.Cb<String> cb) {
+        if (cloud.uid.equals(l.seller)) { cb.done(null, L.t("ซื้อของตัวเองไม่ได้", "That's your own listing")); return; }
+        if (pf.gold < l.price) { cb.done(null, L.t("Gold ไม่พอ", "Not enough Gold")); return; }
+        pf.gold -= l.price;
+        pf.save();
+        cloud.async(() -> {
+            Map<String, Object> cur = Json.obj(cloud.get("market/" + l.id));
+            if (cur == null || cur.get("buyer") != null) throw new Cloud.UserError(L.t("มีคนซื้อไปแล้ว", "Someone already bought it"));
+            cloud.put("market/" + l.id + "/buyer", cloud.uid);
+            if (!cloud.uid.equals(Json.str(Json.obj(cloud.get("market/" + l.id)), "buyer", "")))
+                throw new Cloud.UserError(L.t("มีคนซื้อไปแล้ว", "Someone already bought it"));
+            int pay = Math.max(1, Math.round(l.price * (1f - FEE)));
+            sendMail(l.seller, "g:" + pay, "market sale: " + l.thing);
+            cloud.delete("market/" + l.id);
+            return Json.str(cur, "thing", l.thing);
+        }, (thing, err) -> {
+            if (err != null) { pf.gold += l.price; pf.save(); cb.done(null, err); return; }
+            cb.done(pf.receive(thing), null);
+        });
+    }
+
+    /** take back an unsold listing */
+    void unlist(Profile pf, Listing l, Cloud.Cb<String> cb) {
+        cloud.async(() -> {
+            Map<String, Object> cur = Json.obj(cloud.get("market/" + l.id));
+            if (cur == null || cur.get("buyer") != null) throw new Cloud.UserError(L.t("ขายไปแล้ว", "Already sold"));
+            cloud.put("market/" + l.id + "/buyer", cloud.uid); // lock it so nobody can buy it now
+            cloud.delete("market/" + l.id);
+            return Json.str(cur, "thing", l.thing);
+        }, (thing, err) -> {
+            if (err != null) { cb.done(null, err); return; }
+            cb.done(pf.receive(thing), null);
+        });
+    }
+
+    void sendMail(String to, String thing, String msg) throws Exception {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("from", cloud.uid);
+        m.put("name", cloud.name == null ? "?" : cloud.name);
+        m.put("thing", thing);
+        m.put("msg", msg);
+        m.put("t", System.currentTimeMillis());
+        cloud.put("mail/" + to + "/" + "m" + Long.toString(System.currentTimeMillis(), 36) + newCode(), m);
+    }
+
+    /** collect everything in my mailbox (market payments, trade deliveries, returned offers) */
+    void collectMail(Profile pf, Cloud.Cb<List<String>> cb) {
+        cloud.async(() -> {
+            Map<String, Object> m = obj(cloud.get("mail/" + cloud.uid));
+            List<Mail> l = new ArrayList<>();
+            for (Map.Entry<String, Object> e : m.entrySet()) {
+                Map<String, Object> x = obj(e.getValue());
+                Mail it = new Mail();
+                it.id = e.getKey();
+                it.thing = Json.str(x, "thing", "");
+                it.name = Json.str(x, "name", "?");
+                it.msg = Json.str(x, "msg", "");
+                cloud.delete("mail/" + cloud.uid + "/" + it.id);
+                l.add(it);
+            }
+            return l;
+        }, (l, err) -> {
+            if (err != null) { cb.done(null, err); return; }
+            List<String> got = new ArrayList<>();
+            for (Mail it : l) {
+                String s = pf.receive(it.thing);
+                if (!s.isEmpty()) got.add(s + " (" + it.name + ")");
+            }
+            cb.done(got, null);
+        });
+    }
+
+    // ---------------------------------------------------------------- friend trades
+    //   tradeIn/<to>/<id> = {from, fromName, to, toName, give:"a|b", want:"c|d", t, state?}
+    //   tradeOut/<from>/<id> = to
+    static String join(List<String> l) { return String.join("|", l); }
+
+    static void split(String s, List<String> out) {
+        out.clear();
+        if (s != null) for (String x : s.split("\\|")) if (!x.isEmpty()) out.add(x);
+    }
+
+    void loadTrades(Cloud.Cb<Boolean> cb) {
+        cloud.async(() -> {
+            List<Trade> in = new ArrayList<>(), out = new ArrayList<>();
+            for (Map.Entry<String, Object> e : obj(cloud.get("tradeIn/" + cloud.uid)).entrySet()) {
+                Trade t = trade(e.getKey(), obj(e.getValue()));
+                if (t.state == null) in.add(t);
+            }
+            for (Map.Entry<String, Object> e : obj(cloud.get("tradeOut/" + cloud.uid)).entrySet()) {
+                Object o;
+                // a closed offer is gone, and reading a missing node is refused: both mean "closed"
+                try { o = cloud.get("tradeIn/" + e.getValue() + "/" + e.getKey()); } catch (Exception gone) { o = null; }
+                if (!(o instanceof Map)) { cloud.delete("tradeOut/" + cloud.uid + "/" + e.getKey()); continue; }
+                out.add(trade(e.getKey(), Json.obj(o)));
+            }
+            synchronized (this) { tradesIn.clear(); tradesIn.addAll(in); tradesOut.clear(); tradesOut.addAll(out); }
+            return true;
+        }, cb);
+    }
+
+    static Trade trade(String id, Map<String, Object> m) {
+        Trade t = new Trade();
+        t.id = id;
+        t.from = Json.str(m, "from", "");
+        t.fromName = Json.str(m, "fromName", "?");
+        t.to = Json.str(m, "to", "");
+        t.toName = Json.str(m, "toName", "?");
+        t.state = Json.str(m, "state", null);
+        t.t = num(m.get("t"));
+        split(Json.str(m, "give", ""), t.give);
+        split(Json.str(m, "want", ""), t.want);
+        return t;
+    }
+
+    /** offer a trade to a friend: what I give is held until they answer */
+    void offer(Profile pf, Friend to, List<String> give, List<String> want, String myName, Cloud.Cb<Boolean> cb) {
+        if (give.isEmpty() && want.isEmpty()) { cb.done(null, L.t("เลือกของก่อน", "Pick something first")); return; }
+        List<String> taken = new ArrayList<>();
+        for (String th : give) {
+            if (!pf.giveAway(th)) {
+                for (String b : taken) pf.receive(b);
+                cb.done(null, L.t("ของไม่พอ: ", "You don't have: ") + pf.describe(th));
+                return;
+            }
+            taken.add(th);
+        }
+        cloud.async(() -> {
+            String id = "T" + Long.toString(System.currentTimeMillis(), 36) + newCode();
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("from", cloud.uid);
+            m.put("fromName", myName);
+            m.put("to", to.uid);
+            m.put("toName", to.name);
+            m.put("give", join(give));
+            m.put("want", join(want));
+            m.put("t", System.currentTimeMillis());
+            cloud.put("tradeIn/" + to.uid + "/" + id, m);
+            cloud.put("tradeOut/" + cloud.uid + "/" + id, to.uid);
+            return true;
+        }, (ok, err) -> {
+            if (err != null) for (String b : taken) pf.receive(b);
+            cb.done(ok, err);
+        });
+    }
+
+    /** accept an incoming trade: I pay what they want, they get it by mail, I get what they offered */
+    void acceptTrade(Profile pf, Trade t, Cloud.Cb<String> cb) {
+        List<String> taken = new ArrayList<>();
+        // a wanted planet is sent as my real copy (level, copies, effect)
+        for (int i = 0; i < t.want.size(); i++) {
+            String th = t.want.get(i);
+            if (th.startsWith("p:")) {
+                try { int pt = Integer.parseInt(th.split(":")[1]); if (pf.owned[pt]) t.want.set(i, pf.planetThing(pt)); } catch (RuntimeException ignored) { }
+            }
+        }
+        for (String th : t.want) {
+            if (!pf.giveAway(th)) {
+                for (String b : taken) pf.receive(b);
+                cb.done(null, L.t("ของไม่พอ: ", "You don't have: ") + pf.describe(th));
+                return;
+            }
+            taken.add(th);
+        }
+        cloud.async(() -> {
+            String path = "tradeIn/" + cloud.uid + "/" + t.id;
+            Map<String, Object> cur = Json.obj(cloud.get(path));
+            if (cur == null || cur.get("state") != null) throw new Cloud.UserError(L.t("ข้อเสนอนี้ถูกยกเลิกแล้ว", "This offer was cancelled"));
+            cloud.put(path + "/state", "done:" + cloud.uid);
+            if (!("done:" + cloud.uid).equals(Json.str(Json.obj(cloud.get(path)), "state", "")))
+                throw new Cloud.UserError(L.t("ข้อเสนอนี้ถูกยกเลิกแล้ว", "This offer was cancelled"));
+            for (String th : t.want) sendMail(t.from, th, "trade with " + cloud.name);
+            cloud.delete(path);
+            return true;
+        }, (ok, err) -> {
+            if (err != null) { for (String b : taken) pf.receive(b); cb.done(null, err); return; }
+            StringBuilder s = new StringBuilder();
+            for (String th : t.give) { String x = pf.receive(th); if (!x.isEmpty()) s.append(s.length() > 0 ? ", " : "").append(x); }
+            cb.done(s.length() > 0 ? s.toString() : L.t("เทรดเสร็จ", "Trade done"), null);
+        });
+    }
+
+    /** decline an incoming trade (their things go back by mail) or cancel my own offer */
+    void closeTrade(Profile pf, Trade t, Cloud.Cb<Boolean> cb) {
+        final boolean mine = cloud.uid.equals(t.from);
+        cloud.async(() -> {
+            String path = "tradeIn/" + t.to + "/" + t.id;
+            Map<String, Object> cur = Json.obj(cloud.get(path));
+            if (cur == null || cur.get("state") != null) throw new Cloud.UserError(L.t("ข้อเสนอนี้ปิดไปแล้ว", "This offer is already closed"));
+            String st = (mine ? "cancel:" : "decline:") + cloud.uid;
+            cloud.put(path + "/state", st);
+            if (!st.equals(Json.str(Json.obj(cloud.get(path)), "state", "")))
+                throw new Cloud.UserError(L.t("ข้อเสนอนี้ปิดไปแล้ว", "This offer is already closed"));
+            if (!mine) for (String th : t.give) sendMail(t.from, th, "trade declined");
+            cloud.delete(path);
+            if (mine) cloud.delete("tradeOut/" + cloud.uid + "/" + t.id);
+            return true;
+        }, (ok, err) -> {
+            if (err == null && mine) for (String th : t.give) pf.receive(th);
+            cb.done(ok, err);
+        });
     }
 }

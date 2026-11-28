@@ -18,6 +18,8 @@ final class Planet {
     int art = -1, overShots, chainShots;
     float rangeMul = 1f;
     int evoShots;
+    /** Admin Abuse effect (-1 = none) */
+    int eff = -1;
     /** skin style shown on the map (-1 = none) */
     int skin = -1;
 }

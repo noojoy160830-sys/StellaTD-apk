@@ -389,6 +389,104 @@ final class Cloud {
         boolean kickedElsewhere, kickedByStaff, maintenance;
         String ban, broadcast;
         long broadcastTime;
+        Abuse abuse;
+    }
+
+    /** Admin Abuse event, set from the console under config/abuse */
+    static final class Abuse {
+        String id = "", giftId = "", giftRewards = "", giftMsg = "", bossId = "";
+        long until, bossUntil;
+        long bossHp;
+        boolean on(long now) { return !id.isEmpty() && now < until; }
+        boolean bossOn(long now) { return !bossId.isEmpty() && now < bossUntil; }
+    }
+
+    static long lng(Object o) {
+        if (o instanceof Number) return ((Number) o).longValue();
+        try { return o == null ? 0 : Long.parseLong(o.toString()); } catch (NumberFormatException e) { return 0; }
+    }
+
+    static Abuse parseAbuse(Object o) {
+        Map<String, Object> m = Json.obj(o);
+        if (m == null) return null;
+        Abuse a = new Abuse();
+        a.id = Json.str(m, "id", "");
+        a.until = lng(m.get("until"));
+        Map<String, Object> gf = Json.obj(m.get("gift"));
+        if (gf != null) {
+            a.giftId = Json.str(gf, "id", "");
+            a.giftRewards = Json.str(gf, "rewards", "");
+            a.giftMsg = Json.str(gf, "msg", "");
+        }
+        Map<String, Object> bs = Json.obj(m.get("boss"));
+        if (bs != null) {
+            a.bossId = Json.str(bs, "id", "");
+            a.bossHp = lng(bs.get("hp"));
+            a.bossUntil = lng(bs.get("until"));
+        }
+        return a;
+    }
+
+    // ---- console: Admin Abuse controls
+    void abuseStart(int minutes, Cb<Boolean> cb) {
+        async(() -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", "A" + Long.toString(System.currentTimeMillis(), 36));
+            m.put("until", System.currentTimeMillis() + minutes * 60000L);
+            put("config/abuse", m);
+            log("abuse on " + minutes + "m");
+            return true;
+        }, cb);
+    }
+
+    void abuseStop(Cb<Boolean> cb) {
+        async(() -> { delete("config/abuse"); log("abuse off"); return true; }, cb);
+    }
+
+    void abuseGift(String rewards, String msg, Cb<Boolean> cb) {
+        async(() -> {
+            if (Json.obj(get("config/abuse")) == null) throw new UserError("start the event first: abuse on <minutes>");
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", "G" + Long.toString(System.currentTimeMillis(), 36));
+            m.put("rewards", rewards);
+            m.put("msg", msg == null ? "" : msg);
+            put("config/abuse/gift", m);
+            log("abuse gift " + rewards);
+            return true;
+        }, cb);
+    }
+
+    void abuseBoss(long hp, int minutes, Cb<Boolean> cb) {
+        async(() -> {
+            if (Json.obj(get("config/abuse")) == null) throw new UserError("start the event first: abuse on <minutes>");
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", "B" + Long.toString(System.currentTimeMillis(), 36));
+            m.put("hp", hp);
+            m.put("until", System.currentTimeMillis() + minutes * 60000L);
+            put("config/abuse/boss", m);
+            log("abuse boss " + hp + " " + minutes + "m");
+            return true;
+        }, cb);
+    }
+
+    /** this player's total damage on the event boss (kept at its best) */
+    void reportBoss(String bossId, long dmg, Cb<Boolean> cb) {
+        final String me = uid;
+        async(() -> {
+            long old = lng(get("bossDmg/" + bossId + "/" + me));
+            if (dmg > old) put("bossDmg/" + bossId + "/" + me, dmg);
+            return true;
+        }, cb);
+    }
+
+    /** {total damage, players} for the event boss */
+    void bossTotal(String bossId, Cb<long[]> cb) {
+        async(() -> {
+            Map<String, Object> m = Json.obj(get("bossDmg/" + bossId));
+            long sum = 0, n = 0;
+            if (m != null) for (Object v : m.values()) { sum += lng(v); n++; }
+            return new long[]{sum, n};
+        }, cb);
     }
 
     /** claim this device as the account's only active session */
@@ -439,6 +537,7 @@ final class Cloud {
                     b.broadcast = Json.str(bc, "msg", null);
                     try { b.broadcastTime = Long.parseLong(Json.str(bc, "t", "0")); } catch (NumberFormatException ignored) { }
                 }
+                b.abuse = parseAbuse(cfg.get("abuse"));
             }
             Map<String, Object> pres = Json.obj(get("presence"));
             if (pres != null) for (Object v : pres.values())
@@ -483,6 +582,7 @@ final class Cloud {
         boolean maintenance;
         int minVersion, online;
         String broadcast;
+        Abuse abuse;
     }
 
     void server(Cb<Server> cb) {
@@ -494,6 +594,7 @@ final class Cloud {
                 sv.maintenance = Json.bool(cfg, "maintenance");
                 Map<String, Object> bc = Json.obj(cfg.get("broadcast"));
                 if (bc != null) sv.broadcast = Json.str(bc, "msg", null);
+                sv.abuse = parseAbuse(cfg.get("abuse"));
             }
             Map<String, Object> pres = Json.obj(get("presence"));
             long now = System.currentTimeMillis();
