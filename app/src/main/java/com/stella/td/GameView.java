@@ -20,16 +20,16 @@ import java.util.Locale;
 /** Renders every screen and handles touch. Match rules live in {@link Game}, saved data in {@link Profile}. */
 public final class GameView extends View {
 
-    static final String VERSION = "v3.6";
+    static final String VERSION = "v3.7";
     /** must match versionCode in app/build.gradle */
-    static final int VERSION_CODE = 18;
+    static final int VERSION_CODE = 19;
 
     // hub screens
     static final int S_LOBBY = 0, S_SHOP = 1, S_PLANET = 2, S_PLAYMENU = 3, S_BANNER = 4, S_ENCHANT = 5, S_GAME = 6,
             S_LOGIN = 7, S_ADMIN = 8, S_LEADER = 9, S_TERM = 10, S_STAFF = 11, S_SERVER = 12, S_LOGS = 13, S_INV = 14, S_EVENTS = 15, S_SOCIAL = 16;
     // popups
     static final int P_NONE = 0, P_PLAYER = 1, P_SETTINGS = 2, P_GACHA = 3, P_INDEX = 4, P_AUTO = 5, P_GIVE = 6,
-            P_AVATAR = 7, P_CONSOLE = 8, P_BULKRES = 9, P_ROLE = 10, P_EQUIP = 11, P_INV = 12, P_RSHOP = 13, P_ITEMS = 14, P_RATES = 15, P_CRATES = 16, P_REVEAL = 17;
+            P_AVATAR = 7, P_CONSOLE = 8, P_BULKRES = 9, P_ROLE = 10, P_EQUIP = 11, P_INV = 12, P_RSHOP = 13, P_ITEMS = 14, P_RATES = 15, P_CRATES = 16, P_REVEAL = 17, P_LOGIN = 18;
 
     static final class Btn {
         final RectF r;
@@ -449,6 +449,7 @@ public final class GameView extends View {
     }
 
     void logout() {
+        loginShown = false;
         // upload the latest save first, so my leaderboard entry stays up to date after I leave
         if (pf != null) { pf.save(); pushNow(); }
         cloud.offline();
@@ -772,6 +773,7 @@ public final class GameView extends View {
             case P_ITEMS: drawGiveItems(c); break;
             case P_RATES: drawRates(c); break;
             case P_REVEAL: drawReveal(c); break;
+            case P_LOGIN: drawLoginPopup(c); break;
             default: break;
         }
         c.restore();
@@ -1746,8 +1748,20 @@ public final class GameView extends View {
         rf.set(W - 150 * u, 50 * u, W - 30 * u, 170 * u);
         button(c, rf, null, 0xFF6B5BD6, true, () -> popup = P_SETTINGS);
         gear(c, rf.centerX(), rf.centerY() - 4 * u, 40 * u);
+        rf.set(W - 290 * u, 50 * u, W - 170 * u, 170 * u);
+        button(c, rf, null, 0xFF2E9A6A, true, () -> popup = P_LOGIN);
+        calendarIcon(c, rf.centerX(), rf.centerY() - 2 * u, 36 * u);
+        if (pf.giftReady()) {
+            p.setShader(null);
+            p.setColor(0xFFFF3B5B);
+            c.drawCircle(rf.right - 12 * u, rf.top + 12 * u, 13 * u * (1f + 0.15f * (float) Math.sin(anim * 6)), p);
+        }
+        if (!loginShown && net == NET_ONLINE && popup == P_NONE && busyMsg.isEmpty()) {
+            loginShown = true;
+            popup = P_LOGIN;
+        }
         if (isAdmin()) {
-            rf.set(W - 290 * u, 50 * u, W - 170 * u, 170 * u);
+            rf.set(W - 430 * u, 50 * u, W - 310 * u, 170 * u);
             button(c, rf, null, 0xFFD0407A, true, () -> { adminSel = cloud.uid; go(S_ADMIN); refreshPlayers(); selectAdmin(cloud.uid); });
             shield(c, rf.centerX(), rf.centerY() - 6 * u, 42 * u);
         }
@@ -2049,7 +2063,7 @@ public final class GameView extends View {
                 boolean ready = pf.giftReady();
                 rf.set(q.left + 30 * u, q.bottom - 95 * u, q.right - 30 * u, q.bottom - 25 * u);
                 button(c, rf, ready ? L.t("รับของล็อกอิน", "Claim login reward") : L.t("ปฏิทินล็อกอิน", "Login calendar"),
-                        0xFF2E9A6A, true, () -> { evTab = 2; go(S_EVENTS); });
+                        0xFF2E9A6A, true, () -> popup = P_LOGIN);
             } else if (i == 2) {
                 plain(c, L.t("Raid Capsule • ร้านค้า Raid", "Raid Capsule • Raid shop"), q.centerX(), q.bottom - 50 * u, 26 * u, 0xFFB8F6FF, Paint.Align.CENTER, cw - 20 * u);
                 btns.add(new Btn(q, () -> {
@@ -2481,10 +2495,11 @@ public final class GameView extends View {
     /** Friends • Co-op rooms • Gift codes */
     void drawSocial(Canvas c) {
         header(c, L.t("เพื่อน & Co-op", "Friends & Co-op"));
-        String[] tabs = {L.t("เพื่อน", "Friends"), "Co-op", L.t("โค้ด", "Code")};
-        boolean[] dot = {!social.requests.isEmpty(), !social.invites.isEmpty(), false};
-        float tw = (W - 120 * u) / 3f;
-        for (int i = 0; i < 3; i++) {
+        String[] tabs = {L.t("เพื่อน", "Friends"), "Co-op"};
+        boolean[] dot = {!social.requests.isEmpty(), !social.invites.isEmpty()};
+        if (socTab > 1) socTab = 0;
+        float tw = (W - 110 * u) / 2f;
+        for (int i = 0; i < 2; i++) {
             final int ti = i;
             rf.set(50 * u + i * (tw + 10 * u), 190 * u, 50 * u + i * (tw + 10 * u) + tw, 280 * u);
             button(c, rf, tabs[i], socTab == i ? 0xFF2FB86A : 0xFF3A3360, true, () -> socTab = ti);
@@ -2492,8 +2507,7 @@ public final class GameView extends View {
         }
         if (cloud.uid == null) { plain(c, L.t("ต้องออนไลน์ก่อน", "You need to be online"), W / 2, 600 * u, 32 * u, 0xFFE6E0FF, Paint.Align.CENTER, 0); return; }
         if (socTab == 0) socFriends(c);
-        else if (socTab == 1) socCoop(c);
-        else socCode(c);
+        else socCoop(c);
     }
 
     boolean friendOnline(Social.Friend f) { return f.seen > 0 && Math.abs(System.currentTimeMillis() - f.seen) < 60000; }
@@ -2666,46 +2680,22 @@ public final class GameView extends View {
         });
     }
 
-    void socCode(Canvas c) {
-        RectF box = new RectF(40 * u, 310 * u, W - 40 * u, 900 * u);
-        modeCard(c, box, 0xFFFFD23F, 0xEE2A1E0A);
-        p.setShader(null);
-        glowCircle(c, box.centerX(), box.top + 160 * u, 120 * u, 0x66FFD23F);
-        itemIcon(c, Items.SUPPLY, box.centerX(), box.top + 160 * u, 80 * u);
-        title(c, L.t("ใส่โค้ดของขวัญ", "Redeem a gift code"), box.centerX(), box.top + 320 * u, 50 * u, 0xFFFFFFFF);
-        plain(c, L.t("โค้ดแจกจากทีมงานในกิจกรรมและโซเชียล", "Codes are shared by the team in events and on social media"), box.centerX(), box.top + 375 * u, 26 * u, 0xFFFFE6B0, Paint.Align.CENTER, box.width() - 60 * u);
-        rf.set(box.left + 40 * u, box.bottom - 170 * u, box.right - 40 * u, box.bottom - 50 * u);
-        button(c, rf, L.t("ใส่โค้ด", "Enter code"), 0xFFE0A020, true, () ->
-                Dialogs.ask(ctx, L.t("โค้ดของขวัญ", "Gift code"), L.t("พิมพ์โค้ด", "Type the code"), new String[]{L.t("โค้ด", "Code")}, new int[]{Dialogs.TEXT}, new String[]{""},
-                        L.t("รับของ", "Redeem"), v -> {
-                            setBusy(L.t("กำลังตรวจโค้ด...", "Checking..."));
-                            social.redeem(v[0], pf, (got, err) -> {
-                                setBusy(null);
-                                if (err != null) { Sfx.play(Sfx.ERROR); showToast(err); return; }
-                                Sfx.play(Sfx.RARE);
-                                showToast(L.t("ได้รับ: ", "Received: ") + got);
-                                pushNow();
-                            });
-                            return null;
-                        }));
-    }
-
     /** Events: daily/weekly challenges, daily missions and the 7-day login calendar */
     void drawEvents(Canvas c) {
         pf.refreshMissions();
         header(c, L.t("กิจกรรม", "Events"), 0, pf.stars, 2, pf.crystals);
-        String[] tabs = {L.t("ชาเลนจ์", "Challenge"), L.t("ภารกิจ", "Missions"), L.t("ล็อกอิน", "Login")};
-        boolean[] dot = {pf.dailyReady() || pf.weeklyReady(), pf.anyMissionClaim(), pf.giftReady()};
-        float tw = (W - 120 * u) / 3f;
-        for (int i = 0; i < 3; i++) {
+        String[] tabs = {L.t("ชาเลนจ์", "Challenge"), L.t("ภารกิจ", "Missions")};
+        boolean[] dot = {pf.dailyReady() || pf.weeklyReady(), pf.anyMissionClaim()};
+        if (evTab > 1) evTab = 0;
+        float tw = (W - 110 * u) / 2f;
+        for (int i = 0; i < 2; i++) {
             final int ti = i;
             rf.set(50 * u + i * (tw + 10 * u), 190 * u, 50 * u + i * (tw + 10 * u) + tw, 280 * u);
             button(c, rf, tabs[i], evTab == i ? 0xFF2FB86A : 0xFF3A3360, true, () -> evTab = ti);
             if (dot[i]) { p.setShader(null); p.setColor(0xFFFF3B5B); c.drawCircle(rf.right - 16 * u, rf.top + 14 * u, 12 * u, p); }
         }
         if (evTab == 0) evChallenges(c);
-        else if (evTab == 1) evMissions(c);
-        else evLogin(c);
+        else evMissions(c);
     }
 
     void evChallenges(Canvas c) {
@@ -2786,15 +2776,15 @@ public final class GameView extends View {
         });
     }
 
-    void evLogin(Canvas c) {
-        plain(c, L.t("เข้าเกมทุกวันรับของ • วันที่ 7 ได้โบนัสใหญ่", "Log in every day • day 7 has a big bonus"), 50 * u, 335 * u, 26 * u, 0xFFE6E0FF, Paint.Align.LEFT, W - 100 * u);
+    void evLogin(Canvas c, float top) {
+        plain(c, L.t("เข้าเกมทุกวันรับของ • วันที่ 7 ได้โบนัสใหญ่", "Log in every day • day 7 has a big bonus"), 50 * u, top + 335 * u, 26 * u, 0xFFE6E0FF, Paint.Align.LEFT, W - 100 * u);
         float cw = (W - 130 * u) / 4f, ch = 300 * u;
         int slot = pf.loginSlot();
         boolean ready = pf.giftReady();
         String[] kn = {"Star", "Crystal", "Crystal Oil", "Raid Capsule"};
         for (int i = 0; i < 7; i++) {
             int col = i % 4, row = i / 4;
-            RectF q = new RectF(50 * u + col * (cw + 10 * u), 380 * u + row * (ch + 20 * u), 50 * u + col * (cw + 10 * u) + cw, 380 * u + row * (ch + 20 * u) + ch);
+            RectF q = new RectF(50 * u + col * (cw + 10 * u), top + 380 * u + row * (ch + 20 * u), 50 * u + col * (cw + 10 * u) + cw, top + 380 * u + row * (ch + 20 * u) + ch);
             if (i == 6) q.right = W - 50 * u;
             boolean past = i < slot, today = i == slot;
             rarityCard(c, q, i == 6 ? 0xFFFFD23F : today ? 0xFF7CFF8A : 0xFF6B5BD6, past || today, today && ready, 22 * u);
@@ -2816,11 +2806,54 @@ public final class GameView extends View {
                 c.drawLine(kx - 4 * u, ky + 12 * u, kx + 16 * u, ky - 12 * u, sp);
             }
         }
-        rf.set(80 * u, 380 * u + 2 * (ch + 20 * u) + 40 * u, W - 80 * u, 380 * u + 2 * (ch + 20 * u) + 160 * u);
+        rf.set(80 * u, top + 380 * u + 2 * (ch + 20 * u) + 40 * u, W - 80 * u, top + 380 * u + 2 * (ch + 20 * u) + 160 * u);
         button(c, rf, ready ? L.t("รับของวันนี้", "Claim today's reward") : L.t("รับแล้ว กลับมาพรุ่งนี้", "Claimed — come back tomorrow"), 0xFF2FB86A, ready, () -> {
             String s = pf.claimLogin();
             if (s != null) { Sfx.play(Sfx.COIN); showToast("+" + s); pushNow(); }
         });
+    }
+
+    boolean loginShown;
+
+    /** daily login calendar popup: opens by itself on every launch, and from the lobby button */
+    void drawLoginPopup(Canvas c) {
+        RectF r = new RectF(30 * u, 230 * u, W - 30 * u, 1520 * u);
+        popupFrame(c, r, L.t("ของขวัญล็อกอินรายวัน", "Daily login rewards"));
+        evLogin(c, r.top - 120 * u);
+        rf.set(r.centerX() - 200 * u, r.bottom - 110 * u, r.centerX() + 200 * u, r.bottom - 30 * u);
+        button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);
+    }
+
+    void calendarIcon(Canvas c, float x, float y, float r) {
+        p.setShader(null);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(0xFFFFFFFF);
+        rf2.set(x - r * 0.8f, y - r * 0.6f, x + r * 0.8f, y + r * 0.85f);
+        c.drawRoundRect(rf2, r * 0.18f, r * 0.18f, p);
+        p.setColor(0xFFFF5B6B);
+        c.drawRect(rf2.left, rf2.top, rf2.right, y - r * 0.2f, p);
+        p.setColor(0xFF6B5BD6);
+        for (int k = 0; k < 2; k++) {
+            float kx = x + (k == 0 ? -r * 0.4f : r * 0.4f);
+            c.drawRoundRect(new RectF(kx - r * 0.09f, y - r * 0.82f, kx + r * 0.09f, y - r * 0.45f), r * 0.08f, r * 0.08f, p);
+        }
+        p.setColor(0xFF2A1650);
+        for (int k = 0; k < 6; k++) c.drawCircle(x - r * 0.45f + (k % 3) * r * 0.45f, y + r * 0.12f + (k / 3) * r * 0.38f, r * 0.09f, p);
+    }
+
+    void askRedeem() {
+        Dialogs.ask(ctx, L.t("โค้ดของขวัญ", "Gift code"), L.t("พิมพ์โค้ดที่ได้รับจากทีมงาน", "Type a code from the team"), new String[]{L.t("โค้ด", "Code")},
+                new int[]{Dialogs.TEXT}, new String[]{""}, L.t("รับของ", "Redeem"), v -> {
+                    setBusy(L.t("กำลังตรวจโค้ด...", "Checking..."));
+                    social.redeem(v[0], pf, (got, err) -> {
+                        setBusy(null);
+                        if (err != null) { Sfx.play(Sfx.ERROR); showToast(err); return; }
+                        Sfx.play(Sfx.RARE);
+                        showToast(L.t("ได้รับ: ", "Received: ") + got);
+                        pushNow();
+                    });
+                    return null;
+                });
     }
 
     void drawInvScreen(Canvas c) {
@@ -4712,8 +4745,10 @@ public final class GameView extends View {
         popupFrame(c, r, mat ? "Material Index" : "Enchant Index");
         int n = mat ? Defs.MAT_COUNT : Defs.EN_COUNT;
         float top = r.top + 140 * u, rh = Math.min(120 * u, (r.height() - 310 * u) / n);
-        for (int i = 0; i < n; i++) {
-            float y = top + i * rh;
+        int[] order = mat ? Defs.MAT_ORDER : Defs.EN_ORDER;
+        for (int row = 0; row < n; row++) {
+            int i = order[row];
+            float y = top + row * rh;
             int rar = mat ? Defs.MAT_RARITY[i] : Defs.EN_RARITY[i];
             int rc = rar == Defs.GALAXY ? hsv(anim * 90) : Defs.RARITY_COLOR[rar];
             if (mat) materialBadge(c, r.left + 70 * u, y + rh / 2, rh * 0.32f, i);
@@ -4822,12 +4857,14 @@ public final class GameView extends View {
         int n = mat ? Defs.MAT_COUNT : Defs.EN_COUNT;
         float listTop = r.top + 185 * u, listBot = r.bottom - 470 * u;
         float rh = Math.min(100 * u, (listBot - listTop) / n);
-        for (int i = 0; i < n; i++) {
+        int[] order = mat ? Defs.MAT_ORDER : Defs.EN_ORDER;
+        for (int ri = 0; ri < n; ri++) {
+            final int i = order[ri];
             final int e = i;
             int rar = mat ? Defs.MAT_RARITY[i] : Defs.EN_RARITY[i];
             int rc = rar == Defs.GALAXY ? hsv(anim * 90) : Defs.RARITY_COLOR[rar];
             boolean on = mat ? keepMat[i] : keepEn[i];
-            float y = listTop + i * rh;
+            float y = listTop + ri * rh;
             RectF row = new RectF(r.left + 30 * u, y + 4 * u, r.right - 30 * u, y + rh - 4 * u);
             p.setShader(null);
             p.setStyle(Paint.Style.FILL);
@@ -5216,8 +5253,10 @@ public final class GameView extends View {
         button(c, rf, L.t("ออกจากระบบ", "Log out"), 0xFFFF6B5B, true, () -> Dialogs.confirm(ctx, L.t("ออกจากระบบ", "Log out"),
                 L.t("ต้องการออกจากระบบใช่ไหม? ข้อมูลเซฟอยู่บนเซิร์ฟเวอร์แล้ว", "Log out of this account? Your progress is saved online."), L.t("ออกจากระบบ", "Log out"), this::logout));
         y += 125 * u;
-        rf.set(x0, y, x1, y + 95 * u);
-        button(c, rf, L.t("ข้อมูลผู้เล่น / เปลี่ยนไอคอน", "Profile / change icon"), 0xFF6B5BD6, true, () -> popup = P_PLAYER);
+        rf.set(x0, y, x0 + bw, y + 95 * u);
+        button(c, rf, L.t("โปรไฟล์ / ไอคอน", "Profile / icon"), 0xFF6B5BD6, true, () -> popup = P_PLAYER);
+        rf.set(x1 - bw, y, x1, y + 95 * u);
+        button(c, rf, L.t("โค้ดของขวัญ", "Gift code"), 0xFFE0A020, true, () -> { popup = P_NONE; askRedeem(); });
         plain(c, "Stella TD " + VERSION + "  •  " + L.t("เซฟออนไลน์อัตโนมัติ", "Auto cloud save"), r.centerX(), r.bottom - 150 * u, 26 * u, 0x99FFFFFF, Paint.Align.CENTER, r.width() - 60 * u);
         rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 35 * u);
         button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> popup = P_NONE);

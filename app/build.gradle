@@ -10,8 +10,8 @@ android {
         applicationId 'com.stella.td'
         minSdk 24
         targetSdk 34
-        versionCode 18
-        versionName '3.6'
+        versionCode 19
+        versionName '3.7'
     }
 
     // Two apps from one codebase:

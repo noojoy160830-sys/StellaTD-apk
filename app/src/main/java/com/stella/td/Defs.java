@@ -313,6 +313,18 @@ final class Defs {
     static int[] weeklyMods(int week) { int a = Math.floorMod(week, CH_MOD.length); return new int[]{a, (a + 1 + Math.floorMod(week / 4, 3)) % CH_MOD.length}; }
     static int weeklyStage(int week) { return 15 + Math.floorMod(week * 5, 20); }
 
+    /** indices ordered by rarity (common first), keeping table order inside a rarity */
+    static int[] byRarity(int[] rarity) {
+        Integer[] idx = new Integer[rarity.length];
+        for (int i = 0; i < idx.length; i++) idx[i] = i;
+        java.util.Arrays.sort(idx, (x, y) -> rarity[x] != rarity[y] ? rarity[x] - rarity[y] : x - y);
+        int[] out = new int[idx.length];
+        for (int i = 0; i < idx.length; i++) out[i] = idx[i];
+        return out;
+    }
+
+    static final int[] EN_ORDER = byRarity(EN_RARITY), MAT_ORDER = byRarity(MAT_RARITY);
+
     static int galaxyOf(int st) { return Math.min(GALAXIES - 1, st / PER_GALAXY); }
 
     // Map frame is 1000 x 1200 units. Paths are x,y pairs; the first point is the black hole, the last the base.
