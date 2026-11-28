@@ -20,9 +20,9 @@ import java.util.Locale;
 /** Renders every screen and handles touch. Match rules live in {@link Game}, saved data in {@link Profile}. */
 public final class GameView extends View {
 
-    static final String VERSION = "v3.8";
+    static final String VERSION = "v3.9";
     /** must match versionCode in app/build.gradle */
-    static final int VERSION_CODE = 20;
+    static final int VERSION_CODE = 21;
 
     // hub screens
     static final int S_LOBBY = 0, S_SHOP = 1, S_PLANET = 2, S_PLAYMENU = 3, S_BANNER = 4, S_ENCHANT = 5, S_GAME = 6,
@@ -46,6 +46,7 @@ public final class GameView extends View {
     String adminSel;
     final Cloud cloud;
     final Social social;
+    final Chat chat;
     boolean busy, dirty, pushing;
     String busyMsg = "";
     float pushAcc;
@@ -175,6 +176,7 @@ public final class GameView extends View {
         Sfx.init(ctx);
         cloud = new Cloud(ctx, this::post);
         social = new Social(cloud);
+        chat = new Chat(cloud);
         consoleApp = ctx.getPackageName() != null && ctx.getPackageName().endsWith(".console");
         if (consoleApp) {
             cloud.sessionKey = "consoleSession";
@@ -2182,6 +2184,25 @@ public final class GameView extends View {
     }
 
     // ================================================================== planet menu
+    /** family filter on the planet page (-1 = all) */
+    int planetFilter = -1;
+
+    /** "Solar x3 +12% dmg • Satellite x2 ..." for a deck */
+    static String teamSetText(int[] deck) {
+        StringBuilder b = new StringBuilder();
+        for (int f = 0; f < Defs.FAM_COUNT - 1; f++) {
+            int t = Defs.famTier(deck, f);
+            if (t == 0) continue;
+            float[] bo = Defs.FAM_BONUS[f][t - 1];
+            b.append(b.length() > 0 ? " • " : "").append(Defs.FAM_NAME[f]).append(" x").append(Defs.famCount(deck, f));
+            if (bo[0] > 0) b.append(" +").append(Math.round(bo[0] * 100)).append(L.t("% ดาเมจ", "% dmg"));
+            if (bo[1] > 0) b.append(" +").append(Math.round(bo[1] * 100)).append(L.t("% เร็ว", "% spd"));
+            if (bo[2] > 0) b.append(" +").append(Math.round(bo[2] * 100)).append(L.t("% ระยะ", "% rng"));
+            if (bo[3] > 0) b.append(" +").append(Math.round(bo[3] * 100)).append("% SP");
+        }
+        return b.length() == 0 ? L.t("ทีมเซ็ต: ใส่ดาวประเภทเดียวกัน 2+ ดวงเพื่อรับบัฟ", "Team set: 2+ of one category for a bonus") : L.t("ทีมเซ็ต: ", "Team set: ") + b;
+    }
+
     void drawPlanetMenu(Canvas c) {
         header(c, L.t("ดวงดาว", "Planet"), 0, pf.stars, 3, pf.oil);
         int t = selType;
@@ -2190,43 +2211,60 @@ public final class GameView extends View {
         int ownAll = 0;
         for (int k = 0; k < Defs.P_COUNT; k++) if (pf.owned[k]) ownAll++;
         plain(c, L.t("ดวงดาวที่สะสม ", "Planets collected ") + ownAll + "/" + Defs.P_COUNT, 50 * u, 240 * u, 32 * u, 0xFFC9C2E6, Paint.Align.LEFT, 0);
-        plain(c, L.t("สกิน / Artifact อยู่ใน กระเป๋า (หน้าหลัก)", "Skins / Artifacts: Inventory (home)"), W - 50 * u, 240 * u, 24 * u, 0xFF8A84A0, Paint.Align.RIGHT, 0);
-        // scrolling collection, stacked by category
+        plain(c, teamSetText(pf.deck), W - 50 * u, 240 * u, 24 * u, 0xFFFFE27A, Paint.Align.RIGHT, W * 0.55f);
+        // category filter chips, then the collection grouped by rarity
         float cell = (W - 100 * u) / 6f;
-        RectF view = new RectF(30 * u, navTop - 30 * u - cell * 2 - 80 * u, W - 30 * u, navTop - 8 * u);
-        float secH = 74 * u, contentH = 0;
-        int nCat = Defs.CAT_NAME.length;
-        int[] inCat = new int[nCat], ownCat = new int[nCat];
-        for (int k = 0; k < Defs.P_COUNT; k++) { inCat[Defs.P_CATEGORY[k]]++; if (pf.owned[k]) ownCat[Defs.P_CATEGORY[k]]++; }
-        for (int ci = 0; ci < nCat; ci++) contentH += secH + (float) Math.ceil(inCat[ci] / 6f) * cell + 16 * u;
+        RectF area = new RectF(30 * u, navTop - 30 * u - cell * 2 - 80 * u, W - 30 * u, navTop - 8 * u);
         p.setShader(null);
         p.setStyle(Paint.Style.FILL);
         p.setColor(0x55080320);
-        c.drawRoundRect(view, 28 * u, 28 * u, p);
-        beginScroll(c, S_PLANET, view, contentH, 0.016f);
+        c.drawRoundRect(area, 28 * u, 28 * u, p);
+        String[] chips = {L.t("ทั้งหมด", "All"), "Solar", "Satellite", "Cyber", "Guardian", "Specialist"};
+        float cw = (area.width() - 40 * u) / chips.length;
+        for (int k = 0; k < chips.length; k++) {
+            final int fk = k - 1;
+            RectF ch = new RectF(area.left + 20 * u + k * cw + 3 * u, area.top + 12 * u, area.left + 20 * u + (k + 1) * cw - 3 * u, area.top + 66 * u);
+            boolean on = planetFilter == fk;
+            int col = fk < 0 ? 0xFF8A84A0 : Defs.FAM_COLOR[fk];
+            p.setColor(on ? col : 0xFF241C44);
+            c.drawRoundRect(ch, 27 * u, 27 * u, p);
+            plain(c, chips[k], ch.centerX(), ch.centerY() + 8 * u, 21 * u, on ? 0xFF140A2A : col, Paint.Align.CENTER, cw - 8 * u);
+            btns.add(new Btn(ch, () -> planetFilter = fk));
+        }
+        RectF view = new RectF(area.left, area.top + 76 * u, area.right, area.bottom);
+        float secH = 64 * u, contentH = 0;
+        int nR = Defs.RARITY_NAME.length;
+        int[] inR = new int[nR], ownR = new int[nR];
+        for (int k = 0; k < Defs.P_COUNT; k++) {
+            if (planetFilter >= 0 && Defs.P_FAMILY[k] != planetFilter) continue;
+            inR[Defs.P_RARITY[k]]++;
+            if (pf.owned[k]) ownR[Defs.P_RARITY[k]]++;
+        }
+        for (int ri = 0; ri < nR; ri++) if (inR[ri] > 0) contentH += secH + (float) Math.ceil(inR[ri] / 6f) * cell + 12 * u;
+        beginScroll(c, S_PLANET * 10 + planetFilter + 1, view, contentH, 0.016f);
         float y = view.top;
-        for (int ci = 0; ci < nCat; ci++) {
-            int col = ci == Defs.CAT_EXCLUSIVE ? Defs.RARITY_COLOR[Defs.EXCLUSIVE] : ci == Defs.CAT_SPECIALIST ? Defs.RARITY_COLOR[Defs.SPECIALIST] : 0xFFFF8A2B;
+        for (int ri = 0; ri < nR; ri++) {
+            if (inR[ri] == 0) continue;
+            int col = Defs.RARITY_COLOR[ri];
             p.setColor(col);
-            rf2.set(50 * u, y + 26 * u, 58 * u, y + 62 * u);
+            rf2.set(50 * u, y + 22 * u, 58 * u, y + 54 * u);
             c.drawRoundRect(rf2, 4 * u, 4 * u, p);
-            text(c, (L.en ? Defs.CAT_NAME[ci] : Defs.CAT_NAME_TH[ci]) + "  " + ownCat[ci] + "/" + inCat[ci], 72 * u, y + 58 * u, 36 * u, 0xFFFFFFFF, Paint.Align.LEFT, 0);
-            String how = ci == Defs.CAT_EXCLUSIVE ? L.t("สุ่มจากตู้ Exclusive (Crystal Oil)", "From the Exclusive capsule (Crystal Oil)")
-                    : ci == Defs.CAT_SPECIALIST ? L.t("หายากสุดในตู้ Exclusive • ช่อง Deck พิเศษ", "Rarest in the Exclusive capsule • own deck slot") : "";
-            if (!how.isEmpty()) plain(c, how, W - 50 * u, y + 56 * u, 25 * u, alpha(col, 0xDD), Paint.Align.RIGHT, 0);
+            text(c, Defs.RARITY_NAME[ri] + "  " + ownR[ri] + "/" + inR[ri], 72 * u, y + 50 * u, 32 * u, col, Paint.Align.LEFT, 0);
             y += secH;
             int slot = 0;
             for (int i = 0; i < Defs.P_COUNT; i++) {
-                if (Defs.P_CATEGORY[i] != ci) continue;
+                if (Defs.P_RARITY[i] != ri || (planetFilter >= 0 && Defs.P_FAMILY[i] != planetFilter)) continue;
                 final int ti = i;
                 float x = 50 * u + (slot % 6) * cell, yy = y + (slot / 6) * cell;
                 slot++;
                 RectF r = new RectF(x + 6 * u, yy + 6 * u, x + cell - 6 * u, yy + cell - 6 * u);
-                int rc = Defs.RARITY_COLOR[Defs.P_RARITY[i]];
-                rarityCard(c, r, rc, pf.owned[i], i == t, 22 * u);
+                rarityCard(c, r, col, pf.owned[i], i == t, 22 * u);
                 sprite(c, pf.owned[i] ? pbmp(i) : pBmp[i], r.centerX(), r.centerY() - 6 * u, cell * 0.42f, pf.owned[i] ? 255 : 45);
+                // family dot
+                p.setColor(Defs.FAM_COLOR[Defs.P_FAMILY[i]]);
+                c.drawCircle(r.left + 16 * u, r.bottom - 16 * u, 8 * u, p);
                 if (pf.owned[i]) {
-                    text(c, "Lv" + pf.level[i], r.centerX(), r.bottom - 14 * u, 26 * u, 0xFFFFFFFF);
+                    text(c, "Lv" + pf.level[i], r.centerX() + 6 * u, r.bottom - 14 * u, 26 * u, 0xFFFFFFFF);
                     if (pf.inDeck(i)) {
                         p.setColor(0xFF33C6A6);
                         c.drawCircle(r.right - 18 * u, r.top + 18 * u, 13 * u, p);
@@ -2235,11 +2273,11 @@ public final class GameView extends View {
                 } else text(c, "?", r.centerX(), r.centerY() + 18 * u, 56 * u, 0xFF6A6488);
                 scrollBtn(r, () -> selType = ti);
             }
-            y += (float) Math.ceil(inCat[ci] / 6f) * cell + 16 * u;
+            y += (float) Math.ceil(inR[ri] / 6f) * cell + 12 * u;
         }
         endScroll(c);
         // deck row (4 normal + 1 specialist)
-        float ds = 128 * u, dTop = view.top - 30 * u - ds;
+        float ds = 128 * u, dTop = area.top - 30 * u - ds;
         text(c, "Deck", 50 * u, dTop + ds / 2 + 14 * u, 40 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
         for (int i = 0; i < Profile.DECK_SIZE; i++) {
             final int d = pf.deck[i];
@@ -2308,7 +2346,8 @@ public final class GameView extends View {
         // status block
         float sTop = b1 - 250 * u;
         int rar = Defs.P_RARITY[t];
-        text(c, L.t("สถานะ:", "Status:"), 50 * u, sTop + 40 * u, 38 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
+        int fam = Defs.P_FAMILY[t];
+        pill(c, 50 * u + 130 * u, sTop + 26 * u, L.en ? Defs.FAM_NAME[fam] : Defs.FAM_NAME_TH[fam], 30 * u, 0xFF140A2A, Defs.FAM_COLOR[fam]);
         text(c, L.t("ระดับ: ", "Rarity: ") + Defs.RARITY_NAME[rar], W - 50 * u, sTop + 40 * u, 38 * u, Defs.RARITY_COLOR[rar], Paint.Align.RIGHT, 0);
         plain(c, statLine(previewPlanet(t)), 50 * u, sTop + 95 * u, 32 * u, 0xFFE6E0FF, Paint.Align.LEFT, W - 100 * u);
         String cp = maxed ? "" : String.format(Locale.US, L.t("   การ์ดซ้ำ %d/%d  •  ใช้ %d Star", "   Copies %d/%d  •  Cost %d Star"),
@@ -2574,8 +2613,8 @@ public final class GameView extends View {
     void coopTick(float dt) {
         if (pf == null || cloud.uid == null || consoleApp) return;
         socAcc += dt;
-        if (screen == S_SOCIAL && socAcc > 2.5f) { socAcc = 0; socialRefresh(); }
-        else if (socAcc > 45f && screen != S_GAME) { socAcc = 0; social.refresh(null); }
+        if (screen == S_SOCIAL && socAcc > 2.5f) { socAcc = 0; socialRefresh(); chatRefresh(); }
+        else if (socAcc > 45f && screen != S_GAME) { socAcc = 0; social.refresh(null); chat.loadNew(null); }
         if (social.roomCode == null) return;
         coopAcc += dt;
         if (coopInGame && game != null && game.coop) {
@@ -2583,13 +2622,30 @@ public final class GameView extends View {
             coopAcc = 0;
             coopBusy = true;
             final Game g = game;
-            social.push(user, g.wave, g.leak, !g.lost, (r, err) -> {
+            social.push(user, g.wave, g.leak, !g.lost, g.board(), g.baseHp, (r, err) -> {
                 coopBusy = false;
                 if (r == null || game != g) return;
                 Social.Member o = r.other(cloud.uid);
-                if (o != null) { g.otherLeak = o.leak; g.partnerName = o.name; g.partnerWave = o.wave; g.partnerAlive = o.alive; }
+                if (o != null) {
+                    g.partnerName = o.name;
+                    g.partnerWave = o.wave;
+                    g.partnerAlive = o.alive;
+                    if (g.pvp) {
+                        g.otherName = o.name;
+                        g.otherHp = o.hp;
+                        // the rival's base fell: I win
+                        if ((!o.alive || (o.hp <= 0 && o.wave > 0)) && !g.lost && !g.won) { g.won = true; Sfx.play(Sfx.WIN); }
+                    } else {
+                        g.syncGhosts(o.board);
+                        // one shared base on one map: take the lower of the two
+                        if (o.hp >= 0) g.baseHp = Math.min(g.baseHp, o.hp);
+                    }
+                }
                 int sum = 0;
-                for (int v : r.giftsForMe.values()) sum += v;
+                for (int v : r.giftsForMe.values()) {
+                    if (v < 0) { if (g.pvp) g.receiveSend(-v - 1); }
+                    else sum += v;
+                }
                 if (sum > 0) { g.stars += sum; g.text(g.px[g.px.length - 1], g.py[g.py.length - 1] - 60, "+" + sum + " SP", 0xFF7CFF8A); showToast(L.t("เพื่อนส่ง SP ให้ +", "Your teammate sent +") + sum + " SP"); }
             });
             return;
@@ -2611,7 +2667,7 @@ public final class GameView extends View {
 
     void startCoopGame(Social.Room r) {
         lastCoopSeed = r.seed;
-        int stage = r.mode == Social.MODE_RAID ? Defs.RAID : Math.max(0, Math.min(r.stage, Defs.ST_COUNT - 1));
+        int stage = r.mode == Social.MODE_RAID ? Defs.RAID : r.mode == Social.MODE_PVP ? Defs.PVP_STAGE : Math.max(0, Math.min(r.stage, Defs.ST_COUNT - 1));
         startStage(stage);
         if (game == null) return;
         game.startCoop(r.seed);
@@ -2619,7 +2675,16 @@ public final class GameView extends View {
         if (o != null) game.partnerName = o.name;
         coopInGame = true;
         coopAcc = 0;
-        showToast(L.t("Co-op เริ่มแล้ว! ฐานใช้ร่วมกัน", "Co-op started! You share one base"));
+        if (r.mode == Social.MODE_PVP) {
+            game.pvp = true;
+            game.maxBaseHp = game.baseHp = 20;
+            game.otherHp = 20;
+            if (o != null) game.otherName = o.name;
+            showToast(L.t("PvP เริ่มแล้ว! ใช้ SP ส่งมอนไปบ้านคู่แข่ง", "PvP! Spend SP to send monsters to your rival"));
+        } else {
+            game.coopSide = cloud.uid.equals(r.host) ? 0 : 1;
+            showToast(L.t("Co-op เริ่มแล้ว! เล่นแมพเดียวกัน แบ่งช่องกันคนละครึ่ง", "Co-op! One map: you each own half of the slots"));
+        }
     }
 
     void friendsIcon(Canvas c, float x, float y, float r) {
@@ -2635,14 +2700,110 @@ public final class GameView extends View {
         c.drawArc(rf2, 180, 180, true, p);
     }
 
+    // ================================================================== chat
+    /** null = world chat, else the friend I'm talking to */
+    Social.Friend chatWith;
+
+    void chatRefresh() {
+        if (socTab != 2) return;
+        if (chatWith == null) chat.loadWorld(null);
+        else chat.loadDm(chatWith.uid, null);
+        chat.loadNew(null);
+    }
+
+    void socChat(Canvas c) {
+        java.util.List<Social.Friend> fr;
+        synchronized (social) { fr = new java.util.ArrayList<>(social.friends); }
+        // who: World + friends
+        float x = 40 * u, y = 300 * u, ch = 70 * u;
+        java.util.ArrayList<Social.Friend> who = new java.util.ArrayList<>();
+        who.add(null);
+        who.addAll(fr);
+        for (final Social.Friend f : who) {
+            String nm = f == null ? L.t("โลก", "World") : f.name;
+            tp.setTextSize(24 * u);
+            float w = tp.measureText(nm) + 56 * u;
+            if (x + w > W - 40 * u) break;
+            RectF b = new RectF(x, y, x + w, y + ch);
+            boolean on = f == null ? chatWith == null : chatWith != null && chatWith.uid.equals(f.uid);
+            p.setShader(null);
+            p.setColor(on ? 0xFF2FB86A : 0xFF241C44);
+            c.drawRoundRect(b, ch / 2, ch / 2, p);
+            plain(c, nm, b.centerX(), b.centerY() + 9 * u, 24 * u, on ? 0xFF0B2A14 : 0xFFE6E0FF, Paint.Align.CENTER, w);
+            boolean dot;
+            synchronized (chat) { dot = f != null && chat.newFrom.containsKey(f.uid); }
+            if (dot) { p.setColor(0xFFFF3B5B); c.drawCircle(b.right - 10 * u, b.top + 10 * u, 10 * u, p); }
+            btns.add(new Btn(b, () -> { chatWith = f; chatRefresh(); }));
+            x += w + 12 * u;
+        }
+        java.util.List<Chat.Msg> l;
+        synchronized (chat) {
+            java.util.List<Chat.Msg> src = chatWith == null ? chat.world : chat.dms.get(chatWith.uid);
+            l = src == null ? new java.util.ArrayList<>() : new java.util.ArrayList<>(src);
+        }
+        RectF view = new RectF(30 * u, y + ch + 20 * u, W - 30 * u, navTop - 150 * u);
+        p.setColor(0x55080320);
+        c.drawRoundRect(view, 24 * u, 24 * u, p);
+        float rowH = 118 * u;
+        float contentH = l.size() * rowH + 20 * u;
+        int owner = 7000 + (chatWith == null ? 0 : Math.abs(chatWith.uid.hashCode() % 999));
+        // open at the newest message, and jump there after sending
+        boolean fresh = scrollOwner != owner;
+        if (contentH != chatLastH) { if (scrollY >= scrollMax - 5) chatStick = true; chatLastH = contentH; }
+        if (fresh || chatStick) { scrollOwner = owner; scrollVel = 0; scrollY = Math.max(0, contentH - view.height()); }
+        chatStick = false;
+        beginScroll(c, owner, view, contentH, 0.016f);
+        float yy = view.top + 10 * u;
+        for (Chat.Msg m : l) {
+            boolean mine = m.uid.equals(cloud.uid);
+            tp.setTextSize(26 * u);
+            float bw = Math.min(view.width() - 120 * u, Math.max(tp.measureText(m.msg), tp.measureText(m.name)) + 60 * u);
+            RectF b = mine ? new RectF(view.right - 20 * u - bw, yy, view.right - 20 * u, yy + rowH - 14 * u)
+                    : new RectF(view.left + 20 * u, yy, view.left + 20 * u + bw, yy + rowH - 14 * u);
+            panel(c, b, mine ? 0xEE1F5A3A : 0xEE2A2250, 22 * u);
+            plain(c, (mine ? L.t("ฉัน", "Me") : m.name) + "  #" + Social.pid(m.uid), b.left + 24 * u, b.top + 36 * u, 20 * u, mine ? 0xFF9CFFC0 : 0xFFFFD23F, Paint.Align.LEFT, bw - 40 * u);
+            plain(c, m.msg, b.left + 24 * u, b.top + 80 * u, 26 * u, 0xFFFFFFFF, Paint.Align.LEFT, bw - 40 * u);
+            yy += rowH;
+        }
+        if (l.isEmpty()) plain(c, L.t("ยังไม่มีข้อความ • ทักทายเลย!", "No messages yet • say hi!"), view.centerX(), view.top + 80 * u, 26 * u, 0xFF8A84A0, Paint.Align.CENTER, 0);
+        endScroll(c);
+        rf.set(40 * u, navTop - 130 * u, W - 40 * u, navTop - 30 * u);
+        final Social.Friend to = chatWith;
+        button(c, rf, (to == null ? L.t("พิมพ์ถึงทุกคน...", "Message everyone...") : L.t("พิมพ์ถึง ", "Message ") + to.name + "..."), 0xFF4F8BFF, cloud.uid != null, () ->
+                Dialogs.ask(ctx, to == null ? L.t("แชทโลก", "World chat") : to.name, L.t("สุภาพกับทุกคนนะ • ไม่เกิน " + Chat.MAX_LEN + " ตัวอักษร", "Be kind • up to " + Chat.MAX_LEN + " characters"),
+                        new String[]{L.t("ข้อความ", "Message")}, new int[]{Dialogs.TEXT}, new String[]{""}, L.t("ส่ง", "Send"), v -> {
+                            chat.send(to == null ? null : to.uid, user, v[0], (ok, err) -> {
+                                if (err != null) showToast(err);
+                                else { chatStick = true; chatRefresh(); }
+                            });
+                            return null;
+                        }));
+    }
+
+    boolean chatStick;
+    float chatLastH;
+
+    /** look a player up by name or 8-digit Player ID */
+    void findPlayer(String q, java.util.function.Consumer<Cloud.Player> then) {
+        String id = q.replaceAll("[\\s#]", "");
+        boolean byId = id.matches("[0-9]{8}");
+        String key = Accounts.norm(q);
+        cloud.players((list, err) -> {
+            if (err != null) { showToast(err); return; }
+            for (Cloud.Player pl : list)
+                if (byId ? Social.pid(pl.uid).equals(id) : Accounts.norm(pl.name).equals(key)) { then.accept(pl); return; }
+            showToast(L.t("ไม่พบผู้เล่น ", "No player ") + q);
+        });
+    }
+
     /** Friends • Co-op rooms • Gift codes */
     void drawSocial(Canvas c) {
         header(c, L.t("เพื่อน & Co-op", "Friends & Co-op"));
-        String[] tabs = {L.t("เพื่อน", "Friends"), "Co-op"};
-        boolean[] dot = {!social.requests.isEmpty(), !social.invites.isEmpty()};
-        if (socTab > 1) socTab = 0;
-        float tw = (W - 110 * u) / 2f;
-        for (int i = 0; i < 2; i++) {
+        String[] tabs = {L.t("เพื่อน", "Friends"), "Co-op / PvP", L.t("แชท", "Chat")};
+        boolean[] dot = {!social.requests.isEmpty(), !social.invites.isEmpty(), chat.unread()};
+        if (socTab > 2) socTab = 0;
+        float tw = (W - 120 * u) / 3f;
+        for (int i = 0; i < 3; i++) {
             final int ti = i;
             rf.set(50 * u + i * (tw + 10 * u), 190 * u, 50 * u + i * (tw + 10 * u) + tw, 280 * u);
             button(c, rf, tabs[i], socTab == i ? 0xFF2FB86A : 0xFF3A3360, true, () -> socTab = ti);
@@ -2650,7 +2811,8 @@ public final class GameView extends View {
         }
         if (cloud.uid == null) { plain(c, L.t("ต้องออนไลน์ก่อน", "You need to be online"), W / 2, 600 * u, 32 * u, 0xFFE6E0FF, Paint.Align.CENTER, 0); return; }
         if (socTab == 0) socFriends(c);
-        else socCoop(c);
+        else if (socTab == 1) socCoop(c);
+        else socChat(c);
     }
 
     boolean friendOnline(Social.Friend f) { return f.seen > 0 && Math.abs(System.currentTimeMillis() - f.seen) < 60000; }
@@ -2661,20 +2823,14 @@ public final class GameView extends View {
         plain(c, L.t("Player ID ของฉัน", "My Player ID"), idr.left + 30 * u, idr.top + 44 * u, 24 * u, 0xFFC9C2E6, Paint.Align.LEFT, 0);
         title(c, Social.pid(cloud.uid), idr.left + 30 * u, idr.top + 100 * u, 48 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
         rf.set(idr.right - 380 * u, idr.top + 15 * u, idr.right - 15 * u, idr.bottom - 15 * u);
-        button(c, rf, L.t("+ เพิ่มด้วย ID", "+ Add by ID"), 0xFF4F8BFF, true, () ->
-                Dialogs.ask(ctx, L.t("เพิ่มเพื่อน", "Add friend"), L.t("ใส่ Player ID 8 หลักของเพื่อน (ดูได้ที่หน้าโปรไฟล์)", "Your friend's 8-digit Player ID (shown on their profile)"),
-                        new String[]{"Player ID"}, new int[]{Dialogs.TEXT}, new String[]{""}, L.t("ส่งคำขอ", "Send request"), v -> {
-                            String id = v[0].replaceAll("[^0-9]", "");
-                            if (id.length() != 8) return L.t("Player ID มี 8 หลัก", "A Player ID has 8 digits");
-                            if (id.equals(Social.pid(cloud.uid))) return L.t("นี่คือ ID ของคุณเอง", "That's your own ID");
-                            cloud.players((list, err) -> {
-                                if (err != null) { showToast(err); return; }
-                                for (Cloud.Player pl : list)
-                                    if (Social.pid(pl.uid).equals(id)) {
-                                        social.sendRequest(pl.uid, user, (ok, e2) -> showToast(e2 != null ? e2 : L.t("ส่งคำขอเป็นเพื่อนถึง ", "Friend request sent to ") + pl.name));
-                                        return;
-                                    }
-                                showToast(L.t("ไม่พบผู้เล่น ID ", "No player with ID ") + id);
+        button(c, rf, L.t("+ เพิ่มเพื่อน", "+ Add friend"), 0xFF4F8BFF, true, () ->
+                Dialogs.ask(ctx, L.t("เพิ่มเพื่อน", "Add friend"), L.t("ใส่ชื่อ หรือ Player ID 8 หลัก • จะส่งเป็นคำขอเป็นเพื่อน", "A name or an 8-digit Player ID • sends a friend request"),
+                        new String[]{L.t("ชื่อ / ID", "Name / ID")}, new int[]{Dialogs.TEXT}, new String[]{""}, L.t("ส่งคำขอ", "Send request"), v -> {
+                            String q = v[0].trim();
+                            if (q.isEmpty()) return L.t("ใส่ชื่อหรือ ID", "Enter a name or ID");
+                            findPlayer(q, pl -> {
+                                if (pl.uid.equals(cloud.uid)) { showToast(L.t("นี่คือตัวคุณเอง", "That's you")); return; }
+                                social.sendRequest(pl.uid, user, (ok, e2) -> showToast(e2 != null ? e2 : L.t("ส่งคำขอเป็นเพื่อนถึง ", "Friend request sent to ") + pl.name));
                             });
                             return null;
                         }));
@@ -2737,14 +2893,17 @@ public final class GameView extends View {
             modeCard(c, box, 0xFF2FB86A, 0xEE0F2A1E);
             friendsIcon(c, box.left + 110 * u, box.top + 110 * u, 70 * u);
             title(c, L.t("เล่นด้วยกัน 2 คน", "Play as a team of 2"), box.left + 210 * u, box.top + 100 * u, 46 * u, 0xFFFFFFFF, Paint.Align.LEFT, box.width() - 240 * u);
-            plain(c, L.t("ฐานใช้ร่วมกัน " + Social.TEAM_HP + " HP • ส่ง SP ช่วยเพื่อนได้ • ชนะได้โบนัสทีม", "Shared " + Social.TEAM_HP + " HP base • send SP to help • team win bonus"),
+            plain(c, L.t("Co-op: เล่นแมพเดียวกัน แบ่งช่องคนละครึ่ง ฐาน " + Social.TEAM_HP + " HP • PvP: ส่งมอนไปบ้านคู่แข่ง", "Co-op: one map, half the slots each, " + Social.TEAM_HP + " HP • PvP: send monsters to your rival"),
                     box.left + 210 * u, box.top + 150 * u, 26 * u, 0xFFB8FFC8, Paint.Align.LEFT, box.width() - 240 * u);
             final int stage = Math.max(0, Math.min(pf.unlocked, Defs.ST_COUNT) - 1);
             rf.set(box.left + 30 * u, box.top + 230 * u, box.right - 30 * u, box.top + 340 * u);
             button(c, rf, L.t("สร้างห้อง Story ", "Create Story room ") + (Defs.galaxyOf(stage) + 1) + "-" + (stage % Defs.PER_GALAXY + 1), 0xFFFF8A2B, true,
                     () -> createRoom(Social.MODE_STORY, stage));
-            rf.set(box.left + 30 * u, box.top + 360 * u, box.right - 30 * u, box.top + 470 * u);
-            button(c, rf, L.t("สร้างห้อง Raid", "Create Raid room"), 0xFFFF3B6B, raidOpen(), () -> createRoom(Social.MODE_RAID, Defs.RAID));
+            float hw = (box.width() - 80 * u) / 2f;
+            rf.set(box.left + 30 * u, box.top + 360 * u, box.left + 30 * u + hw, box.top + 470 * u);
+            button(c, rf, L.t("ห้อง Raid", "Raid room"), 0xFFFF3B6B, raidOpen(), () -> createRoom(Social.MODE_RAID, Defs.RAID));
+            rf.set(box.right - 30 * u - hw, box.top + 360 * u, box.right - 30 * u, box.top + 470 * u);
+            button(c, rf, L.t("ห้อง PvP", "PvP room"), 0xFFB0102E, true, () -> createRoom(Social.MODE_PVP, Defs.PVP_STAGE));
             rf.set(box.left + 30 * u, box.top + 490 * u, box.right - 30 * u, box.top + 570 * u);
             button(c, rf, L.t("เข้าห้องด้วยโค้ด", "Join with a code"), 0xFF4F8BFF, true, () ->
                     Dialogs.ask(ctx, "Co-op", L.t("ใส่โค้ดห้อง 6 ตัว", "6-letter room code"), new String[]{L.t("โค้ด", "Code")}, new int[]{Dialogs.TEXT}, new String[]{""},
@@ -2770,7 +2929,7 @@ public final class GameView extends View {
         modeCard(c, box, 0xFF2FB86A, 0xEE0F2A1E);
         plain(c, L.t("โค้ดห้อง", "Room code"), box.left + 40 * u, box.top + 60 * u, 26 * u, 0xFFB8FFC8, Paint.Align.LEFT, 0);
         title(c, social.roomCode, box.left + 40 * u, box.top + 150 * u, 90 * u, 0xFFFFFFFF, Paint.Align.LEFT, 0);
-        String mode = r == null ? "..." : r.mode == Social.MODE_RAID ? "Raid" : "Story " + (Defs.galaxyOf(r.stage) + 1) + "-" + (r.stage % Defs.PER_GALAXY + 1);
+        String mode = r == null ? "..." : r.mode == Social.MODE_RAID ? "Raid" : r.mode == Social.MODE_PVP ? "PvP" : "Story " + (Defs.galaxyOf(r.stage) + 1) + "-" + (r.stage % Defs.PER_GALAXY + 1);
         pill(c, box.right - 170 * u, box.top + 70 * u, mode, 30 * u, 0xFF0A0F1C, 0xFF7CFF8A);
         plain(c, L.t("บอกโค้ดให้เพื่อน หรือเชิญจากแท็บเพื่อน", "Share the code or invite from the Friends tab"), box.left + 40 * u, box.top + 200 * u, 24 * u, 0xFFE6E0FF, Paint.Align.LEFT, box.width() - 80 * u);
         float y = box.top + 240 * u;
@@ -4440,12 +4599,15 @@ public final class GameView extends View {
         }
         // featured line-up
         float bob = (float) Math.sin(anim * 1.8f) * 10 * u;
+        long hr = Defs.bannerHour(System.currentTimeMillis());
+        int[] leg = Defs.regularPool(Defs.LEGEND, hr), epic = Defs.regularPool(Defs.EPIC, hr);
+        int mythic = Defs.regularPool(Defs.MYTHIC, hr)[0];
         int[] side = ex ? new int[]{Defs.GALACIA_P, Defs.SMART_SAT, Defs.COMMANDER, Defs.CYBER, Defs.SAVIOR_SAT}
-                : new int[]{Defs.MERCURY, Defs.VENUS, Defs.URANUS, Defs.NEPTUNE, Defs.PLUTO};
+                : new int[]{leg[0], leg[1], leg[2], epic[0], Defs.SATURN};
         float[][] pos = {{-0.33f, -0.17f, 0.1f}, {-0.36f, 0.12f, 0.12f}, {0.34f, -0.15f, 0.12f}, {0.36f, 0.14f, 0.11f}, {0f, 0.3f, 0.085f}};
         for (int i = 0; i < side.length; i++)
             sprite(c, pBmp[side[i]], cx + pos[i][0] * hh, cy + pos[i][1] * hh + bob * (i % 2 == 0 ? 1 : -1), pos[i][2] * hh / 0.72f, 255);
-        int hero = ex ? Defs.KING : Defs.SUN;
+        int hero = ex ? Defs.KING : mythic;
         glowCircle(c, cx, cy + bob, hh * 0.3f, ex ? 0x88FFD23F : 0x88FFB627);
         sprite(c, pBmp[hero], cx, cy + bob, hh * 0.25f, 255);
         if (ex) sprite(c, pBmp[Defs.NIGHTMARE], cx - hh * 0.2f, cy - hh * 0.32f - bob, hh * 0.09f, 255);
@@ -4455,7 +4617,7 @@ public final class GameView extends View {
         title(c, ex ? "EXCLUSIVE CAPSULE" : "REGULAR BANNER", cx, rib.centerY() + 20 * u, 56 * u, 0xFFFFD23F, Paint.Align.CENTER, rib.width() - 60 * u);
         RectF tag = new RectF(cx + hh * 0.12f, cy - hh * 0.3f + bob, cx + hh * 0.12f + 290 * u, cy - hh * 0.3f + 70 * u + bob);
         panel(c, tag, 0xEEFF4F8B, 35 * u);
-        title(c, ex ? "RAREST: KING" : "FEATURED: SUN", tag.centerX(), tag.centerY() + 12 * u, 32 * u, 0xFFFFFFFF, Paint.Align.CENTER, tag.width() - 20 * u);
+        title(c, ex ? "RAREST: KING" : "FEATURED: " + Defs.P_NAME[mythic].toUpperCase(Locale.US), tag.centerX(), tag.centerY() + 12 * u, 32 * u, 0xFFFFFFFF, Paint.Align.CENTER, tag.width() - 20 * u);
         float rbL = card.left + 40 * u, rbR = card.right - 40 * u, rbY = card.bottom - 120 * u;
         if (ex) {
             // per-planet rates of the capsule
@@ -4490,6 +4652,11 @@ public final class GameView extends View {
             plain(c, L.t("หา Crystal Oil ได้จากโหมด Raid", "Earn Crystal Oil in Raid mode"), W / 2, by + bh + 130 * u, 26 * u, 0xFFC9C2E6, Paint.Align.CENTER, 0);
             return;
         }
+        // this hour's line-up and when it changes
+        long left = (hr + 1) * 3600000L - System.currentTimeMillis();
+        String lu = Defs.P_NAME[mythic] + " • " + Defs.P_NAME[leg[0]] + " • " + Defs.P_NAME[leg[1]] + " • " + Defs.P_NAME[leg[2]];
+        plain(c, L.t("ชั่วโมงนี้: ", "This hour: ") + lu, cx, rbY - 70 * u, 26 * u, 0xFFFFE27A, Paint.Align.CENTER, rbR - rbL);
+        plain(c, L.t("เปลี่ยนตัวใน ", "Rotates in ") + clock(left), cx, rbY - 30 * u, 24 * u, 0xFFC9C2E6, Paint.Align.CENTER, 0);
         // rate bar
         float acc0 = rbL;
         for (int r = 0; r < Profile.PULL_RATE.length; r++) {
@@ -4564,7 +4731,7 @@ public final class GameView extends View {
             }
         } else {
             for (int rar = Profile.PULL_RATE.length - 1; rar >= 0; rar--) {
-                int[] mm = Profile.typesOfRarity(rar);
+                int[] mm = Defs.regularPool(rar, Defs.bannerHour(System.currentTimeMillis()));
                 float[] cc = new float[mm.length];
                 for (int k = 0; k < mm.length; k++) cc[k] = Profile.PULL_RATE[rar] / mm.length;
                 tiers.add(new int[]{rar});
@@ -6595,7 +6762,7 @@ public final class GameView extends View {
                 log("#         item <u> <capsule|stardust|nebula|catalyst|artcapsule|supply|admincapsule|golden|silver|rainbow|shiny|blaze|hellmoon|frostmoon|stormmoon|goldmoon|voidmoon> <n> • evolve <u> <planet> [off]");
                 log("#         effect <u> <planet> <golden|silver|rainbow|shiny|blaze|none>");
                 log("# abuse:   abuse on <minutes> • abuse off • abuse gift <reward:n,...> [message] • abuse boss <hp> [minutes] • abuse");
-                log("#         planet <u> <name|all> • unplanet <u> <name> • level <u> <name|all> <1-10>");
+                log("#         planet <u> <name|all> • unplanet <u> <name> • level <u> <name|all> <1-10>   (Martin World is give-only: planet <u> martinworld)");
                 log("#         enchant <u> <planet> <enchant|none> [tier] • material <u> <planet> <material|none>");
                 log("#         unlock <u> [stage] • maxlevel <u> • reset <u> • wipe <u>");
                 log("#         giveall <star|millite|crystal> <n>");
@@ -6880,7 +7047,9 @@ public final class GameView extends View {
     }
 
     static int planetByName(String nm) {
-        for (int i = 0; i < Defs.P_COUNT; i++) if (Defs.P_NAME[i].equalsIgnoreCase(nm)) return i;
+        String k = nm.replace(" ", "").replace("_", "");
+        for (int i = 0; i < Defs.P_COUNT; i++) if (Defs.P_NAME[i].replace(" ", "").equalsIgnoreCase(k)) return i;
+        if (k.equalsIgnoreCase("martin")) return Defs.MARTIN;
         return -1;
     }
 
@@ -7953,7 +8122,9 @@ public final class GameView extends View {
         c.restore();
 
         drawHud(c, g);
-        if (g.coop) drawCoopBar(c, g);
+        if (g.pvp) drawPvpBar(c, g);
+        else if (g.coop) drawCoopBar(c, g);
+        if (worldPick) drawWorldPick(c, g);
         drawTutorial(c, g);
         if (selPlanet != null) drawInfo(c, g, selPlanet);
         else drawBuild(c, g);
@@ -8144,7 +8315,15 @@ public final class GameView extends View {
                 continue;
             }
             boolean hl = buildSel >= 0 && g.slots[i] == null && (bt < 0 || !Defs.onPathOnly(bt))
-                    && (bt < 0 || !Defs.nearPathOnly(bt) || g.pathDist(x, y) <= 175);
+                    && (bt < 0 || !Defs.nearPathOnly(bt) || g.pathDist(x, y) <= 175) && g.mySlot(i);
+            if (!g.mySlot(i) && g.slots[i] == null) {
+                // co-op: the teammate's half of the board
+                sp.setPathEffect(null);
+                sp.setStrokeWidth(4);
+                sp.setColor(0x665EC8FF);
+                c.drawCircle(x, y, 50, sp);
+                continue;
+            }
             p.setStyle(Paint.Style.FILL);
             p.setShader(null);
             p.setColor(0x66000000);
@@ -8245,6 +8424,14 @@ public final class GameView extends View {
         }
         if (pl.material >= 0) materialAura(c, x, y, 46 * sc, pl.material);
         if (pl.eff >= 0) effectAura(c, pl.eff, x, y, 50 * sc);
+        if (pl.ghost) {
+            // teammate's planet: blue ring + tag
+            sp.setPathEffect(null);
+            sp.setStrokeWidth(5);
+            sp.setColor(0xCC5EC8FF);
+            c.drawCircle(x, y, 62 * sc, sp);
+        }
+        if (pl.type == Defs.MARTIN && g.worldBuffT > 0) glowCircle(c, x, y, 110 * sc, alpha(0xFFFFB627, 0x66));
         if (Defs.P_KIND[pl.type] == Defs.K_COMMANDER) {
             // its circling route
             sp.setPathEffect(new DashPathEffect(new float[]{14, 12}, anim * 30));
@@ -8698,6 +8885,54 @@ public final class GameView extends View {
 
 
     /** co-op: team base, partner progress and the SP gift button */
+    /** Martin World: pick one of three on screen */
+    boolean worldPick;
+
+    void drawWorldPick(Canvas c, Game g) {
+        dim(c);
+        glitchTitle(c, "IN THIS WORLD", W / 2, H * 0.24f, 72 * u);
+        int[] cols = {0xFF5EC8FF, 0xFFFFB627, 0xFFFF4F8B};
+        float bh = 230 * u, y = H * 0.3f;
+        for (int k = 0; k < 3; k++) {
+            final int ch = k;
+            RectF b = new RectF(70 * u, y + k * (bh + 30 * u), W - 70 * u, y + k * (bh + 30 * u) + bh);
+            modeCard(c, b, cols[k], 0xEE140A2A);
+            title(c, Defs.WORLD_NAME[k], b.centerX(), b.top + 100 * u, 56 * u, cols[k], Paint.Align.CENTER, b.width() - 40 * u);
+            plain(c, L.en ? Defs.WORLD_DESC_EN[k] : Defs.WORLD_DESC[k], b.centerX(), b.top + 160 * u, 30 * u, 0xFFFFFFFF, Paint.Align.CENTER, b.width() - 40 * u);
+            btns.add(new Btn(b, () -> {
+                worldPick = false;
+                if (game == null) return;
+                String err = game.inThisWorld(ch);
+                if (err != null) showToast(err);
+            }));
+        }
+        rf.set(W / 2 - 180 * u, y + 3 * (bh + 30 * u) + 10 * u, W / 2 + 180 * u, y + 3 * (bh + 30 * u) + 100 * u);
+        button(c, rf, L.t("ยกเลิก", "Cancel"), 0xFF6B5BD6, true, () -> worldPick = false);
+    }
+
+    /** PvP: both bases + buttons that send monsters to the rival */
+    void drawPvpBar(Canvas c, Game g) {
+        float y = panelTop - 120 * u;
+        RectF bar = new RectF(20 * u, y, W - 20 * u, y + 104 * u);
+        panel(c, bar, 0xCC2A0A16, 30 * u);
+        String on = g.otherName == null ? L.t("คู่แข่ง", "Rival") : g.otherName;
+        plain(c, on + "  HP " + Math.max(0, g.otherHp), bar.left + 24 * u, bar.top + 44 * u, 24 * u, 0xFFFF8AA0, Paint.Align.LEFT, 260 * u);
+        plain(c, L.t("ส่งมอนไปบ้านศัตรู", "Send to rival"), bar.left + 24 * u, bar.top + 82 * u, 20 * u, 0xFFC9C2E6, Paint.Align.LEFT, 260 * u);
+        float bw = (bar.width() - 310 * u) / 3f;
+        for (int k = 0; k < 3; k++) {
+            final int kk = k;
+            rf.set(bar.left + 290 * u + k * bw + 4 * u, bar.top + 10 * u, bar.left + 290 * u + (k + 1) * bw - 4 * u, bar.bottom - 10 * u);
+            boolean can = g.stars >= Game.SEND_COST[k] && !g.won && !g.lost;
+            button(c, rf, Game.SEND_NAME[k] + " " + Game.SEND_COST[k], k == 2 ? 0xFFB0102E : 0xFFD05A2A, can, () -> {
+                Social.Member o = social.room == null ? null : social.room.other(cloud.uid);
+                if (o == null || game == null || game.stars < Game.SEND_COST[kk]) return;
+                game.stars -= Game.SEND_COST[kk];
+                social.gift(o.uid, -(kk + 1)); // negative gifts are monsters
+                showToast(L.t("ส่ง ", "Sent ") + Game.SEND_NAME[kk] + L.t(" ไปหา ", " to ") + o.name);
+            });
+        }
+    }
+
     void drawCoopBar(Canvas c, Game g) {
         float y = panelTop - 104 * u;
         RectF bar = new RectF(30 * u, y, W - 30 * u, y + 84 * u);
@@ -8805,6 +9040,8 @@ public final class GameView extends View {
             stat = String.format(Locale.US, L.t("Haunted + สโลว์ 35%%  ระยะ %d", "Haunted + 35%% slow  Range %d"), (int) Game.rangeOf(pl));
         } else if (kd == Defs.K_STORM) {
             stat = String.format(Locale.US, L.t("สตันวงกว้าง ทุก %.1f วิ  ระยะ %d", "Area stun every %.1fs  Range %d"), Game.cdOf(pl), (int) Game.rangeOf(pl));
+        } else if (kd == Defs.K_WORLD) {
+            stat = String.format(Locale.US, L.t("โจมตีทั้งแมพ %.0f ดาเมจ ทุก %.1f วิ", "Hits the whole map for %.0f every %.1fs"), Game.dmgOf(pl), Game.cdOf(pl));
         } else if (kd == Defs.K_NUKE) {
             stat = L.t("ไม่โจมตี • สกิลระเบิดทั้งแมพ ", "No attack • map-wide blast ") + Defs.nukeCost(g.wave) + " SP";
         } else if (kd == Defs.K_KING) {
@@ -8815,6 +9052,14 @@ public final class GameView extends View {
             stat = String.format(Locale.US, L.t("ดาเมจ %.1f  ระยะ %d  ยิงทุก %.2f วิ", "DMG %.1f  Range %d  Every %.2fs"), Game.dmgOf(pl), (int) Game.rangeOf(pl), Game.cdOf(pl));
         }
         plain(c, stat, tx, y0 + 100 * u, 32 * u, 0xFFE6E0FF, Paint.Align.LEFT, W - tx - 40 * u);
+        if (pl.famDmg + pl.famSpd + pl.famRng + pl.famProd > 0)
+            plain(c, L.t("ทีมเซ็ต ", "Team set ") + Defs.FAM_NAME[Defs.P_FAMILY[pl.type]], W - 40 * u, y0 + 100 * u, 24 * u, Defs.FAM_COLOR[Defs.P_FAMILY[pl.type]], Paint.Align.RIGHT, 0);
+        if (pl.ghost) {
+            plain(c, L.t("ดาวของเพื่อนร่วมทีม", "Your teammate's planet"), tx, y0 + 152 * u, 30 * u, 0xFF5EC8FF, Paint.Align.LEFT, 0);
+            rf.set(W / 2 - 200 * u, H - 120 * u - 47 * u, W / 2 + 200 * u, H - 120 * u + 48 * u);
+            button(c, rf, L.t("ปิด", "Close"), 0xFF6B5BD6, true, () -> selPlanet = null);
+            return;
+        }
         if (pl.enchant >= 0) {
             badge(c, tx + 20 * u, y0 + 140 * u, 20 * u, pl.enchant, 0);
             plain(c, enchName(pl.enchant, pl.tier), tx + 52 * u, y0 + 152 * u, 34 * u, Defs.RARITY_COLOR[Defs.EN_RARITY[pl.enchant]], Paint.Align.LEFT, 0);
@@ -8845,6 +9090,9 @@ public final class GameView extends View {
                         if (err != null) showToast(err);
                         selPlanet = null;
                     }));
+        } else if (kd == Defs.K_WORLD) {
+            boolean ready = g.worldCd <= 0;
+            button(c, rf, ready ? "In This World" : (int) Math.ceil(g.worldCd) + L.t(" วิ", "s"), 0xFFE04FB8, ready, () -> worldPick = true);
         } else if (kd == Defs.K_KING) {
             button(c, rf, g.kingSkillUsed ? L.t("ใช้แล้ว", "Used") : "Elite Command", 0xFFE0A020, !g.kingSkillUsed, () -> {
                 String err = game.eliteCommand(pl);
@@ -9211,7 +9459,7 @@ public final class GameView extends View {
 
     void drawPlaza(Canvas c) {
         header(c, L.t("พลาซ่า", "Plaza"), 0, pf.stars, 4, pf.gold);
-        String[] tabs = {L.t("ตลาด", "Market"), L.t("ขายด่วน", "Quick sell"), L.t("เทรด", "Trades")};
+        String[] tabs = {L.t("ตลาด", "Market"), L.t("ขายไอเทม", "Sell items"), L.t("เทรด", "Trades")};
         float tw = (W - 120 * u) / 3f;
         java.util.List<Social.Trade> tin;
         synchronized (social) { tin = new java.util.ArrayList<>(social.tradesIn); }
@@ -9234,7 +9482,7 @@ public final class GameView extends View {
         button(c, rf, L.t("+ ลงขาย", "+ Sell something"), 0xFF2FB86A, true, () -> { listMode = 0; popup = P_LIST; });
         rf.set(W / 2 + 10 * u, 300 * u, W - 40 * u, 400 * u);
         button(c, rf, L.t("รีเฟรช", "Refresh"), 0xFF4F8BFF, true, () -> plazaRefresh(true));
-        plain(c, L.t("ซื้อด้วย Gold • ผู้ขายได้ 95% (ค่าธรรมเนียม 5%) • ลงขายได้ " + Social.MAX_LISTINGS + " ชิ้น", "Pay with Gold • sellers get 95% (5% fee) • up to " + Social.MAX_LISTINGS + " listings"),
+        plain(c, L.t("ขายดาว/ของด้วย Gold หรือแลกดาวกับดาว • ผู้ขายได้ 95% • ลงได้ " + Social.MAX_LISTINGS + " ชิ้น", "Sell planets/things for Gold or swap planet for planet • sellers get 95% • up to " + Social.MAX_LISTINGS),
                 W / 2, 440 * u, 22 * u, 0xFFC9C2E6, Paint.Align.CENTER, W - 80 * u);
         java.util.List<Social.Listing> l;
         synchronized (social) { l = new java.util.ArrayList<>(social.market); }
@@ -9254,8 +9502,10 @@ public final class GameView extends View {
                 flatOrButton(c, bt, L.t("เก็บคืน", "Take back"), 0xFF6A4A60, true);
                 scrollBtn(bt, () -> social.unlist(pf, it, (s, err) -> { showToast(err != null ? err : L.t("เก็บคืน: ", "Returned: ") + s); pushNow(); plazaRefresh(false); }));
             } else {
-                flatOrButton(c, bt, it.price + " Gold", 0xFFE0A020, pf.gold >= it.price);
-                scrollBtn(bt, () -> Dialogs.confirm(ctx, L.t("ซื้อ", "Buy"), pf.describe(it.thing) + " • " + it.price + " Gold?", L.t("ซื้อ", "Buy"),
+                String priceTxt = it.want != null ? L.t("แลก ", "Swap ") + pf.describe(it.want).replace(" Lv1", "") : it.price + " Gold";
+                boolean can = it.want != null ? wantOk(it.want) : pf.gold >= it.price;
+                flatOrButton(c, bt, priceTxt, it.want != null ? 0xFF4F8BFF : 0xFFE0A020, can);
+                scrollBtn(bt, () -> Dialogs.confirm(ctx, it.want != null ? L.t("แลกดาว", "Swap") : L.t("ซื้อ", "Buy"), pf.describe(it.thing) + " • " + priceTxt + "?", "OK",
                         () -> social.buy(pf, it, (s, err) -> {
                             if (err != null) showToast(err);
                             else { Sfx.play(Sfx.GACHA); showToast(L.t("ซื้อแล้ว: ", "Bought: ") + s); }
@@ -9270,7 +9520,7 @@ public final class GameView extends View {
     }
 
     void plazaSell(Canvas c) {
-        plain(c, L.t("ขายให้ระบบรับ Gold ทันที • ดาวที่มี Effect ขายได้แพงขึ้นตามตัวคูณ", "Sell to the system for instant Gold • planets with effects sell for more"),
+        plain(c, L.t("ขายไอเทมให้ระบบรับ Gold ทันที • ดาวขายเป็น Gold ไม่ได้ ให้ลงตลาดแทน", "Sell items to the system for Gold • planets can't be sold for Gold, list them in the Market"),
                 W / 2, 330 * u, 24 * u, 0xFFC9C2E6, Paint.Align.CENTER, W - 80 * u);
         java.util.ArrayList<Integer> pl = new java.util.ArrayList<>();
         for (int t = 0; t < Defs.P_COUNT; t++) if (pf.owned[t] && Defs.P_RARITY[t] < Defs.EXCLUSIVE) pl.add(t);
@@ -9278,28 +9528,9 @@ public final class GameView extends View {
         for (int i = 0; i < Items.COUNT; i++) if (pf.items[i] > 0 && Profile.itemGold(i) > 0) its.add(i);
         float rowH = 140 * u;
         RectF view = new RectF(30 * u, 370 * u, W - 30 * u, navTop - 20 * u);
-        beginScroll(c, 6200, view, (pl.size() + its.size()) * rowH + 140 * u, 0.016f);
+        pl.clear();
+        beginScroll(c, 6200, view, its.size() * rowH + 140 * u, 0.016f);
         float y = view.top;
-        text(c, L.t("ดวงดาว", "Planets"), 50 * u, y + 40 * u, 34 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
-        y += 60 * u;
-        for (final int t : pl) {
-            RectF row = new RectF(40 * u, y, W - 40 * u, y + rowH - 14 * u);
-            panel(c, row, 0xEE1A1440, 24 * u);
-            if (pf.effect[t] >= 0) effectAura(c, pf.effect[t], row.left + 75 * u, row.centerY(), 36 * u);
-            sprite(c, pbmp(t), row.left + 75 * u, row.centerY(), 42 * u, 255);
-            String nm = (pf.effect[t] >= 0 ? Defs.EFF_NAME[pf.effect[t]] + " " : "") + Defs.P_NAME[t] + "  Lv" + pf.level[t];
-            text(c, nm, row.left + 145 * u, row.top + 52 * u, 30 * u, pf.effect[t] >= 0 ? Defs.EFF_COLOR[pf.effect[t]] : 0xFFFFFFFF, Paint.Align.LEFT, row.width() - 440 * u);
-            plain(c, Defs.RARITY_NAME[Defs.P_RARITY[t]] + (pf.copies[t] > 0 ? " • +" + pf.copies[t] + L.t(" ซ้ำ", " copies") : ""), row.left + 145 * u, row.top + 92 * u, 22 * u, Defs.RARITY_COLOR[Defs.P_RARITY[t]], Paint.Align.LEFT, 0);
-            RectF bt = new RectF(row.right - 260 * u, row.top + 18 * u, row.right - 20 * u, row.bottom - 18 * u);
-            int v = pf.goldValue(t);
-            flatOrButton(c, bt, "+" + v + " Gold", 0xFFE0A020, pf.canSell(t));
-            scrollBtn(bt, () -> {
-                if (!pf.canSell(t)) { showToast(L.t("ต้องเหลือดาวอย่างน้อย 1 ดวง", "Keep at least one planet")); return; }
-                Dialogs.confirm(ctx, L.t("ขายดาว", "Sell planet"), Defs.P_NAME[t] + L.t(" จะหายไปพร้อมเลเวล/ของที่ใส่ • ได้ ", " goes away with its level and gear • for ") + pf.goldValue(t) + " Gold",
-                        L.t("ขาย", "Sell"), () -> { int g2 = pf.sellForGold(t); showToast("+" + g2 + " Gold"); pushNow(); });
-            });
-            y += rowH;
-        }
         y += 20 * u;
         text(c, L.t("ไอเทม", "Items"), 50 * u, y + 40 * u, 34 * u, 0xFFFFD23F, Paint.Align.LEFT, 0);
         y += 60 * u;
@@ -9319,10 +9550,21 @@ public final class GameView extends View {
     void plazaTrades(Canvas c, java.util.List<Social.Trade> tin) {
         java.util.List<Social.Trade> tout;
         synchronized (social) { tout = new java.util.ArrayList<>(social.tradesOut); }
-        plain(c, L.t("เทรดกับเพื่อน: กดปุ่ม \"เทรด\" ข้างชื่อเพื่อนในหน้าเพื่อน", "Trade with friends: tap \"Trade\" next to a friend in Friends"),
+        plain(c, L.t("เลือกคนที่จะเทรดด้วยชื่อหรือ Player ID แล้วเลือกของที่ให้/ขอ", "Pick who to trade with by name or Player ID, then what to give / ask for"),
                 W / 2, 330 * u, 24 * u, 0xFFC9C2E6, Paint.Align.CENTER, W - 80 * u);
-        rf.set(W / 2 - 220 * u, 360 * u, W / 2 + 220 * u, 450 * u);
-        button(c, rf, L.t("ไปหน้าเพื่อน", "Go to Friends"), 0xFF4F8BFF, true, () -> { socTab = 0; go(S_SOCIAL); });
+        rf.set(W / 2 - 300 * u, 360 * u, W / 2 + 300 * u, 450 * u);
+        button(c, rf, L.t("+ เทรดใหม่ (ใส่ชื่อ)", "+ New trade (enter a name)"), 0xFFE0A020, true, () ->
+                Dialogs.ask(ctx, L.t("เทรดกับ", "Trade with"), L.t("ชื่อผู้เล่น หรือ Player ID", "Player name or Player ID"), new String[]{L.t("ชื่อ / ID", "Name / ID")},
+                        new int[]{Dialogs.TEXT}, new String[]{""}, L.t("ต่อไป", "Next"), v -> {
+                            findPlayer(v[0].trim(), pl -> {
+                                if (pl.uid.equals(cloud.uid)) { showToast(L.t("เทรดกับตัวเองไม่ได้", "That's you")); return; }
+                                Social.Friend f = new Social.Friend();
+                                f.uid = pl.uid;
+                                f.name = pl.name;
+                                openTrade(f);
+                            });
+                            return null;
+                        }));
         float rowH = 250 * u;
         RectF view = new RectF(30 * u, 480 * u, W - 30 * u, navTop - 20 * u);
         beginScroll(c, 6300, view, (tin.size() + tout.size()) * rowH + 160 * u, 0.016f);
@@ -9424,9 +9666,13 @@ public final class GameView extends View {
     /** pick a thing: from my inventory (sell / give) or any kind (want) */
     void drawListPick(Canvas c) {
         RectF r = new RectF(30 * u, 150 * u, W - 30 * u, H - 150 * u);
-        popupFrame(c, r, listMode == 0 ? L.t("เลือกของที่จะขาย", "Pick something to sell") : listMode == 1 ? L.t("เลือกของที่จะให้", "Pick what you give") : L.t("เลือกของที่อยากได้", "Pick what you want"));
-        final boolean any = listMode == 2;
+        popupFrame(c, r, listMode == 0 ? L.t("เลือกของที่จะขาย", "Pick something to sell") : listMode == 1 ? L.t("เลือกของที่จะให้", "Pick what you give")
+                : listMode == 3 ? L.t("อยากได้ดาวอะไรแลก?", "Which planet do you want back?") : L.t("เลือกของที่อยากได้", "Pick what you want"));
+        final boolean any = listMode == 2 || listMode == 3;
         java.util.ArrayList<String> opts = new java.util.ArrayList<>();
+        if (listMode == 3) {
+            for (int t = 0; t < Defs.P_COUNT; t++) if (Defs.P_RARITY[t] < Defs.EXCLUSIVE) opts.add("p:" + t + ":1:0:-1:0");
+        } else {
         if (listMode != 0) opts.add("g:0");
         for (int i = 0; i < Items.COUNT; i++) if (any || pf.items[i] > 0) opts.add("i:" + i + ":0");
         for (int m = 0; m < Defs.MOON_COUNT; m++) if (any || pf.moonsFree(m) > 0) opts.add("a:" + m + ":0");
@@ -9435,6 +9681,7 @@ public final class GameView extends View {
             if (Defs.P_RARITY[t] >= Defs.EXCLUSIVE) continue;
             if (any) opts.add("p:" + t + ":1:0:-1:0");
             else if (pf.canSell(t)) opts.add(pf.planetThing(t));
+        }
         }
         float cell = (r.width() - 60 * u) / 5f, rowH = cell + 50 * u;
         RectF view = new RectF(r.left + 10 * u, r.top + 140 * u, r.right - 10 * u, r.bottom - 140 * u);
@@ -9457,7 +9704,7 @@ public final class GameView extends View {
         }
         endScroll(c);
         rf.set(r.centerX() - 200 * u, r.bottom - 120 * u, r.centerX() + 200 * u, r.bottom - 30 * u);
-        button(c, rf, L.t("ย้อนกลับ", "Back"), 0xFF6B5BD6, true, () -> popup = listMode == 0 ? P_NONE : P_TRADE);
+        button(c, rf, L.t("ย้อนกลับ", "Back"), 0xFF6B5BD6, true, () -> popup = listMode == 0 || listMode == 3 ? P_NONE : P_TRADE);
     }
 
     void pickThing(String th) {
@@ -9477,12 +9724,32 @@ public final class GameView extends View {
         } else pickedThing(th);
     }
 
+    /** the thing being listed for a swap */
+    String swapThing;
+
+    boolean wantOk(String want) {
+        try { return pf.canSell(Integer.parseInt(want.split(":")[1])); } catch (RuntimeException e) { return false; }
+    }
+
     void pickedThing(String th) {
+        if (listMode == 3) {
+            final String give = swapThing;
+            if (give == null || !th.startsWith("p:")) { popup = P_NONE; return; }
+            social.list(pf, give, 0, th, user, (ok, err) -> {
+                showToast(err != null ? err : L.t("ลงแลกแล้ว: ", "Listed for a swap: ") + pf.describe(give) + " ⇄ " + Defs.P_NAME[Integer.parseInt(th.split(":")[1])]);
+                pushNow();
+                plazaRefresh(false);
+            });
+            popup = P_NONE;
+            return;
+        }
         if (listMode == 0) {
-            Dialogs.ask(ctx, L.t("ตั้งราคา", "Set a price"), pf.describe(th), new String[]{L.t("ราคา (Gold)", "Price (Gold)")}, new int[]{Dialogs.NUMBER}, new String[]{""},
+            Dialogs.ask(ctx, L.t("ตั้งราคา", "Set a price"), pf.describe(th) + L.t(" • ใส่ 0 = แลกกับดาว (เลือกดาวที่อยากได้ต่อ)", " • enter 0 to swap for a planet (pick it next)"),
+                    new String[]{L.t("ราคา (Gold)", "Price (Gold)")}, new int[]{Dialogs.NUMBER}, new String[]{""},
                     L.t("ลงขาย", "List it"), v -> {
                         int price;
                         try { price = Integer.parseInt(v[0].trim()); } catch (NumberFormatException e) { return L.t("ใส่ตัวเลข", "Enter a number"); }
+                        if (price == 0) { swapThing = th; listMode = 3; popup = P_LIST; return null; }
                         social.list(pf, th, price, user, (ok, err) -> {
                             showToast(err != null ? err : L.t("ลงขายแล้ว: ", "Listed: ") + pf.describe(th));
                             pushNow();

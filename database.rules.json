@@ -140,6 +140,31 @@
           ".write": "auth != null && auth.uid === $uid"
         }
       }
+    },
+    "chat": {
+      ".write": "auth != null && auth.token.email === 'console@console.stellatd.game'",
+      "world": {
+        ".read": "auth != null",
+        "$id": {
+          ".write": "auth != null && ((!data.exists() && newData.child('uid').val() === auth.uid && newData.child('msg').isString() && newData.child('msg').val().length <= 200 && newData.child('t').isNumber()) || auth.token.email === 'console@console.stellatd.game')"
+        }
+      },
+      "dm": {
+        "$pair": {
+          ".read": "auth != null && $pair.contains(auth.uid)",
+          "$id": {
+            ".write": "auth != null && $pair.contains(auth.uid) && !data.exists() && newData.child('uid').val() === auth.uid && newData.child('msg').isString() && newData.child('msg').val().length <= 200 && newData.child('t').isNumber()"
+          }
+        }
+      }
+    },
+    "dmNew": {
+      "$to": {
+        ".read": "auth != null && auth.uid === $to",
+        "$from": {
+          ".write": "auth != null && (auth.uid === $from || auth.uid === $to)"
+        }
+      }
     }
   }
 }

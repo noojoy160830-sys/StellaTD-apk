@@ -287,6 +287,12 @@ final class Cloud {
         return m.containsKey("_value") && m.size() == 1 ? m.get("_value") : m;
     }
 
+    /** the last n children of a node, by key */
+    Object getLast(String path, int n) throws Exception {
+        Map<String, Object> m = call("GET", dbBase() + "/" + path + ".json?auth=" + token() + "&orderBy=%22%24key%22&limitToLast=" + n, null);
+        return m.containsKey("_value") && m.size() == 1 ? m.get("_value") : m;
+    }
+
     void put(String path, Object value) throws Exception {
         call("PUT", dbBase() + "/" + path + ".json?auth=" + token(), value);
     }

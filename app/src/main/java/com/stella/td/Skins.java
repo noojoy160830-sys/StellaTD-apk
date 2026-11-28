@@ -47,11 +47,14 @@ final class Skins {
         }
     }
 
-    static int key(int style, int planet) { return style * Defs.P_COUNT + planet; }
+    /** planets 0-19 keep the original key (style * 20 + planet) so old saves stay valid; newer planets use 5000 + style * 100 + planet */
+    static final int OLD = 20, NEW_BASE = 5000;
 
-    static int styleOf(int key) { return key / Defs.P_COUNT; }
+    static int key(int style, int planet) { return planet < OLD ? style * OLD + planet : NEW_BASE + style * 100 + planet; }
 
-    static int planetOf(int key) { return key % Defs.P_COUNT; }
+    static int styleOf(int key) { return key >= NEW_BASE ? (key - NEW_BASE) / 100 : key / OLD; }
+
+    static int planetOf(int key) { return key >= NEW_BASE ? (key - NEW_BASE) % 100 : key % OLD; }
 
     static String name(int key) {
         int st = styleOf(key), p = planetOf(key);

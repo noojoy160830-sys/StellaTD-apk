@@ -30,6 +30,8 @@ final class Profile {
     final int[] effect = new int[Defs.P_COUNT];
     /** Gold Coin: earned by trading / selling in the Plaza, spent in the Gold shop */
     int gold;
+    int pvpWins;
+    boolean goldStart;
     /** Admin Abuse claims: event id + bitmask of cleared effect stages, last claimed gift id, last boss reward id */
     String abuseId = "";
     int abuseMask;
@@ -132,6 +134,10 @@ final class Profile {
         int[] efx = ints(sp.getString("effect", null), Defs.P_COUNT, -1);
         for (int i = 0; i < Defs.P_COUNT; i++) effect[i] = efx[i] >= 0 && efx[i] < Defs.EFF_COUNT ? efx[i] : -1;
         gold = sp.getInt("gold", 0);
+        pvpWins = sp.getInt("pvpWins", 0);
+        // everyone starts with 100 Gold Coins (once)
+        if (!sp.getBoolean("goldStart", false)) { gold += 100; goldStart = true; }
+        else goldStart = true;
         abuseId = sp.getString("abuseId", "");
         abuseMask = sp.getInt("abuseMask", 0);
         giftClaimed = sp.getString("giftClaimed", "");
@@ -225,6 +231,8 @@ final class Profile {
         m.put("evolved", str(evs));
         m.put("effect", str(effect));
         m.put("gold", gold);
+        m.put("pvpWins", pvpWins);
+        m.put("goldStart", goldStart);
         m.put("abuseId", abuseId == null ? "" : abuseId);
         m.put("abuseMask", abuseMask);
         m.put("giftClaimed", giftClaimed == null ? "" : giftClaimed);
@@ -756,7 +764,7 @@ final class Profile {
                 if (r <= 0) { rar = k; break; }
                 rar = k;
             }
-            int[] pool = typesOfRarity(rar);
+            int[] pool = Defs.regularPool(rar, Defs.bannerHour(System.currentTimeMillis()));
             int t = pool[rnd.nextInt(pool.length)];
             res[i] = t;
             if (owned[t]) copies[t]++;
@@ -994,7 +1002,10 @@ final class Profile {
         firstClear = false;
         heroUnlocked = false;
         lastChallengeReward = null;
-        if (g.coop && g.won) {
+        if (g.pvp) {
+            if (g.won) { stars += 400; gold += 15; pvpWins++; lastChallengeReward = L.t("ชนะ PvP: 400 Star • 15 Gold", "PvP win: 400 Star • 15 Gold"); }
+            else lastChallengeReward = L.t("แพ้ PvP: ได้ Star จากการเล่นตามปกติ", "PvP loss: you keep the Star you earned");
+        } else if (g.coop && g.won) {
             // team win bonus
             int bonus = g.earnStars / 4;
             stars += bonus;

@@ -159,3 +159,14 @@
 - **สกินใหม่**: Neon, Frozen, Galaxy, Inferno, Celestial, Admin (อีเวนต์) • สกิน 1st Anniversary ทำใหม่และได้จากอีเวนต์เท่านั้น
 - **Balance**: Sun เบาลง, ด่านยากขึ้น (HP ศัตรูเพิ่มขึ้นตามด่าน/กาแล็กซี)
 - Database rules ใหม่: `market`, `mail`, `tradeIn`, `tradeOut`, `bossDmg` (อยู่ใน `database.rules.json`)
+
+## v3.9 — Chat, PvP, ทีมเซ็ต
+- **เพิ่มเพื่อน** ด้วยชื่อหรือ Player ID (ส่งเป็นคำขอ) • **แชทโลก** และ **แชทส่วนตัว** กับเพื่อน (แท็บ "แชท" หน้าเพื่อน)
+- **Co-op แมพเดียวกัน**: เห็นดาวของเพื่อนบนแมพ แบ่งช่องกันคนละครึ่ง ฐานร่วมกัน
+- **PvP** (ด่านกำหนด 1-13): ใช้ SP ส่ง Meteor / Mega / Titan ไปบ้านคู่แข่ง ฐานใครแตกก่อนแพ้ • ชนะได้ 400 Star + 15 Gold
+- **ทีมเซ็ต** (แบบ trait): Solar System / Satellite / Cyber / Guardian — ใส่ประเภทเดียวกัน 2/3/4 ตัวได้บัฟ • ประเภท All (King, Martin World) ใส่ได้ทุกทีมแต่ไม่มีบัฟ
+- หน้า Planet แยกตามระดับ + ปุ่มกรองประเภทด้านบน
+- **ตัวใหม่**: Comet, Ion Drone (Legend), Pulsar, Black Hole (Mythic) • **Martin World** (Specialist, แจกเท่านั้น: `planet <u> martinworld`) โจมตีทั้งแมพทุก 3 วิ + สกิล In This World (Everybody stop / stronger / weak)
+- **แบนเนอร์ Regular** เปลี่ยนตัว Legend/Mythic ทุกชั่วโมง
+- Nightmare ใช้ 1000 SP • ผู้เล่นทุกคนได้ 100 Gold ตอนเริ่ม • ขายดาวเป็น Gold ไม่ได้ (ลงตลาดขาย/แลกดาวแทน) • เทรดเลือกคนด้วยชื่อ
+- Database rules ใหม่: `chat`, `dmNew`

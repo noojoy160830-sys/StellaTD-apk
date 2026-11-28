@@ -14,10 +14,10 @@ import java.util.Map;
  */
 final class Social {
     static final int TEAM_HP = 30, GIFT_SP = 10;
-    static final int MODE_STORY = 0, MODE_RAID = 1;
+    static final int MODE_STORY = 0, MODE_RAID = 1, MODE_PVP = 2;
 
     static final class Friend { String uid, name; long seen; }
-    static final class Member { String uid, name; boolean ready, alive = true; int wave, leak; long t; }
+    static final class Member { String uid, name, board = ""; boolean ready, alive = true; int wave, leak, hp = -1; long t; }
     static final class Invite { String from, name, code; long t; }
 
     static final class Room {
@@ -188,6 +188,8 @@ final class Social {
             x.alive = !Boolean.FALSE.equals(m.get("alive"));
             x.wave = (int) num(m.get("wave"));
             x.leak = (int) num(m.get("leak"));
+            x.board = Json.str(m, "board", "");
+            x.hp = m.containsKey("hp") ? (int) num(m.get("hp")) : -1;
             x.t = num(m.get("t"));
             r.members.add(x);
         }
@@ -221,11 +223,16 @@ final class Social {
     }
 
     /** in-match sync: push my progress, read the room (team leaks, gifts) */
-    void push(String myName, int wave, int leak, boolean alive, Cloud.Cb<Room> cb) {
+    void push(String myName, int wave, int leak, boolean alive, Cloud.Cb<Room> cb) { push(myName, wave, leak, alive, "", -1, cb); }
+
+    void push(String myName, int wave, int leak, boolean alive, String board, int hp, Cloud.Cb<Room> cb) {
         if (roomCode == null) return;
         String c = roomCode;
         cloud.async(() -> {
-            cloud.put("rooms/" + c + "/members/" + cloud.uid, member(myName, true, wave, leak, alive));
+            Map<String, Object> m = member(myName, true, wave, leak, alive);
+            m.put("board", board);
+            m.put("hp", hp);
+            cloud.put("rooms/" + c + "/members/" + cloud.uid, m);
             Room r = load(c);
             if (r != null) for (String id : r.giftsForMe.keySet()) cloud.delete("rooms/" + c + "/gifts/" + cloud.uid + "/" + id);
             return r;
@@ -361,7 +368,7 @@ final class Social {
     static final int MAX_LISTINGS = 5;
     static final float FEE = 0.05f;
 
-    static final class Listing { String id, seller, name, thing, buyer; int price; long t; }
+    static final class Listing { String id, seller, name, thing, buyer, want; int price; long t; }
     static final class Mail { String id, from, name, thing, msg; long t; }
     static final class Trade {
         String id, from, fromName, to, toName, state;
@@ -384,6 +391,7 @@ final class Social {
                 it.name = Json.str(x, "name", "?");
                 it.thing = Json.str(x, "thing", "");
                 it.buyer = Json.str(x, "buyer", null);
+                it.want = Json.str(x, "want", null);
                 it.price = (int) num(x.get("price"));
                 it.t = num(x.get("t"));
                 if (!it.thing.isEmpty()) l.add(it);
@@ -401,8 +409,11 @@ final class Social {
     }
 
     /** list a thing for Gold (the thing is taken from the profile right away and held by the market) */
-    void list(Profile pf, String thing, int price, String myName, Cloud.Cb<Boolean> cb) {
-        if (price <= 0 || price > 1000000) { cb.done(null, L.t("ราคาไม่ถูกต้อง", "Invalid price")); return; }
+    void list(Profile pf, String thing, int price, String myName, Cloud.Cb<Boolean> cb) { list(pf, thing, price, null, myName, cb); }
+
+    /** want != null: a swap — the buyer pays with that planet instead of Gold */
+    void list(Profile pf, String thing, int price, String want, String myName, Cloud.Cb<Boolean> cb) {
+        if (want == null && (price <= 0 || price > 1000000)) { cb.done(null, L.t("ราคาไม่ถูกต้อง", "Invalid price")); return; }
         if (myListings() >= MAX_LISTINGS) { cb.done(null, L.t("ลงขายได้สูงสุด 5 ชิ้น", "You can list up to 5 things")); return; }
         if (!pf.giveAway(thing)) { cb.done(null, L.t("ไม่มีของชิ้นนี้", "You don't have that")); return; }
         cloud.async(() -> {
@@ -410,7 +421,8 @@ final class Social {
             m.put("seller", cloud.uid);
             m.put("name", myName);
             m.put("thing", thing);
-            m.put("price", price);
+            m.put("price", want == null ? price : 0);
+            if (want != null) m.put("want", want);
             m.put("t", System.currentTimeMillis());
             cloud.put("market/M" + Long.toString(System.currentTimeMillis(), 36) + newCode(), m);
             return true;
@@ -423,21 +435,37 @@ final class Social {
     /** buy a listing: the first buyer to claim it wins; the seller is paid through mail */
     void buy(Profile pf, Listing l, Cloud.Cb<String> cb) {
         if (cloud.uid.equals(l.seller)) { cb.done(null, L.t("ซื้อของตัวเองไม่ได้", "That's your own listing")); return; }
-        if (pf.gold < l.price) { cb.done(null, L.t("Gold ไม่พอ", "Not enough Gold")); return; }
-        pf.gold -= l.price;
-        pf.save();
+        // swap: pay with my own copy of the wanted planet
+        String pay = null;
+        if (l.want != null) {
+            try {
+                int wt = Integer.parseInt(l.want.split(":")[1]);
+                if (!pf.canSell(wt)) { cb.done(null, L.t("ต้องมี ", "You need ") + Defs.P_NAME[wt] + L.t(" (และดาวอื่นอีกอย่างน้อย 1 ดวง)", " (and at least one other planet)")); return; }
+                pay = pf.planetThing(wt);
+            } catch (RuntimeException e) { cb.done(null, "?"); return; }
+            pf.giveAway(pay);
+        } else {
+            if (pf.gold < l.price) { cb.done(null, L.t("Gold ไม่พอ", "Not enough Gold")); return; }
+            pf.gold -= l.price;
+            pf.save();
+        }
+        final String paid = pay;
         cloud.async(() -> {
             Map<String, Object> cur = Json.obj(cloud.get("market/" + l.id));
             if (cur == null || cur.get("buyer") != null) throw new Cloud.UserError(L.t("มีคนซื้อไปแล้ว", "Someone already bought it"));
             cloud.put("market/" + l.id + "/buyer", cloud.uid);
             if (!cloud.uid.equals(Json.str(Json.obj(cloud.get("market/" + l.id)), "buyer", "")))
                 throw new Cloud.UserError(L.t("มีคนซื้อไปแล้ว", "Someone already bought it"));
-            int pay = Math.max(1, Math.round(l.price * (1f - FEE)));
-            sendMail(l.seller, "g:" + pay, "market sale: " + l.thing);
+            if (paid != null) sendMail(l.seller, paid, "market swap: " + l.thing);
+            else sendMail(l.seller, "g:" + Math.max(1, Math.round(l.price * (1f - FEE))), "market sale: " + l.thing);
             cloud.delete("market/" + l.id);
             return Json.str(cur, "thing", l.thing);
         }, (thing, err) -> {
-            if (err != null) { pf.gold += l.price; pf.save(); cb.done(null, err); return; }
+            if (err != null) {
+                if (paid != null) pf.receive(paid); else { pf.gold += l.price; pf.save(); }
+                cb.done(null, err);
+                return;
+            }
             cb.done(pf.receive(thing), null);
         });
     }

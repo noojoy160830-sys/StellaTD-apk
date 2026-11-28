@@ -489,6 +489,18 @@ final class Real {
                     if (band < 0.07f) return mix(col, 0xFFFFC83A, 0.85f) & 0x00FFFFFF | 0x40000000;
                     return col & 0x00FFFFFF;
                 };
+            case Defs.COMET:
+                return (x, y, z, t) -> {
+                    float h = fbm(x * 3 + 2, y * 3, z * 3, 5, 401);
+                    int col = ramp(h, 0xFF3A4A60, 0xFF7E94B0, 0xFFC8E4F4, 0xFFFFFFFF);
+                    return craters(col, x, y, z, t, 4f, 402, 0xFF2A3446, 0xFFE0F4FF) & 0xFFFFFF;
+                };
+            case Defs.PULSAR:
+                return (x, y, z, t) -> {
+                    float f = fbm(x * 5, y * 5, z * 5, 4, 411);
+                    int col = ramp(f, 0xFF7FD8FF, 0xFFCFF6FF, 0xFFFFFFFF);
+                    return col & 0x00FFFFFF | 0xFF000000;
+                };
             case Defs.SUN:
                 return (x, y, z, t) -> {
                     worley(x * 34, y * 34, z * 34, 111, t);

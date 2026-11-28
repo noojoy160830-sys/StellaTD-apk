@@ -12,11 +12,13 @@ final class Defs {
     // ---------- planets ----------
     static final int EARTH = 0, SATELLITE = 1, MOON = 2, SATURN = 3, JUPITER = 4, MARS = 5,
             MERCURY = 6, VENUS = 7, URANUS = 8, NEPTUNE = 9, PLUTO = 10, SUN = 11, HERO = 12,
-            CYBER = 13, SMART_SAT = 14, SAVIOR_SAT = 15, NIGHTMARE = 16, GALACIA_P = 17, COMMANDER = 18, KING = 19;
-    static final int P_COUNT = 20;
+            CYBER = 13, SMART_SAT = 14, SAVIOR_SAT = 15, NIGHTMARE = 16, GALACIA_P = 17, COMMANDER = 18, KING = 19,
+            COMET = 20, ION_DRONE = 21, PULSAR = 22, BLACK_HOLE = 23, MARTIN = 24;
+    static final int P_COUNT = 25;
     static final String[] P_NAME = {"Earth", "Satellite", "Moon", "Saturn", "Jupiter", "Mars",
             "Mercury", "Venus", "Uranus", "Neptune", "Pluto", "Sun", "Hero",
-            "Cyber", "Smart Satellite", "Savior Satellite", "Nightmare", "Galacia", "Commander", "King"};
+            "Cyber", "Smart Satellite", "Savior Satellite", "Nightmare", "Galacia", "Commander", "King",
+            "Comet", "Ion Drone", "Pulsar", "Black Hole", "Martin World"};
     static final String[] P_DESC = {
             "ยิงมิสไซล์อวกาศใส่ศัตรู",
             "ผลิตดาวให้ผู้เล่นเรื่อย ๆ",
@@ -37,32 +39,49 @@ final class Defs {
             "ไม่โจมตี กดสกิลใช้ SP จำนวนมาก ระเบิดตัวเองและศัตรูทั้งแมพ",
             "พายุน้ำสตันศัตรูเป็นวงกว้าง ไม่มีดาเมจ",
             "วางบนทางเดิน โคจรเป็นวงกลมและยิงมิสไซล์ใส่ศัตรูในระยะ",
-            "Specialist: บัฟดาวทุกดวงในแมพ +10% ทุกอย่าง สกิล Elite Command ใช้ได้ 1 ครั้ง"};
+            "Specialist: บัฟดาวทุกดวงในแมพ +10% ทุกอย่าง สกิล Elite Command ใช้ได้ 1 ครั้ง",
+            "ดาวหางพุ่งทะลุศัตรูทั้งแถว ทิ้งหางไฟเผาศัตรู",
+            "โดรนไอออนยิงเลเซอร์รัวมาก ระยะไกล",
+            "พัลซาร์ปล่อยคลื่นสตันพร้อมดาเมจเป็นวงกว้าง",
+            "หลุมดำดูดศัตรูในระยะให้ช้าลงมากและบดขยี้ต่อเนื่อง",
+            "โจมตีทั้งแมพทุก 3 วิ • สกิล In This World เลือก 1 จาก 3 • ได้จากการแจกเท่านั้น"};
     static final int[] P_RARITY = {COMMON, COMMON, COMMON, RARE, RARE, EPIC,
             LEGEND, LEGEND, LEGEND, LEGEND, LEGEND, MYTHIC, EXCLUSIVE,
-            EXCLUSIVE, EXCLUSIVE, EXCLUSIVE, EXCLUSIVE, EXCLUSIVE, EXCLUSIVE, SPECIALIST};
+            EXCLUSIVE, EXCLUSIVE, EXCLUSIVE, EXCLUSIVE, EXCLUSIVE, EXCLUSIVE, SPECIALIST,
+            LEGEND, LEGEND, MYTHIC, MYTHIC, SPECIALIST};
 
     static final int K_MISSILE = 0, K_ROCK = 1, K_PRODUCE = 2, K_SWARM = 3, K_SMOKE = 4,
             K_FIREROCK = 5, K_TORNADO = 6, K_ICE = 7, K_AURA = 8, K_BUFF = 9, K_SUNWAVE = 10, K_LANCE = 11,
-            K_WALL = 12, K_HAUNT = 13, K_NUKE = 14, K_STORM = 15, K_COMMANDER = 16, K_KING = 17;
+            K_WALL = 12, K_HAUNT = 13, K_NUKE = 14, K_STORM = 15, K_COMMANDER = 16, K_KING = 17, K_WORLD = 18;
     static final int[] P_KIND = {K_MISSILE, K_PRODUCE, K_ROCK, K_SWARM, K_SMOKE, K_PRODUCE,
             K_FIREROCK, K_TORNADO, K_ICE, K_AURA, K_BUFF, K_SUNWAVE, K_LANCE,
-            K_WALL, K_PRODUCE, K_HAUNT, K_NUKE, K_STORM, K_COMMANDER, K_KING};
+            K_WALL, K_PRODUCE, K_HAUNT, K_NUKE, K_STORM, K_COMMANDER, K_KING,
+            K_LANCE, K_SWARM, K_STORM, K_AURA, K_WORLD};
     /** damage per hit (producers: SP per cycle; Cyber: wall HP; King: knight strength) */
     static final float[] P_DMG = {14, 1, 22, 5, 4, 2, 7, 11, 16, 6, 12, 28, 70,
-            140, 3, 0, 0, 0, 26, 30};
+            140, 3, 0, 0, 0, 26, 30,
+            24, 8, 30, 26, 60};
     /** seconds between attacks (producers: seconds per cycle; Cyber: wall rebuild time) */
     static final float[] P_CD = {0.9f, 10f, 1.0f, 0.2f, 0.9f, 10f, 0.18f, 1.4f, 0.9f, 0.5f, 1.1f, 7.5f, 1.15f,
-            9f, 6f, 0.5f, 1f, 2.6f, 0.75f, 1f};
+            9f, 6f, 0.5f, 1f, 2.6f, 0.75f, 1f,
+            1.3f, 0.16f, 2.4f, 0.45f, 3f};
     static final float[] P_RANGE = {270, 0, 270, 260, 240, 0, 290, 320, 280, 250, 260, 0, 380,
-            170, 0, 240, 0, 300, 210, 0};
+            170, 0, 240, 0, 300, 210, 0,
+            340, 330, 290, 230, 0};
     /** planets that may only stand next to the path (Cyber) or on the path itself (Commander) */
     static boolean nearPathOnly(int t) { return t == CYBER; }
 
     static boolean onPathOnly(int t) { return t == COMMANDER; }
 
     /** SP cost of the Nightmare self-destruct: grows with the wave */
-    static int nukeCost(int wave) { return 30 + wave * 2; }
+    static int nukeCost(int wave) { return 1000; }
+
+    /** Martin World: "In This World" choices */
+    static final int WORLD_STOP = 0, WORLD_STRONG = 1, WORLD_WEAK = 2;
+    static final String[] WORLD_NAME = {"Everybody stop", "Everybody stronger", "Everybody weak"};
+    static final String[] WORLD_DESC = {"หยุดมอนทุกตัวในแมพ 6 วิ", "ดาวเราโหดขึ้น +30% ทุกค่า 25 วิ", "มอนทุกตัวเลือดเหลือ 50%"};
+    static final String[] WORLD_DESC_EN = {"Freezes every enemy for 6s", "Our planets +30% everything for 25s", "Every enemy drops to 50% HP"};
+    static final float WORLD_CD = 45f;
 
     // ---------- attack types (shown as tags; each one is a real mechanic) ----------
     static final int AT_SINGLE = 1, AT_AOE = 2, AT_PIERCE = 4, AT_BURN = 8, AT_SLOW = 16, AT_STUN = 32,
@@ -103,7 +122,12 @@ final class Defs {
             AT_NUKE | AT_SKILL,      // Nightmare
             AT_STUN | AT_AOE,        // Galacia
             AT_ORBIT | AT_SINGLE,    // Commander
-            AT_BUFF | AT_SKILL       // King
+            AT_BUFF | AT_SKILL,      // King
+            AT_PIERCE | AT_BURN,     // Comet
+            AT_SINGLE | AT_RAPID,    // Ion Drone
+            AT_STUN | AT_AOE,        // Pulsar
+            AT_ZONE | AT_SLOW,       // Black Hole
+            AT_WAVE | AT_SKILL       // Martin World
     };
 
     static final String[] P_DESC_EN = {
@@ -126,22 +150,91 @@ final class Defs {
             "Never attacks. Its skill spends a lot of SP to blow itself up with every enemy on the map",
             "A water storm that stuns enemies in an area, no damage",
             "Stands on the path, circles around and fires missiles at enemies in range",
-            "Specialist: +10% to everything for every planet on the map. Elite Command skill once per match"};
+            "Specialist: +10% to everything for every planet on the map. Elite Command skill once per match",
+            "A comet that pierces the whole line and leaves a burning tail",
+            "An ion drone with a very fast, long-range laser",
+            "Pulses that stun and damage a wide area",
+            "A black hole that drags enemies to a crawl and crushes them",
+            "Hits the whole map every 3s • In This World: pick 1 of 3 • give-only"};
     /** in-match SP cost to place each planet */
     static final int[] PLACE_COST = {1, 2, 2, 3, 3, 4, 5, 5, 5, 5, 5, 8, 7,
-            6, 5, 6, 6, 5, 6, 8};
+            6, 5, 6, 6, 5, 6, 8,
+            5, 5, 7, 7, 9};
     /** how many of each planet may be on the map at once */
     static final int[] PLACE_LIMIT = {6, 3, 6, 4, 3, 2, 3, 2, 3, 2, 2, 1, 1,
-            1, 2, 1, 1, 2, 2, 1};
+            1, 2, 1, 1, 2, 2, 1,
+            2, 3, 1, 1, 1};
     /** highest level a planet can be upgraded to during a match (outside the match the cap is Profile.MAX_LV = 10) */
     static final int[] MATCH_MAX = {6, 4, 6, 5, 5, 4, 4, 4, 4, 4, 4, 3, 5,
-            4, 4, 4, 3, 4, 4, 3};
+            4, 4, 4, 3, 4, 4, 3,
+            4, 5, 4, 4, 3};
     /** planet categories (the planet page lists them one under another) */
     static final int CAT_SOLAR = 0, CAT_EXCLUSIVE = 1, CAT_SPECIALIST = 2;
     static final String[] CAT_NAME = {"Solar System", "Exclusive", "Specialist"};
     static final String[] CAT_NAME_TH = {"ระบบสุริยะ", "เอ็กซ์คลูซีฟ", "สเปเชียลลิสต์"};
     static final int[] P_CATEGORY = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, CAT_EXCLUSIVE,
-            CAT_EXCLUSIVE, CAT_EXCLUSIVE, CAT_EXCLUSIVE, CAT_EXCLUSIVE, CAT_EXCLUSIVE, CAT_EXCLUSIVE, CAT_SPECIALIST};
+            CAT_EXCLUSIVE, CAT_EXCLUSIVE, CAT_EXCLUSIVE, CAT_EXCLUSIVE, CAT_EXCLUSIVE, CAT_EXCLUSIVE, CAT_SPECIALIST,
+            CAT_SOLAR, CAT_SOLAR, CAT_SOLAR, CAT_SOLAR, CAT_SPECIALIST};
+
+    // ---------- team families (like traits): same-family units in the deck power each other up
+    static final int FAM_SOLAR = 0, FAM_SAT = 1, FAM_CYBER = 2, FAM_GUARD = 3, FAM_ALL = 4, FAM_COUNT = 5;
+    static final String[] FAM_NAME = {"Solar System", "Satellite", "Cyber", "Guardian", "All"};
+    static final String[] FAM_NAME_TH = {"ระบบสุริยะ", "ดาวเทียม", "ไซเบอร์", "ผู้พิทักษ์", "ทุกประเภท"};
+    static final int[] FAM_COLOR = {0xFFFFB627, 0xFF5EC8FF, 0xFF5EF2FF, 0xFFFF6A3D, 0xFFFFF0A0};
+    static final int[] P_FAMILY = {FAM_SOLAR, FAM_SAT, FAM_SOLAR, FAM_SOLAR, FAM_SOLAR, FAM_SOLAR,
+            FAM_SOLAR, FAM_SOLAR, FAM_SOLAR, FAM_SOLAR, FAM_SOLAR, FAM_SOLAR, FAM_GUARD,
+            FAM_CYBER, FAM_SAT, FAM_SAT, FAM_CYBER, FAM_GUARD, FAM_SAT, FAM_ALL,
+            FAM_SOLAR, FAM_SAT, FAM_GUARD, FAM_CYBER, FAM_ALL};
+    /** set bonus tiers need 2 / 3 / 4 units of the family in the deck */
+    static final int[] FAM_NEED = {2, 3, 4};
+    /** per family and tier: {damage, attack speed, range, SP production} */
+    static final float[][][] FAM_BONUS = {
+            {{0.06f, 0, 0, 0}, {0.12f, 0, 0, 0}, {0.20f, 0.05f, 0, 0}},           // Solar: damage
+            {{0.05f, 0.05f, 0, 0.10f}, {0.10f, 0.10f, 0, 0.20f}, {0.18f, 0.15f, 0, 0.30f}}, // Satellite: speed + SP
+            {{0.08f, 0, 0.08f, 0}, {0.16f, 0, 0.14f, 0}, {0.25f, 0, 0.20f, 0}},     // Cyber: range + damage
+            {{0.08f, 0.04f, 0, 0}, {0.16f, 0.08f, 0, 0}, {0.25f, 0.12f, 0.05f, 0}}, // Guardian: damage + speed
+            {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}};                          // All: fits anywhere, no bonus
+    static final String[] FAM_BONUS_TH = {"+ดาเมจ", "+ความเร็วโจมตี +ผลิต SP", "+ระยะ +ดาเมจ", "+ดาเมจ +ความเร็ว", "ใส่ได้ทุกทีม ไม่มีบัฟ"};
+    static final String[] FAM_BONUS_EN = {"+damage", "+attack speed +SP production", "+range +damage", "+damage +speed", "fits any team, no bonus"};
+
+    /** team tier (0 none, 1-3) of a family for a deck */
+    static int famTier(int[] deck, int fam) {
+        if (fam == FAM_ALL) return 0;
+        int n = 0;
+        for (int t : deck) if (t >= 0 && P_FAMILY[t] == fam) n++;
+        int tier = 0;
+        for (int k = 0; k < FAM_NEED.length; k++) if (n >= FAM_NEED[k]) tier = k + 1;
+        return tier;
+    }
+
+    static int famCount(int[] deck, int fam) {
+        int n = 0;
+        for (int t : deck) if (t >= 0 && P_FAMILY[t] == fam) n++;
+        return n;
+    }
+
+    // ---------- Regular banner: Legend and Mythic line-ups rotate every hour
+    static final int[] REG_LEGEND = {MERCURY, VENUS, URANUS, NEPTUNE, PLUTO, COMET, ION_DRONE};
+    static final int[] REG_MYTHIC = {SUN, PULSAR, BLACK_HOLE};
+    /** planets that never come out of any banner (given by the admin only) */
+    static boolean giveOnly(int t) { return t == MARTIN; }
+
+    static long bannerHour(long ms) { return Math.floorDiv(ms, 3600000L); }
+
+    /** this hour's pool for a rarity in the Regular banner */
+    static int[] regularPool(int rarity, long hour) {
+        if (rarity == LEGEND) {
+            int n = REG_LEGEND.length, a = (int) Math.floorMod(hour * 3, n);
+            return new int[]{REG_LEGEND[a], REG_LEGEND[(a + 1) % n], REG_LEGEND[(a + 2) % n]};
+        }
+        if (rarity == MYTHIC) return new int[]{REG_MYTHIC[(int) Math.floorMod(hour, REG_MYTHIC.length)]};
+        int n = 0;
+        for (int t = 0; t < P_COUNT; t++) if (P_RARITY[t] == rarity) n++;
+        int[] out = new int[n];
+        n = 0;
+        for (int t = 0; t < P_COUNT; t++) if (P_RARITY[t] == rarity) out[n++] = t;
+        return out;
+    }
     /** the 5th deck slot takes only Specialist planets */
     static final int SPECIAL_SLOT = 4;
 
@@ -258,6 +351,8 @@ final class Defs {
 
     /** Raid is one more "stage" after the story: 100 waves, raid enemies, pays Crystal Oil */
     static final int RAID = ST_COUNT, RAID_WAVES = 100;
+    /** PvP is always played on this map */
+    static final int PVP_STAGE = 12;
     static final String[] ST_NAME = new String[ST_COUNT + 1], ST_NAME_EN = new String[ST_COUNT + 1];
     static final int[] ST_WAVES = new int[ST_COUNT + 1], ST_COLOR = new int[ST_COUNT + 1], ST_DIFF = new int[ST_COUNT + 1];
     static final float[] ST_HP = new float[ST_COUNT + 1], ST_SPEED = new float[ST_COUNT + 1];

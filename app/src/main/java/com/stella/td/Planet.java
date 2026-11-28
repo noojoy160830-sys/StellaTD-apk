@@ -22,4 +22,10 @@ final class Planet {
     int eff = -1;
     /** skin style shown on the map (-1 = none) */
     int skin = -1;
+    /** team family bonus: damage, attack speed, range, SP production */
+    float famDmg, famSpd, famRng, famProd;
+    /** Martin World "Everybody stronger" (+30% everything) is on */
+    boolean worldBuff;
+    /** co-op: a teammate's planet mirrored on my map (it fights, but I can't touch it or earn SP from it) */
+    boolean ghost;
 }

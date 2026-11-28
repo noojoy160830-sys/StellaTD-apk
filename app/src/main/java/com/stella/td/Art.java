@@ -421,8 +421,41 @@ final class Art {
         if (type == Defs.SMART_SAT) { smartSat(c, cx, cy, size); return b; }
         if (type == Defs.SAVIOR_SAT) { saviorSat(c, cx, cy, size); return b; }
         if (type == Defs.COMMANDER) { commanderSat(c, cx, cy, size); return b; }
+        if (type == Defs.ION_DRONE) { ionDrone(c, cx, cy, size); return b; }
+        if (type == Defs.MARTIN) { martinWorld(c, cx, cy, size); return b; }
+        if (type == Defs.BLACK_HOLE) { blackHole(c, cx, cy, size); return b; }
+        if (type == Defs.COMET) {
+            // icy nucleus with a glowing tail streaming to the lower left
+            Path tail = new Path();
+            tail.moveTo(cx + size * 0.08f, cy - size * 0.14f);
+            tail.quadTo(cx - size * 0.2f, cy + size * 0.05f, cx - size * 0.48f, cy + size * 0.42f);
+            tail.quadTo(cx - size * 0.05f, cy + size * 0.2f, cx + size * 0.14f, cy + size * 0.08f);
+            tail.close();
+            c.drawPath(tail, grad(new LinearGradient(cx, cy, cx - size * 0.45f, cy + size * 0.4f, new int[]{0xEEB8F6FF, 0x885EC8FF, 0x003B6BFF}, null, Shader.TileMode.CLAMP)));
+            Path tail2 = new Path();
+            tail2.moveTo(cx + size * 0.02f, cy - size * 0.08f);
+            tail2.quadTo(cx - size * 0.25f, cy + size * 0.15f, cx - size * 0.36f, cy + size * 0.47f);
+            tail2.quadTo(cx - size * 0.12f, cy + size * 0.2f, cx + size * 0.1f, cy + size * 0.05f);
+            tail2.close();
+            c.drawPath(tail2, grad(new LinearGradient(cx, cy, cx - size * 0.35f, cy + size * 0.45f, 0xCCFFB86B, 0x00FF6A3D, Shader.TileMode.CLAMP)));
+        }
+        if (type == Defs.PULSAR) {
+            // twin radiation beams through the neutron star
+            c.save();
+            c.rotate(-30, cx, cy);
+            Path beam = new Path();
+            beam.moveTo(cx - size * 0.04f, cy);
+            beam.lineTo(cx - size * 0.12f, cy - size * 0.5f);
+            beam.lineTo(cx + size * 0.12f, cy - size * 0.5f);
+            beam.lineTo(cx + size * 0.04f, cy);
+            beam.lineTo(cx + size * 0.12f, cy + size * 0.5f);
+            beam.lineTo(cx - size * 0.12f, cy + size * 0.5f);
+            beam.close();
+            c.drawPath(beam, grad(new RadialGradient(cx, cy, size * 0.5f, 0xEEDFFFFF, 0x225EC8FF, Shader.TileMode.CLAMP)));
+            c.restore();
+        }
         boolean ringed = type == Defs.SATURN || type == Defs.URANUS || type == Defs.HERO || type == Defs.KING || type == Defs.GALACIA_P;
-        float rf = ringed ? 0.27f : (type == Defs.SUN ? 0.3f : 0.36f);
+        float rf = ringed ? 0.27f : (type == Defs.SUN ? 0.3f : type == Defs.COMET ? 0.2f : type == Defs.PULSAR ? 0.22f : 0.36f);
         int atmo;
         float as, glow;
         switch (type) {
@@ -441,6 +474,8 @@ final class Art {
             case Defs.NIGHTMARE: atmo = 0xFFFF1A3A; as = 1f; glow = 0.28f; break;
             case Defs.GALACIA_P: atmo = 0xFF7FD8FF; as = 1f; glow = 0.2f; break;
             case Defs.KING: atmo = 0xFFFFD23F; as = 1f; glow = 0.22f; break;
+            case Defs.COMET: atmo = 0xFFB8F6FF; as = 0.9f; glow = 0.2f; break;
+            case Defs.PULSAR: atmo = 0xFF9EF6FF; as = 1f; glow = 0.45f; break;
             default: atmo = 0xFFFFB030; as = 1f; glow = 0.58f; break;
         }
         float r = size * rf;
@@ -459,8 +494,9 @@ final class Art {
         float[] waterR = {1.3f, 1.42f, 1.55f};
         if (type == Defs.KING) rings(c, cx, cy, r, -12, false, king, kingR, 0.06f);
         if (type == Defs.GALACIA_P) rings(c, cx, cy, r, 20, false, water, waterR, 0.12f);
-        Bitmap s = Real.toon(size, rf, Real.surface(type), atmo, glow * 1.1f + 0.08f, type == Defs.SUN, type * 17 + 3);
-        c.drawBitmap(s, 0, 0, null);
+        Bitmap s = Real.toon(size, rf, Real.surface(type), atmo, glow * 1.1f + 0.08f, type == Defs.SUN || type == Defs.PULSAR, type * 17 + 3);
+        if (type == Defs.COMET) c.drawBitmap(s, size * 0.06f, -size * 0.06f, null);
+        else c.drawBitmap(s, 0, 0, null);
         if (type == Defs.SATURN) rings(c, cx, cy, r, -14, true, sat, satR, 0.09f);
         if (type == Defs.URANUS) rings(c, cx, cy, r, -72, true, ura, uraR, 0.03f);
         if (type == Defs.KING) {
@@ -507,6 +543,102 @@ final class Art {
             }
         }
         return b;
+    }
+
+    /** Ion Drone: a sleek hex drone with two thrusters and a glowing ion core */
+    static void ionDrone(Canvas c, float cx, float cy, float s) {
+        Paint o = stroke(s * 0.016f, OUTLINE);
+        c.drawCircle(cx, cy, s * 0.45f, grad(new RadialGradient(cx, cy, s * 0.45f, 0x335EF2FF, 0x005EF2FF, Shader.TileMode.CLAMP)));
+        for (int side = -1; side <= 1; side += 2) {
+            // arm + thruster pod
+            c.drawLine(cx, cy, cx + side * s * 0.3f, cy + s * 0.04f, stroke(s * 0.03f, 0xFF8A94A8));
+            RectF pod = new RectF(cx + side * s * 0.3f - s * 0.07f, cy - s * 0.05f, cx + side * s * 0.3f + s * 0.07f, cy + s * 0.13f);
+            c.drawRoundRect(pod, s * 0.04f, s * 0.04f, grad(new LinearGradient(pod.left, pod.top, pod.right, pod.bottom, 0xFFDDE6F2, 0xFF5A6478, Shader.TileMode.CLAMP)));
+            c.drawRoundRect(pod, s * 0.04f, s * 0.04f, o);
+            Paint fl = fill();
+            fl.setShader(new RadialGradient(pod.centerX(), pod.bottom + s * 0.04f, s * 0.08f, 0xFF9EF6FF, 0x005EC8FF, Shader.TileMode.CLAMP));
+            c.drawCircle(pod.centerX(), pod.bottom + s * 0.04f, s * 0.08f, fl);
+        }
+        Path hex = new Path();
+        for (int i = 0; i < 6; i++) {
+            double a = Math.PI / 3 * i;
+            float x = cx + (float) Math.cos(a) * s * 0.17f, y = cy + (float) Math.sin(a) * s * 0.17f;
+            if (i == 0) hex.moveTo(x, y); else hex.lineTo(x, y);
+        }
+        hex.close();
+        c.drawPath(hex, grad(new LinearGradient(cx - s * 0.17f, cy - s * 0.17f, cx + s * 0.17f, cy + s * 0.17f, 0xFFF2F6FF, 0xFF4A5468, Shader.TileMode.CLAMP)));
+        c.drawPath(hex, o);
+        c.drawCircle(cx, cy, s * 0.08f, grad(new RadialGradient(cx, cy, s * 0.08f, new int[]{0xFFFFFFFF, 0xFF5EF2FF, 0xFF1A6AD8}, null, Shader.TileMode.CLAMP)));
+        // laser barrel
+        c.drawLine(cx, cy + s * 0.1f, cx, cy + s * 0.26f, stroke(s * 0.025f, 0xFF2A3040));
+        Paint tip = fill();
+        tip.setColor(0xFF5EF2FF);
+        c.drawCircle(cx, cy + s * 0.27f, s * 0.02f, tip);
+    }
+
+    /** Black Hole: a black disc with a bright tilted accretion disk and lensing ring */
+    static void blackHole(Canvas c, float cx, float cy, float s) {
+        c.drawCircle(cx, cy, s * 0.46f, grad(new RadialGradient(cx, cy, s * 0.46f, 0x66B86BFF, 0x00B86BFF, Shader.TileMode.CLAMP)));
+        RectF disk = new RectF(cx - s * 0.44f, cy - s * 0.12f, cx + s * 0.44f, cy + s * 0.12f);
+        Paint dp = stroke(s * 0.07f, 0xFFFF9A3B);
+        dp.setShader(new LinearGradient(disk.left, cy, disk.right, cy, new int[]{0xFFFF6A1A, 0xFFFFF0B0, 0xFFFF6A1A, 0xFFB8461E}, null, Shader.TileMode.CLAMP));
+        // back half of the disk
+        c.drawArc(disk, 180, 180, false, dp);
+        // lensed ring over the top
+        Paint lens = stroke(s * 0.035f, 0xFFFFD08A);
+        c.drawArc(new RectF(cx - s * 0.2f, cy - s * 0.25f, cx + s * 0.2f, cy + s * 0.15f), 180, 180, false, lens);
+        Paint hole = fill();
+        hole.setColor(0xFF000000);
+        c.drawCircle(cx, cy, s * 0.17f, hole);
+        Paint rim = stroke(s * 0.012f, 0xFFFFE6A8);
+        c.drawCircle(cx, cy, s * 0.175f, rim);
+        // front half of the disk
+        c.drawArc(disk, 0, 180, false, dp);
+    }
+
+    /** Martin World: a cheeky cream smiley wrapped in a pinwheel of sparkling cyan, pink and white arms */
+    static void martinWorld(Canvas c, float cx, float cy, float s) {
+        Paint bg = fill();
+        bg.setShader(new RadialGradient(cx, cy, s * 0.5f, 0xFF2A2440, 0x002A2440, Shader.TileMode.CLAMP));
+        c.drawCircle(cx, cy, s * 0.5f, bg);
+        java.util.Random r = new java.util.Random(24);
+        int[] cols = {0xFF5EF2FF, 0xFFFF4FD8, 0xFFFFFFFF, 0xFFB86BFF, 0xFF3BB8FF};
+        Paint d = fill();
+        for (int arm = 0; arm < 5; arm++) {
+            double a0 = arm * Math.PI * 2 / 5;
+            for (int k = 0; k < 110; k++) {
+                float t = k / 110f;
+                double a = a0 + t * 2.4;
+                float rad = s * (0.2f + t * 0.27f);
+                float jit = s * 0.035f * (0.4f + t);
+                float x = cx + (float) Math.cos(a) * rad + (r.nextFloat() - 0.5f) * jit * 2;
+                float y = cy + (float) Math.sin(a) * rad + (r.nextFloat() - 0.5f) * jit * 2;
+                d.setColor(cols[r.nextInt(cols.length)]);
+                c.drawCircle(x, y, s * (0.006f + r.nextFloat() * 0.008f), d);
+            }
+        }
+        float fr = s * 0.2f;
+        c.drawCircle(cx, cy, fr, grad(new RadialGradient(cx - fr * 0.3f, cy - fr * 0.35f, fr * 1.3f, 0xFFFFF0D0, 0xFFFFC98A, Shader.TileMode.CLAMP)));
+        Paint w = fill();
+        w.setColor(0xFFFFFFFF);
+        c.drawCircle(cx - fr * 0.36f, cy - fr * 0.2f, fr * 0.24f, w);
+        c.drawCircle(cx + fr * 0.36f, cy - fr * 0.2f, fr * 0.24f, w);
+        Paint pu = fill();
+        pu.setColor(0xFF1A1420);
+        c.drawCircle(cx - fr * 0.33f, cy - fr * 0.2f, fr * 0.04f, pu);
+        c.drawCircle(cx + fr * 0.31f, cy - fr * 0.22f, fr * 0.04f, pu);
+        Path smile = new Path();
+        smile.moveTo(cx - fr * 0.62f, cy + fr * 0.22f);
+        smile.quadTo(cx, cy + fr * 0.55f, cx + fr * 0.66f, cy + fr * 0.12f);
+        Paint sm = stroke(fr * 0.07f, 0xFF1A1420);
+        sm.setStrokeCap(Paint.Cap.ROUND);
+        c.drawPath(smile, sm);
+        // buck teeth
+        RectF tooth = new RectF(cx - fr * 0.2f, cy + fr * 0.36f, cx + fr * 0.16f, cy + fr * 0.6f);
+        c.drawRect(tooth, w);
+        Paint tl = stroke(fr * 0.025f, 0xFFB8A890);
+        c.drawRect(tooth, tl);
+        c.drawLine(tooth.centerX(), tooth.top, tooth.centerX(), tooth.bottom, tl);
     }
 
     /** a small golden crown */

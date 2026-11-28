@@ -71,8 +71,8 @@ jobs:
           retention-days: 30
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v3.8.${{ github.run_number }}
-          name: Stella TD v3.8.${{ github.run_number }}
+          tag_name: v3.9.${{ github.run_number }}
+          name: Stella TD v3.9.${{ github.run_number }}
           make_latest: true
           files: |
             StellaTD.apk

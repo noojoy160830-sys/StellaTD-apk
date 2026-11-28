@@ -36,6 +36,19 @@ final class Game {
     /** the last slots sit on the path itself (Commander only) */
     final boolean[] pathSlot;
     boolean kingSkillUsed;
+    /** team family tier per family (0-3) for this deck */
+    final int[] famTier = new int[Defs.FAM_COUNT];
+    /** Martin World skill timers */
+    float worldCd, worldBuffT, worldStopT;
+    // ---- co-op on one map: host owns even slots, guest owns odd ones
+    int coopSide = -1;
+    String lastBoard = "";
+    // ---- PvP: the other player's base and monsters they sent me
+    boolean pvp;
+    int otherHp = -1;
+    String otherName;
+
+    boolean mySlot(int slot) { return coopSide < 0 || slot % 2 == coopSide; }
     int earnOil;
 
     final Profile pf;
@@ -65,6 +78,7 @@ final class Game {
         this.pf = pf;
         this.challenge = challenge;
         this.deck = pf.deck.clone();
+        for (int f = 0; f < Defs.FAM_COUNT; f++) famTier[f] = Defs.famTier(deck, f);
         if (challenge == 1) mod[Defs.dailyMod(Profile.today())] = true;
         if (challenge == 2) for (int m : Defs.weeklyMods(Profile.week())) mod[m] = true;
         if (effectStage()) for (int m : Defs.effMods(challenge - CH_EFFECT)) mod[m] = true;
@@ -223,20 +237,20 @@ final class Game {
     }
 
     static float dmgOf(Planet p) {
-        return Defs.P_DMG[p.type] * (1f + 0.3f * (p.level - 1)) * (1f + 0.12f * (p.plv - 1))
+        return Defs.P_DMG[p.type] * (1f + 0.3f * (p.level - 1)) * (1f + 0.12f * (p.plv - 1)) * (1f + p.famDmg) * (p.worldBuff ? 1.3f : 1f)
                 * (1f + enchDmg(p)) * (1f + matDmg(p)) * (1f + p.bonusDmg) * (1f + p.buff) * (p.evo ? 1.6f : 1f)
                 * (p.eff >= 0 ? 1f + Defs.EFF_DMG[p.eff] : 1f);
     }
 
     static float rangeOf(Planet p) {
-        return Defs.P_RANGE[p.type] * (1f + enchRng(p)) * (1f + matRng(p)) * (p.king ? 1.1f : 1f) * (p.evo ? 1.15f : 1f) * p.rangeMul
+        return Defs.P_RANGE[p.type] * (1f + enchRng(p)) * (1f + matRng(p)) * (1f + p.famRng) * (p.worldBuff ? 1.3f : 1f) * (p.king ? 1.1f : 1f) * (p.evo ? 1.15f : 1f) * p.rangeMul
                 * (p.eff >= 0 ? 1f + Defs.EFF_RNG[p.eff] : 1f);
     }
 
     /** the persistent upgrade level (Lv 1-10) speeds up attacks 4% and production 5% per level */
     static float cdOf(Planet p) {
         float c = Defs.P_CD[p.type];
-        float k = (p.king ? 1.1f : 1f) * (p.eff >= 0 ? 1f + Defs.EFF_SPD[p.eff] : 1f);
+        float k = (p.king ? 1.1f : 1f) * (p.eff >= 0 ? 1f + Defs.EFF_SPD[p.eff] : 1f) * (1f + p.famSpd) * (p.worldBuff ? 1.3f : 1f);
         if (isProducer(p)) return c / ((1f + 0.2f * (p.level - 1)) * (1f + 0.05f * (p.plv - 1)) * k * (p.evo ? 1.15f : 1f));
         return c / ((1f + enchSpa(p)) * (1f + matSpa(p)) * (1f + 0.04f * (p.plv - 1)) * k * (p.evo ? 1.15f : 1f) * (p.art == Defs.MOON_STORM ? 1.12f : 1f));
     }
@@ -249,6 +263,8 @@ final class Game {
         if (p.art == Defs.MOON_GOLD) a *= 1.2f;
         if (p.evo) a *= 1.6f;
         if (p.eff >= 0) a *= 1f + Defs.EFF_DMG[p.eff] * 0.5f;
+        a *= 1f + p.famProd;
+        if (p.worldBuff) a *= 1.3f;
         return a;
     }
 
@@ -286,6 +302,7 @@ final class Game {
     String place(int type, int slot) {
         int cost = Defs.PLACE_COST[type];
         if (slots[slot] != null) return L.t("ช่องนี้มีดาวแล้ว", "Slot is taken");
+        if (!mySlot(slot)) return L.t("ช่องนี้เป็นของเพื่อนร่วมทีม", "That slot belongs to your teammate");
         if (stars < cost) return L.t("SP ไม่พอ", "Not enough SP");
         if (pathSlot[slot] && !Defs.onPathOnly(type))
             return L.t("ช่องบนทางเดินใช้ได้เฉพาะ Commander", "Path slots are for the Commander only");
@@ -318,6 +335,7 @@ final class Game {
         p.tier = pf.tier[type];
         p.material = pf.material[type];
         p.moons = p.enchant == Defs.EN_MOON ? 1 : 0;
+        setFamily(p);
         slots[slot] = p;
         placedCount++;
         ring(p.x, p.y, Defs.RARITY_COLOR[Defs.P_RARITY[type]], 80);
@@ -327,8 +345,108 @@ final class Game {
 
     int countOf(int type) {
         int n = 0;
-        for (Planet q : slots) if (q != null && q.type == type) n++;
+        for (Planet q : slots) if (q != null && q.type == type && !q.ghost) n++;
         return n;
+    }
+
+    void setFamily(Planet p) {
+        int f = Defs.P_FAMILY[p.type], t = famTier[f];
+        if (t <= 0) { p.famDmg = p.famSpd = p.famRng = p.famProd = 0; return; }
+        float[] b = Defs.FAM_BONUS[f][t - 1];
+        p.famDmg = b[0];
+        p.famSpd = b[1];
+        p.famRng = b[2];
+        p.famProd = b[3];
+    }
+
+    // ------------------------------------------------------------------ co-op board sync
+    /** my planets as "slot,type,level,plv,skin,eff,evo,enchant,material;..." */
+    String board() {
+        StringBuilder b = new StringBuilder();
+        for (Planet p : slots) {
+            if (p == null || p.ghost) continue;
+            if (b.length() > 0) b.append(';');
+            b.append(p.slot).append(',').append(p.type).append(',').append(p.level).append(',').append(p.plv).append(',').append(p.skin)
+                    .append(',').append(p.eff).append(',').append(p.evo ? 1 : 0).append(',').append(p.enchant).append(',').append(p.material);
+        }
+        return b.toString();
+    }
+
+    /** mirror the teammate's planets onto my map */
+    void syncGhosts(String board) {
+        if (board == null || board.equals(lastBoard)) return;
+        lastBoard = board;
+        boolean[] seen = new boolean[slots.length];
+        for (String part : board.split(";")) {
+            String[] q = part.split(",");
+            if (q.length < 9) continue;
+            try {
+                int slot = Integer.parseInt(q[0]), type = Integer.parseInt(q[1]);
+                if (slot < 0 || slot >= slots.length || type < 0 || type >= Defs.P_COUNT || mySlot(slot)) continue;
+                seen[slot] = true;
+                Planet p = slots[slot];
+                if (p == null || !p.ghost || p.type != type) {
+                    p = new Planet();
+                    p.ghost = true;
+                    p.type = type;
+                    p.slot = slot;
+                    p.x = p.ax = slotX[slot];
+                    p.y = p.ay = slotY[slot];
+                    p.cdT = 0.3f;
+                    if (Defs.P_KIND[type] == Defs.K_WALL) p.wallD = nearestD(p.x, p.y);
+                    slots[slot] = p;
+                    ring(p.x, p.y, 0xFF5EC8FF, 80);
+                }
+                p.level = Integer.parseInt(q[2]);
+                p.plv = Integer.parseInt(q[3]);
+                p.skin = Integer.parseInt(q[4]);
+                p.eff = Integer.parseInt(q[5]);
+                p.evo = "1".equals(q[6]);
+                p.enchant = Integer.parseInt(q[7]);
+                p.material = Integer.parseInt(q[8]);
+                p.art = -1;
+            } catch (RuntimeException ignored) { }
+        }
+        for (int i = 0; i < slots.length; i++) if (slots[i] != null && slots[i].ghost && !seen[i]) slots[i] = null;
+    }
+
+    // ------------------------------------------------------------------ PvP: monsters sent by the other player
+    static final int[] SEND_COST = {12, 40, 220};
+    static final String[] SEND_NAME = {"Meteor x4", "Mega", "Titan"};
+
+    /** spawn monsters the other player paid for (kind 0 meteors, 1 mega, 2 titan) */
+    void receiveSend(int kind) {
+        if (kind == 0) for (int i = 0; i < 4; i++) queueSent(Defs.E_METEOR);
+        else if (kind == 1) queueSent(Defs.E_MEGA);
+        else queueSent(Defs.E_TITAN);
+        showBanner(L.t("ศัตรูส่งมอนมา: ", "Incoming from rival: ") + SEND_NAME[Math.max(0, Math.min(2, kind))], 0xFFFF4B6B);
+    }
+
+    void queueSent(int type) { spawn(type); }
+
+    // ------------------------------------------------------------------ Martin World: In This World
+    boolean hasMartin() {
+        for (Planet p : slots) if (p != null && !p.ghost && p.type == Defs.MARTIN) return true;
+        return false;
+    }
+
+    String inThisWorld(int choice) {
+        if (!hasMartin()) return L.t("ต้องวาง Martin World ก่อน", "Place Martin World first");
+        if (worldCd > 0) return L.t("รออีก " + (int) Math.ceil(worldCd) + " วิ", "Ready in " + (int) Math.ceil(worldCd) + "s");
+        worldCd = Defs.WORLD_CD;
+        Sfx.play(Sfx.RARE);
+        shake = 0.5f;
+        if (choice == Defs.WORLD_STOP) {
+            worldStopT = 6f;
+            for (Enemy e : enemies) if (!e.dead) e.stunT = Math.max(e.stunT, 6f);
+        } else if (choice == Defs.WORLD_STRONG) {
+            worldBuffT = 25f;
+        } else {
+            for (Enemy e : enemies) if (!e.dead) { e.hp = Math.max(1, e.hp * 0.5f); if (e.admin) bossDamage += e.hp; }
+        }
+        showBanner("IN THIS WORLD • " + Defs.WORLD_NAME[choice].toUpperCase(java.util.Locale.US), 0xFFFF7AE0);
+        ring(500, 600, 0xFFFF7AE0, 700);
+        return null;
     }
 
     String upgrade(Planet p) {
@@ -625,8 +743,15 @@ final class Game {
     }
 
     void updatePlanets(float dt) {
+        if (worldCd > 0) worldCd -= dt;
+        if (worldBuffT > 0) worldBuffT -= dt;
+        if (worldStopT > 0) {
+            worldStopT -= dt;
+            for (Enemy e : enemies) if (!e.dead) e.stunT = Math.max(e.stunT, 0.1f);
+        }
         for (Planet p : slots) {
             if (p == null) continue;
+            p.worldBuff = worldBuffT > 0;
             p.anim += dt;
             if (p.flash > 0) p.flash -= dt;
             p.orbitA += dt * 2.4f;
@@ -641,6 +766,7 @@ final class Game {
                 p.x = p.ax + (float) Math.cos(a) * 110f;
                 p.y = p.ay + (float) Math.sin(a) * 110f;
             }
+            if (kind == Defs.K_PRODUCE && p.ghost) continue; // the teammate's producers pay the teammate
             if (kind == Defs.K_PRODUCE) {
                 p.prodT += dt;
                 if (p.prodT >= cd) {
@@ -658,15 +784,30 @@ final class Game {
             }
             p.cdT -= dt;
             if (p.cdT > 0) continue;
+            if (kind == Defs.K_WORLD) {
+                // Martin World: hits every enemy on the map
+                if (!inWave || enemies.isEmpty()) { p.cdT = 0.2f; continue; }
+                p.cdT = cd;
+                float dmg = dmgOf(p);
+                for (Enemy e : enemies) {
+                    if (e.dead || e.phased) continue;
+                    damage(e, dmg, p);
+                    if (rnd.nextFloat() < 0.4f) particle(e.x, e.y, rnd.nextBoolean() ? 0xFF5EF2FF : 0xFFFF7AE0, 160);
+                }
+                ring(p.x, p.y, 0xFFFF7AE0, 260);
+                p.flash = 0.35f;
+                continue;
+            }
             if (kind == Defs.K_AURA) {
                 p.cdT = cd;
                 float r = rangeOf(p), dmg = dmgOf(p);
+                boolean hole = p.type == Defs.BLACK_HOLE;
                 boolean any = false;
                 for (Enemy e : enemies) {
                     if (e.dead || dist(p.x, p.y, e.x, e.y) > r + e.radius) continue;
                     any = true;
                     float im = iceMul(p);
-                    applySlow(e, Math.min(0.7f, 0.4f * (im > 1f ? 1.3f : 1f)), 0.7f * im);
+                    applySlow(e, hole ? 0.6f : Math.min(0.7f, 0.4f * (im > 1f ? 1.3f : 1f)), 0.7f * im);
                     if (p.enchant == Defs.EN_GALACIA && rnd.nextFloat() < 0.04f && !e.boss) e.stunT = Math.max(e.stunT, 0.6f);
                     damage(e, dmg, p);
                     applyMaterialOnHit(e, dmg, p);
@@ -716,6 +857,7 @@ final class Game {
                     if (e.dead || e.phased || dist(t.x, t.y, e.x, e.y) > 115 + e.radius) continue;
                     float st = (e.boss ? 0.45f : e.mini ? 0.8f : 1.4f) * im * (1f + 0.04f * (p.plv - 1));
                     e.stunT = Math.max(e.stunT, st);
+                    if (Defs.P_DMG[p.type] > 0) damage(e, dmgOf(p), p); // Pulsar hits as it stuns
                 }
                 ring(t.x, t.y, 0xFF7FD8FF, 230);
                 for (int k = 0; k < 14; k++) particle(t.x, t.y, k % 2 == 0 ? 0xFFDFF8FF : 0xFF4FC8FF, 260);
